@@ -1,0 +1,1 @@
+{"rule":"PHRASE_REPETITION","sentence":"^\\QPhase 3: Modal Editing\nModal editing system (normal, insert, command modes)\nKeybindings and commands\nText operations\\E$"}
