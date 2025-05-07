@@ -40,7 +40,7 @@ the platform, e.g. `linux_main.c`, `win32_main.c` etc.
 
 ## Phases
 
-### [❓] Phase 1 - Terminal management
+### [ ] Phase 1 - Terminal management
 
 This phase should handle the terminal by:
 
@@ -57,7 +57,7 @@ This phase should handle the terminal by:
 
 #### Expected Commits for Phase 1:
 
-- [✅] **Project setup**: Initial repository structure, build system, and basic
+- [x] **Project setup**: Initial repository structure, build system, and basic
    platform detection
    - Create Makefile with C23 support
    - Set up initial project directory structure
