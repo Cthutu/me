@@ -1,5 +1,5 @@
 CC = clang
-CFLAGS = -std=c2x -Wall -Wextra -pedantic -g
+CFLAGS = -std=c2x -Wall -Wextra -pedantic -Werror -g
 LDFLAGS = 
 
 # Platform detection

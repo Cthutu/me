@@ -64,7 +64,7 @@ This phase should handle the terminal by:
    - Add `.gitignore` file for build artifacts
    - Create stub README.md
 
-- ⬜ **Terminal initialisation**: Implement terminal setup and teardown routines
+- ✅ **Terminal initialisation**: Implement terminal setup and teardown routines
    - Terminal raw mode implementation
    - Alternative screen buffer handling
    - Signal handling for graceful exit

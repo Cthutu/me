@@ -16,6 +16,9 @@ typedef unsigned long long u64;
 typedef float  f32;
 typedef double f64;
 
+// Utility macros
+#define UNUSED(x) (void)(x) // Explicitly mark parameter as unused
+
 // Boolean type is now provided by stdbool.h
 // No need to define our own
 
