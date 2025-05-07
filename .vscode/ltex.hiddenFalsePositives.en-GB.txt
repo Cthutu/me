@@ -1,1 +1,2 @@
 {"rule":"PHRASE_REPETITION","sentence":"^\\QPhase 3: Modal Editing\nModal editing system (normal, insert, command modes)\nKeybindings and commands\nText operations\\E$"}
+{"rule":"ENGLISH_WORD_REPEAT_RULE","sentence":"^\\QSyntax highlighting: Add language-aware text colouring\nLexer/parser framework in the Scheme-like language\nLanguage definition system using S-expressions\nTheme support with dynamic reloading\nEfficient incremental parsing\\E$"}

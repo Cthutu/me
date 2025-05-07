@@ -68,6 +68,6 @@ make clean
 3. Efficient terminal I/O through state tracking and minimal updates
 4. Pure update loop with explicit input and output through platform interface
 
-## License
+## Licence
 
 This project is personal and not yet licensed for distribution.
