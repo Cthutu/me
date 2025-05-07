@@ -288,6 +288,39 @@ static u8 read_key()
     return 0;
 }
 
+static void terminal_render_buffer()
+{
+    // Temporarily render the entire buffer
+    // This is a simple version for testing resize functionality
+
+    // Position cursor at the top left
+    terminal_set_cursor_position(0, 0);
+
+    // Create a buffer for each line
+    char* line_buffer = malloc(platform_state.terminal_width + 1);
+    if (!line_buffer) {
+        return;
+    }
+
+    // Render each line
+    for (i32 y = 0; y < platform_state.terminal_height; y++) {
+        // Copy characters for this line to the buffer
+        for (i32 x = 0; x < platform_state.terminal_width; x++) {
+            u64 pos        = y * platform_state.terminal_width + x;
+            line_buffer[x] = platform_state.char_buffer[pos];
+        }
+        line_buffer[platform_state.terminal_width] = '\0';
+
+        // Position cursor at the beginning of this line
+        terminal_set_cursor_position(0, y);
+
+        // Write the line
+        write(STDOUT_FILENO, line_buffer, platform_state.terminal_width);
+    }
+
+    free(line_buffer);
+}
+
 int main()
 {
     // Set up terminal
@@ -320,6 +353,9 @@ int main()
         // Call editor main function
         EditorCommand cmd        = editor_main(&platform_state);
 
+        // Render the buffer to show terminal dimensions
+        terminal_render_buffer();
+
         // Process command
         switch (cmd) {
         case EDITOR_CMD_QUIT:
@@ -337,10 +373,6 @@ int main()
         if (exit_requested) {
             running = false;
         }
-
-        // For demonstration purposes, set cursor position at 0,0
-        // This will be replaced with proper rendering logic later
-        terminal_set_cursor_position(0, 0);
     }
 
     // Ensure cursor is visible before exit
