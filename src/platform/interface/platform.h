@@ -2,7 +2,7 @@
 
 #include "../../common/types.h"
 
-// Forward declarations
+// Forward declaration of PlatformState
 struct PlatformState;
 typedef struct PlatformState PlatformState;
 

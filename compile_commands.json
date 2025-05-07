@@ -1,0 +1,112 @@
+[
+ {
+  "directory": "/home/matt/code/me",
+  "arguments": [
+   "clang",
+   "-std=c2x",
+   "-Wall",
+   "-Wextra",
+   "-pedantic",
+   "-Werror",
+   "-g",
+   "-I./src",
+   "-D",
+   "PLATFORM_LINUX",
+   "-MMD",
+   "-MP",
+   "-c",
+   "-o",
+   "_build/core/editor.o",
+   "src/core/editor.c"
+  ],
+  "file": "src/core/editor.c"
+ },
+ {
+  "directory": "/home/matt/code/me",
+  "arguments": [
+   "clang",
+   "-std=c2x",
+   "-Wall",
+   "-Wextra",
+   "-pedantic",
+   "-Werror",
+   "-g",
+   "-I./src",
+   "-D",
+   "PLATFORM_LINUX",
+   "-MMD",
+   "-MP",
+   "-c",
+   "-o",
+   "_build/platform/linux_main.o",
+   "src/platform/linux_main.c"
+  ],
+  "file": "src/platform/linux_main.c"
+ },
+ {
+  "directory": "/home/matt/code/me",
+  "arguments": [
+   "clang",
+   "-std=c2x",
+   "-Wall",
+   "-Wextra",
+   "-pedantic",
+   "-Werror",
+   "-g",
+   "-I./src",
+   "-D",
+   "PLATFORM_LINUX",
+   "-MMD",
+   "-MP",
+   "-c",
+   "-o",
+   "_build/platform/linux/linux_platform.o",
+   "src/platform/linux/linux_platform.c"
+  ],
+  "file": "src/platform/linux/linux_platform.c"
+ },
+ {
+  "directory": "/home/matt/code/me",
+  "arguments": [
+   "clang",
+   "-std=c2x",
+   "-Wall",
+   "-Wextra",
+   "-pedantic",
+   "-Werror",
+   "-g",
+   "-I./src",
+   "-D",
+   "PLATFORM_LINUX",
+   "-MMD",
+   "-MP",
+   "-c",
+   "-o",
+   "_build/platform/linux/linux_terminal.o",
+   "src/platform/linux/linux_terminal.c"
+  ],
+  "file": "src/platform/linux/linux_terminal.c"
+ },
+ {
+  "directory": "/home/matt/code/me",
+  "arguments": [
+   "clang",
+   "-std=c2x",
+   "-Wall",
+   "-Wextra",
+   "-pedantic",
+   "-Werror",
+   "-g",
+   "-I./src",
+   "-D",
+   "PLATFORM_LINUX",
+   "-MMD",
+   "-MP",
+   "-c",
+   "-o",
+   "_build/common/secure_string.o",
+   "src/common/secure_string.c"
+  ],
+  "file": "src/common/secure_string.c"
+ }
+]

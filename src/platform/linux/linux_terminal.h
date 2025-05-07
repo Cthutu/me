@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../../common/types.h"
-#include "../interface/platform.h"
+#include "common/types.h"
+#include "platform/interface/platform.h"
 
 // Terminal capabilities
 typedef struct {
@@ -24,7 +24,7 @@ void linux_terminal_get_size(i32* width, i32* height);
 void linux_terminal_clear_screen(void);
 void linux_terminal_setup_alternate_screen(void);
 void linux_terminal_restore_main_screen(void);
-void linux_terminal_set_cursor_position(i32 x, i32 y);
+void linux_terminal_set_cursor_position(i32 pos_x, i32 pos_y);
 void linux_terminal_cursor_hide(void);
 void linux_terminal_cursor_show(void);
 void linux_terminal_check_resize(PlatformState* state);
@@ -41,3 +41,4 @@ u8 linux_terminal_read_input(bool* ctrl_pressed,
 
 // Signal handling
 void linux_setup_signal_handlers(void);
+bool linux_is_exit_requested(void);

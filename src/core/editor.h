@@ -1,6 +1,5 @@
 #pragma once
 
-#include "../common/types.h"
 #include "../platform/interface/platform.h"
 
 // Commands that editor_main can return to the platform layer

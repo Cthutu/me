@@ -1,9 +1,8 @@
+#include "core/editor.h" // For EditorCommand and command constants
+#include "platform/interface/platform.h" // For PlatformInterface and PlatformState
+#include "platform/linux/linux_platform.h"
 #include <stdbool.h>
 #include <stdio.h>
-#include <stdlib.h>
-
-#include "../core/editor.h"
-#include "linux/linux_platform.h"
 
 extern bool linux_is_exit_requested(void);
 
@@ -12,7 +11,11 @@ int main()
     // Initialize the platform
     PlatformState* platform_state = linux_platform_init();
     if (!platform_state) {
-        fprintf(stderr, "Failed to initialize platform\n");
+        const char* error_msg = "Failed to initialize platform\n";
+        (void)fwrite(error_msg,
+                     1,
+                     sizeof("Failed to initialize platform\n") - 1,
+                     stderr);
         return 1;
     }
 
@@ -46,8 +49,9 @@ int main()
             running = false;
             break;
         case EDITOR_CMD_SHELL_COMMAND:
-            // Not implemented in Phase 1
-            break;
+            // TODO: Implement shell command execution in a future commit
+            // Currently falls through to default handling
+            /* fallthrough */
         case EDITOR_CMD_NONE:
         default:
             break;

@@ -1,5 +1,5 @@
 CC = clang
-CFLAGS = -std=c2x -Wall -Wextra -pedantic -Werror -g
+CFLAGS = -std=c2x -Wall -Wextra -pedantic -Werror -g -I./src
 LDFLAGS = 
 
 # Platform detection
@@ -35,6 +35,9 @@ ALL_SRC = $(CORE_SRC) $(PLATFORM_SRC) $(PLATFORM_IMPL_SRC) $(COMMON_SRC)
 # Object files
 OBJS = $(patsubst $(SRC_DIR)/%.c,$(BUILD_DIR)/%.o,$(ALL_SRC))
 
+# Dependency files
+DEPS = $(OBJS:.o=.d)
+
 # Directories
 DIRS = $(sort $(dir $(OBJS)) $(BIN_DIR))
 
@@ -45,8 +48,9 @@ all: $(EXEC)
 $(EXEC): $(OBJS) | $(BIN_DIR)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+# Generate dependencies automatically while compiling
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(DIRS)
-	$(CC) $(CFLAGS) -c -o $@ $<
+	$(CC) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(DIRS):
 	mkdir -p $@
@@ -56,3 +60,6 @@ run: $(EXEC)
 
 clean:
 	rm -rf $(BUILD_DIR) $(BIN_DIR)
+
+# Include all dependency files
+-include $(DEPS)

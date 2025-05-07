@@ -1,0 +1,36 @@
+---
+# Configure clang-tidy for this project with most checks enabled
+Checks: >
+  *,
+  -fuchsia-*,
+  -google-*,
+  -llvmlibc-*,
+  -llvm-header-guard,
+  -hicpp-*,
+  -mpi-*,
+  -abseil-*,
+  -altera-*,
+  -android-*,
+  -cppcoreguidelines-avoid-non-const-global-variables,
+  -bugprone-easily-swappable-parameters,
+  -readability-non-const-parameter,
+  -clang-analyzer-valist.Uninitialized,
+# Turn all the warnings from the checks above into errors.
+WarningsAsErrors: "*"
+HeaderFilterRegex: ".*"
+FormatStyle: none
+CheckOptions:
+  - key: readability-identifier-naming.VariableCase
+    value: lower_case
+  - key: readability-identifier-naming.FunctionCase
+    value: lower_case
+  - key: readability-identifier-naming.MacroDefinitionCase
+    value: UPPER_CASE
+  - key: readability-identifier-naming.ConstantCase
+    value: UPPER_CASE
+  - key: readability-identifier-naming.StructCase
+    value: CamelCase
+  - key: readability-identifier-naming.EnumCase
+    value: CamelCase
+  - key: readability-identifier-naming.EnumConstantCase
+    value: UPPER_CASE

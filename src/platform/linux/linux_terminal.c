@@ -1,12 +1,26 @@
 #include <signal.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <termios.h>
 #include <unistd.h>
 
+#include "common/secure_string.h" // Include our secure string functions
+#include "common/types.h"
 #include "linux_terminal.h"
+#include "platform/interface/platform.h" // For PlatformState
+
+// Constants for terminal dimensions and VT100 sequence lengths
+enum TerminalConstants {
+    DEFAULT_TERM_WIDTH       = 80,
+    DEFAULT_TERM_HEIGHT      = 24,
+    VT100_CLEAR_SEQ_LEN      = 7,
+    VT100_ALT_SCREEN_ON_LEN  = 8,
+    VT100_ALT_SCREEN_OFF_LEN = 8,
+    VT100_CURSOR_BUFFER_SIZE = 32,
+    VT100_HIDE_CURSOR_LEN    = 6,
+    VT100_SHOW_CURSOR_LEN    = 6
+};
 
 // Global state
 static struct termios       original_termios;
@@ -24,10 +38,10 @@ static void signal_handler(int sig)
 void linux_setup_signal_handlers(void)
 {
     // Set up handlers for common termination signals
-    signal(SIGTERM, signal_handler);
-    signal(SIGINT, signal_handler);
-    signal(SIGHUP, signal_handler);
-    signal(SIGQUIT, signal_handler);
+    (void)signal(SIGTERM, signal_handler);
+    (void)signal(SIGINT, signal_handler);
+    (void)signal(SIGHUP, signal_handler);
+    (void)signal(SIGQUIT, signal_handler);
 }
 
 bool linux_is_exit_requested(void) { return exit_requested; }
@@ -58,7 +72,9 @@ void linux_terminal_shutdown(void)
 void linux_terminal_enable_raw_mode(void)
 {
     // Save original terminal settings
-    tcgetattr(STDIN_FILENO, &original_termios);
+    if (tcgetattr(STDIN_FILENO, &original_termios) == -1) {
+        // Handle error or just continue with defaults
+    }
 
     // Modify terminal settings for raw mode
     struct termios raw = original_termios;
@@ -77,68 +93,78 @@ void linux_terminal_enable_raw_mode(void)
     raw.c_cc[VTIME] = 1; // 100ms timeout
 
     // Apply settings
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) {
+        // Handle error or just continue
+    }
 }
 
 void linux_terminal_disable_raw_mode(void)
 {
     // Restore original terminal settings
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_termios);
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_termios) == -1) {
+        // Handle error or just continue
+    }
 }
 
 void linux_terminal_get_size(i32* width, i32* height)
 {
-    struct winsize ws;
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
+    struct winsize win_size;
+    // NOLINTNEXTLINE(misc-include-cleaner)
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &win_size) == -1 ||
+        win_size.ws_col == 0) {
         // Fallback to default size
-        *width  = 80;
-        *height = 24;
+        *width  = DEFAULT_TERM_WIDTH;
+        *height = DEFAULT_TERM_HEIGHT;
     } else {
-        *width  = ws.ws_col;
-        *height = ws.ws_row;
+        *width  = win_size.ws_col;
+        *height = win_size.ws_row;
     }
 }
 
 void linux_terminal_clear_screen(void)
 {
     // Clear screen and position cursor at top-left
-    write(STDOUT_FILENO, "\x1b[2J\x1b[H", 7);
+    (void)write(STDOUT_FILENO, "\x1b[2J\x1b[H", VT100_CLEAR_SEQ_LEN);
 }
 
 void linux_terminal_setup_alternate_screen(void)
 {
     // Switch to alternate screen buffer
-    write(STDOUT_FILENO, "\x1b[?1049h", 8);
+    (void)write(STDOUT_FILENO, "\x1b[?1049h", VT100_ALT_SCREEN_ON_LEN);
 }
 
 void linux_terminal_restore_main_screen(void)
 {
     // Switch back to main screen buffer
-    write(STDOUT_FILENO, "\x1b[?1049l", 8);
+    (void)write(STDOUT_FILENO, "\x1b[?1049l", VT100_ALT_SCREEN_OFF_LEN);
 }
 
-void linux_terminal_set_cursor_position(i32 x, i32 y)
+void linux_terminal_set_cursor_position(i32 pos_x, i32 pos_y)
 {
     // Set cursor position (1-based coordinates in VT100 sequences)
-    char buf[32];
-    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", y + 1, x + 1);
-    write(STDOUT_FILENO, buf, strlen(buf));
+    char buf[VT100_CURSOR_BUFFER_SIZE];
+    SAFE_SNPRINTF(buf, sizeof(buf), "\x1b[%d;%dH", pos_y + 1, pos_x + 1);
+    (void)write(STDOUT_FILENO, buf, strlen(buf));
 }
 
 void linux_terminal_cursor_hide(void)
 {
     // Hide the cursor
-    write(STDOUT_FILENO, "\x1b[?25l", 6);
+    (void)write(STDOUT_FILENO, "\x1b[?25l", VT100_HIDE_CURSOR_LEN);
 }
 
 void linux_terminal_cursor_show(void)
 {
     // Show the cursor
-    write(STDOUT_FILENO, "\x1b[?25h", 6);
+    (void)write(STDOUT_FILENO, "\x1b[?25h", VT100_SHOW_CURSOR_LEN);
 }
 
 void linux_terminal_detect_capabilities(TerminalCapabilities* capabilities)
 {
+    if (capabilities == nullptr) {
+        return;
+    }
+
     // Default to conservative capabilities
     capabilities->supports_256_colours  = false;
     capabilities->supports_true_colour  = false;
@@ -146,11 +172,13 @@ void linux_terminal_detect_capabilities(TerminalCapabilities* capabilities)
     capabilities->supports_focus_events = false;
 
     // Check environment variables for terminal type
+    // NOLINTBEGIN(concurrency-mt-unsafe)
     const char* term                    = getenv("TERM");
     const char* colorterm               = getenv("COLORTERM");
+    // NOLINTEND(concurrency-mt-unsafe)
 
     // Basic terminal capability detection based on env vars
-    if (term) {
+    if (term != nullptr) {
         if (strstr(term, "256color") || strstr(term, "256colour")) {
             capabilities->supports_256_colours = true;
         }
@@ -161,7 +189,7 @@ void linux_terminal_detect_capabilities(TerminalCapabilities* capabilities)
         }
     }
 
-    if (colorterm) {
+    if (colorterm != nullptr) {
         if (strstr(colorterm, "truecolor") || strstr(colorterm, "24bit")) {
             capabilities->supports_true_colour = true;
         }
@@ -174,21 +202,26 @@ u8 linux_terminal_read_input(bool* ctrl_pressed,
 {
     // This is a simplistic version that will be expanded in the Input handling
     // commit It doesn't track modifier keys yet
-    u8 c = 0;
-    if (read(STDIN_FILENO, &c, 1) == 1) {
+    u8 chr = 0;
+    if (read(STDIN_FILENO, &chr, 1) == 1) {
         // For now, we're not setting any modifier keys
         *ctrl_pressed  = false;
         *alt_pressed   = false;
         *shift_pressed = false;
-        return c;
+        return chr;
     }
     return 0;
 }
 
 void linux_terminal_check_resize(PlatformState* state)
 {
+    if (state == nullptr) {
+        return;
+    }
+
     // Get current terminal dimensions
-    i32 new_width, new_height;
+    i32 new_width  = 0;
+    i32 new_height = 0;
     linux_terminal_get_size(&new_width, &new_height);
 
     // Check if dimensions changed
@@ -198,9 +231,11 @@ void linux_terminal_check_resize(PlatformState* state)
         // Free old buffers
         if (state->char_buffer) {
             free(state->char_buffer);
+            state->char_buffer = nullptr;
         }
         if (state->color_buffer) {
             free(state->color_buffer);
+            state->color_buffer = nullptr;
         }
 
         // Update dimensions
@@ -214,8 +249,10 @@ void linux_terminal_check_resize(PlatformState* state)
         state->color_buffer = malloc(buffer_size);
 
         // Initialize new buffers
-        memset(state->char_buffer, ' ', buffer_size);
-        memset(state->color_buffer, 0, buffer_size);
+        if (state->char_buffer && state->color_buffer) {
+            SAFE_MEMSET(state->char_buffer, buffer_size, ' ', buffer_size);
+            SAFE_MEMSET(state->color_buffer, buffer_size, 0, buffer_size);
+        }
     }
 }
 
@@ -224,33 +261,11 @@ void linux_terminal_render_buffer(u8* char_buffer,
                                   i32 width,
                                   i32 height)
 {
-    // Color buffer is not used in the current implementation
+    UNUSED(char_buffer);
     UNUSED(colour_buffer);
+    UNUSED(width);
+    UNUSED(height);
 
     // Position cursor at the top left
     linux_terminal_set_cursor_position(0, 0);
-
-    // Create a buffer for each line
-    char* line_buffer = malloc(width + 1);
-    if (!line_buffer) {
-        return;
-    }
-
-    // Render each line
-    for (i32 y = 0; y < height; y++) {
-        // Copy characters for this line to the buffer
-        for (i32 x = 0; x < width; x++) {
-            u64 pos        = (u64)y * (u64)width + (u64)x;
-            line_buffer[x] = char_buffer[pos];
-        }
-        line_buffer[width] = '\0';
-
-        // Position cursor at the beginning of this line
-        linux_terminal_set_cursor_position(0, y);
-
-        // Write the line
-        write(STDOUT_FILENO, line_buffer, width);
-    }
-
-    free(line_buffer);
 }

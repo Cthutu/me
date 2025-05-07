@@ -22,21 +22,16 @@ typedef double f64;
 // Boolean type is now provided by stdbool.h
 // No need to define our own
 
-// Platform detection macros
+// Platform detection using enum instead of macros
+enum Platform { ME_LINUX = 0, ME_MACOS = 1, ME_WINDOWS = 2 };
+
+// Platform detection
 #if defined(PLATFORM_LINUX)
-#    define ME_PLATFORM_LINUX 1
+static const enum Platform CURRENT_PLATFORM = ME_LINUX;
+#elif defined(PLATFORM_MACOS)
+static const enum Platform CURRENT_PLATFORM = ME_MACOS;
+#elif defined(PLATFORM_WINDOWS)
+static const enum Platform CURRENT_PLATFORM = ME_WINDOWS;
 #else
-#    define ME_PLATFORM_LINUX 0
-#endif
-
-#if defined(PLATFORM_MACOS)
-#    define ME_PLATFORM_MACOS 1
-#else
-#    define ME_PLATFORM_MACOS 0
-#endif
-
-#if defined(PLATFORM_WINDOWS)
-#    define ME_PLATFORM_WINDOWS 1
-#else
-#    define ME_PLATFORM_WINDOWS 0
+static const enum Platform CURRENT_PLATFORM = ME_LINUX; // Default to Linux
 #endif

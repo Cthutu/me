@@ -1,9 +1,18 @@
+#include "linux_platform.h"
+#include "common/secure_string.h" // Include our secure string functions
+#include "common/types.h"         // For u64, u8, i32 types
+#include "linux_terminal.h"
+#include "platform/interface/platform.h" // For PlatformInterface and PlatformState
+#include <limits.h>                      // For SIZE_MAX
+#include <stdint.h>                      // For SIZE_MAX
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 
-#include "linux_platform.h"
-#include "linux_terminal.h"
+// Define a constant for the maximum file size (1GB)
+enum FileSizeLimits {
+    MAX_FILE_SIZE_GB = 1,
+    MAX_FILE_SIZE    = ((1ULL << 30) * MAX_FILE_SIZE_GB)
+};
 
 // Memory management
 static void* linux_memory_alloc(u64 size) { return malloc(size); }
@@ -13,28 +22,53 @@ static void linux_memory_free(void* ptr) { free(ptr); }
 // File I/O operations
 static bool linux_file_read(const char* path, u8** data, u64* size)
 {
+    // Basic parameter validation
+    if (path == nullptr || data == nullptr || size == nullptr) {
+        return false;
+    }
+
+    // Open the file
     FILE* file = fopen(path, "rb");
     if (!file) {
         return false;
     }
 
     // Get file size
-    fseek(file, 0, SEEK_END);
-    *size = ftell(file);
-    fseek(file, 0, SEEK_SET);
+    (void)fseek(file, 0, SEEK_END);
+    long file_size = ftell(file);
+    (void)fseek(file, 0, SEEK_SET);
 
-    // Allocate buffer and read file
-    *data = (u8*)malloc(*size + 1);
-    if (!*data) {
-        fclose(file);
+    // Check for file size errors or size limits
+    if (file_size < 0 || (u64)file_size > MAX_FILE_SIZE) {
+        (void)fclose(file);
         return false;
     }
 
-    u64 bytes_read      = fread(*data, 1, *size, file);
-    (*data)[bytes_read] = '\0'; // Null-terminate the buffer
-    fclose(file);
+    *size = (u64)file_size;
 
-    return bytes_read == *size;
+    // Allocate memory (+1 for null terminator)
+    *data = (u8*)malloc(*size + 1);
+    if (!*data) {
+        (void)fclose(file);
+        return false;
+    }
+
+    // Read the file
+    size_t bytes_read = fread(*data, 1, *size, file);
+    (void)fclose(file);
+
+    // Check for read errors
+    if (bytes_read != *size) {
+        free(*data);
+        *data = nullptr;
+        return false;
+    }
+
+    // Null-terminate the buffer (safe because we allocated size+1)
+    // NOLINTNEXTLINE(clang-analyzer-security.ArrayBound)
+    (*data)[*size] = '\0';
+
+    return true;
 }
 
 static bool linux_file_write(const char* path, u8* data, u64 size)
@@ -45,7 +79,7 @@ static bool linux_file_write(const char* path, u8* data, u64 size)
     }
 
     u64 bytes_written = fwrite(data, 1, size, file);
-    fclose(file);
+    (void)fclose(file);
 
     return bytes_written == size;
 }
@@ -71,7 +105,7 @@ static u8 linux_terminal_read_input_wrapper(bool* ctrl_pressed,
 }
 
 // Platform interface instance
-static PlatformInterface linux_platform_interface = {
+static const PlatformInterface LINUX_PLATFORM_INTERFACE = {
     .memory_alloc           = linux_memory_alloc,
     .memory_free            = linux_memory_free,
     .file_read              = linux_file_read,
@@ -90,7 +124,7 @@ PlatformState* linux_platform_init(void)
     // Allocate platform state
     PlatformState* state = (PlatformState*)malloc(sizeof(PlatformState));
     if (!state) {
-        return NULL;
+        return nullptr; // Using nullptr for C23 compatibility
     }
 
     // Get terminal dimensions
@@ -110,12 +144,12 @@ PlatformState* linux_platform_init(void)
             free(state->color_buffer);
         }
         free(state);
-        return NULL;
+        return nullptr; // Using nullptr for C23 compatibility
     }
 
     // Initialize buffers
-    memset(state->char_buffer, ' ', buffer_size);
-    memset(state->color_buffer, 0, buffer_size);
+    SAFE_MEMSET(state->char_buffer, buffer_size, ' ', buffer_size);
+    SAFE_MEMSET(state->color_buffer, buffer_size, 0, buffer_size);
 
     // Set up platform function pointers
     state->memory_alloc  = linux_memory_alloc;
@@ -158,5 +192,5 @@ void linux_platform_shutdown(PlatformState* state)
 // Get the Linux platform interface
 const PlatformInterface* linux_get_platform_interface(void)
 {
-    return &linux_platform_interface;
+    return &LINUX_PLATFORM_INTERFACE;
 }
