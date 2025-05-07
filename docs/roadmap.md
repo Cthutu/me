@@ -35,6 +35,8 @@ the platform, e.g. `linux_main.c`, `win32_main.c` etc.
   `u8`, `u16` etc. for unsigned.  Similarly, use `f32` etc. for floats.
 - Try to keep memory allocation to a minimum.
 - Do not use 3rd party libraries.
+- Generated folders (build, bin, etc.) should be prefixed with an underscore (e.g., `_build`, `_bin`)
+  to easily distinguish them from source code directories.
 
 ## Phases
 
