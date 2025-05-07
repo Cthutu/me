@@ -1,0 +1,11 @@
+clang-format
+document comments
+include lint in makefile build
+// for document comments
+nullptr
+colour buffer should be 24-bit
+character buffer should be unicode endpoints
+comments about using NULL
+asserts
+comparing to nullptr
+out of memory should crash
