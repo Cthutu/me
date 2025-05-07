@@ -28,8 +28,9 @@ EXEC = $(BIN_DIR)/$(TARGET)
 # Source files
 CORE_SRC = $(wildcard $(SRC_DIR)/core/*.c)
 PLATFORM_SRC = $(wildcard $(SRC_DIR)/platform/$(PLATFORM)_*.c)
+PLATFORM_IMPL_SRC = $(wildcard $(SRC_DIR)/platform/$(PLATFORM)/*.c)
 COMMON_SRC = $(wildcard $(SRC_DIR)/common/*.c)
-ALL_SRC = $(CORE_SRC) $(PLATFORM_SRC) $(COMMON_SRC)
+ALL_SRC = $(CORE_SRC) $(PLATFORM_SRC) $(PLATFORM_IMPL_SRC) $(COMMON_SRC)
 
 # Object files
 OBJS = $(patsubst $(SRC_DIR)/%.c,$(BUILD_DIR)/%.o,$(ALL_SRC))
