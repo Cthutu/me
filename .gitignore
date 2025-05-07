@@ -1,5 +1,6 @@
 # Build directories
 _*/
+compile_commands.json
 
 # Editor files
 *.swp
