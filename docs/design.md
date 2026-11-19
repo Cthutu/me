@@ -782,8 +782,9 @@ Do not reserve `v` for a separate selection state or `l` for Vim-style movement.
 - Ctrl+Backspace deletes the active selection, or deletes back to the previous
   Ctrl+Left word boundary (including intervening whitespace). It is one undo
   operation and enters Normal. In prompts it edits the prompt, not the buffer.
-  Bind the distinct modified Backspace event first; terminal-specific fallback
-  encodings remain unmodified until user testing shows a need.
+  Accept modified Backspace and legacy `0x08` (Ctrl+H), used by WezTerm's
+  default Ctrl+Backspace encoding. Keep `0x7f` as ordinary Backspace. Legacy
+  terminals sending `0x08` for plain Backspace cannot distinguish the keys.
 - Ctrl+D duplicates the whole line-selection block below itself, retaining the
   copied block as a line selection so duplication can repeat. Without a non-empty
   line selection, duplicate only the caret's current line, clear any character

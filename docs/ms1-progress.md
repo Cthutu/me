@@ -77,7 +77,8 @@ on both debug and release builds:
     and preservation of emphasis in Insert.
 13. Repeated selected-line block duplication, one-operation undo, current-line
     fallback with character-selection clearing and mixed-ending fidelity.
-14. Distinct Ctrl+Backspace events delete previous words or active selections;
+14. Ctrl+Backspace CSI-u (`127;5u`, `8;5u`) and legacy WezTerm `0x08`
+    events delete previous words or active selections;
     deletion is one undo operation, including when invoked from Insert.
 
 Normal/signal exits compare the actual PTY attributes against startup and check

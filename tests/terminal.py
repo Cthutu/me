@@ -442,22 +442,23 @@ def crash_and_signals(binary, folder):
 def word_delete(binary, folder):
     path = folder / "words.txt"
     path.write_bytes(b"alpha beta")
-    control_backspace = b"\x1b[127;5u"
-    with Session(binary, folder, "-r", "words.txt") as session:
-        session.send(b"\x1b[F")
-        session.send("i")
-        session.send(control_backspace)
-        session.send(b"\x13")
-        assert path.read_bytes() == b"alpha ", "Ctrl+Backspace did not delete the previous word"
-        session.send(b"\x1a")
-        session.send(b"\x13")
-        assert path.read_bytes() == b"alpha beta", "word deletion was not one undo operation"
-        session.send(b"\x1b[H")
-        session.send(b"\x1b[1;6C")
-        session.send(control_backspace)
-        session.send(b"\x13")
-        assert path.read_bytes() == b"beta", "Ctrl+Backspace did not delete the active selection"
-        session.quit()
+    for control_backspace in (b"\x1b[127;5u", b"\x1b[8;5u", b"\x08"):
+        path.write_bytes(b"alpha beta")
+        with Session(binary, folder, "-r", "words.txt") as session:
+            session.send(b"\x1b[F")
+            session.send("i")
+            session.send(control_backspace)
+            session.send(b"\x13")
+            assert path.read_bytes() == b"alpha ", "Ctrl+Backspace did not delete the previous word"
+            session.send(b"\x1a")
+            session.send(b"\x13")
+            assert path.read_bytes() == b"alpha beta", "word deletion was not one undo operation"
+            session.send(b"\x1b[H")
+            session.send(b"\x1b[1;6C")
+            session.send(control_backspace)
+            session.send(b"\x13")
+            assert path.read_bytes() == b"beta", "Ctrl+Backspace did not delete the active selection"
+            session.quit()
 
 
 def duplicate_selection(binary, folder):

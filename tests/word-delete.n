@@ -11,7 +11,8 @@ check_word_delete :: fn (text        : string,
                          destination : usize,
                          anchor      : ?usize = nil,
                          linewise    : bool = no,
-                         control     : bool = yes) -> void\string {
+                         control     : bool = yes,
+                         legacy      : bool = no) -> void\string {
     editor : Editor
     editor.workspace.lock_fd = -1
     defer editor.release()
@@ -34,11 +35,12 @@ check_word_delete :: fn (text        : string,
     editor.key(^scratch, TermKeyEvent {
         scan_code : TermScanCode.Backspace
         action    : TermKeyAction.Press
-        modifiers : on control { yes => TERM_MOD_CONTROL else => 0 }
-        character : 127
+        modifiers : on control && !legacy { yes => TERM_MOD_CONTROL else => 0 }
+        character : on legacy { yes => 8.as(u32) else => 127.as(u32) }
         ...
     })
-    editor.character(^scratch, 127.as(u32))
+    editor.character(^scratch,
+                     on legacy { yes => 8.as(u32) else => 127.as(u32) })
     assert doc.text() == expected
     assert view.selection.empty() && !view.linewise
     assert view.selection.active == destination
@@ -52,6 +54,7 @@ check_word_delete :: fn (text        : string,
 
 exercise_word_delete :: fn () -> void\string {
     check_word_delete("alpha beta", 10, "alpha ", 6)?
+    check_word_delete("alpha beta", 10, "alpha ", 6, anchor = nil, linewise = no, control = yes, legacy = yes)?
     check_word_delete("alpha, ", 7, "alpha", 5)?
     check_word_delete("alpha  \r\n  beta", 11, "beta", 0)?
     check_word_delete("alphabet soup", 5, "bet soup", 0)?

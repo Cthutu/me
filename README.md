@@ -84,6 +84,11 @@ Ctrl-bound editing commands enter Normal even on failure/no-op. Ctrl navigation
 preserves state. Each terminal character event, deletion, paste and duplicate is its own
 undo operation. Invoking undo/redo clears selection and moves to the edit.
 
+Legacy byte `0x08` (Ctrl+H), used by WezTerm for Ctrl+Backspace, performs
+word deletion too. Byte `0x7f` remains ordinary Backspace. Terminals sending
+`0x08` for plain Backspace cannot distinguish it from this shortcut without
+configuration or enhanced keyboard reporting.
+
 Positive Normal counts prefix arrows, word/paragraph/page movement and `w`/`l`.
 Unsupported combinations report an error and consume the count. `:120` jumps to
 line 120's first non-whitespace; out-of-range lines are clamped. Vertical motion
