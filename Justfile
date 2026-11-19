@@ -3,6 +3,15 @@ set positional-arguments
 
 nerd := env("NERD", "nerd")
 
+alias b := build
+alias r := run
+alias rel := release
+alias c := check
+alias t := test
+alias tt := test-terminal
+alias ta := test-all
+alias f := format
+
 default:
     just --list
 

@@ -24,6 +24,10 @@ just format
 just clean
 ```
 
+Recipe aliases: `b` → build, `r` → run, `rel` → release, `c` → check,
+`t` → test, `tt` → test-terminal, `ta` → test-all, and `f` → format.
+Aliases accept the same arguments as their full names, e.g. `just r README.md`.
+
 The default compiler is installed `nerd`. Override `NERD` and `NERD_LIB_PATH` to
 use an isolated compiler/modules pair. An ignored local `.env` currently selects
 `_tools/nerd` and `_tools/mods`, containing the tested Nerd fixes; the shared Nerd
