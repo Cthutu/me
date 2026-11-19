@@ -9,6 +9,11 @@ to requirements without agreement. Use British spelling throughout
 project-authored code, comments, diagnostics, UI, and documentation, preserving
 external API/protocol names where required.
 
+Maintain only the single agreed-task PanelCraft panel listed in `docs/dashboard.md`,
+backed by `docs/tasks.md`. Do not recreate the removed MS1 progress/design/feature
+panels. Track explicitly agreed work, not optional proposals; keep detailed design
+and verification evidence in repository documents.
+
 ## Nerd implementation
 
 - Use Nerd's standard library, especially `std.term`, rather than another
