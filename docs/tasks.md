@@ -8,14 +8,18 @@ tasks; optional ideas and open interaction choices remain labelled as such.
 Removed the previous progress, design and feature panels. Created one agreed-task
 tracker. Detailed design and verification evidence remain in repository documents.
 
-## T1 — Improve mode and status readability — in progress
+## T1 — Improve mode and status readability — completed
 
 - Normal state: green cursor and green status bar.
 - Insert state: red cursor and red status bar, signalling editing danger.
 - Use a clearer UTF-8 status presentation without requiring a special font.
 - Retain textual mode labels, file/modified/conflict/persistence information,
   position and buffer identity. Keep narrow terminals and resizing safe.
-- Validate actual terminal output, then commit, push and install.
+- Validated native cell contrast, mode colours, narrow warnings and layouts;
+  real PTY output includes both palettes, UTF-8 markers and complex-glyph RGB.
+- Full verification: 23 project native tests across 16 files and 16 PTY scenario
+  groups on both debug and release builds. Commit, push and installation are
+  required at completion.
 
 ## T2 — Open files with filename completion — agreed, not started
 

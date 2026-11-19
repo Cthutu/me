@@ -26,6 +26,9 @@ refreshes. See the [README](../README.md) for usage and explicit limitations.
 - Search preview, origin prefixes, cancellation/arrow restoration, wrap,
   remembered terms, next/previous match selections and passive highlighting.
   Literal one/all replacement; replace-all is one undo operation.
+- Green Normal/red Insert caret and status presentation with contrasting UTF-8
+  mode badges, separators and modified marker. Narrow mode badges preserve room
+  for warnings. Composite overlays now use the same RGB ordering as native cells.
 - Single-pane `std.term` surface with absolute/relative gutter, current-line
   horizontal scroll, status, wrapped/growing/scrollable messages and resize.
   Local full-grapheme bridge and retained idle framebuffer output.
@@ -50,7 +53,7 @@ refreshes. See the [README](../README.md) for usage and explicit limitations.
 ### Headless
 
 `just check`, `just format`, Python tooling compilation and `just test` have
-passed. There are **22 project-authored named tests across 15 Nerd files**, with
+passed. There are **23 project-authored named tests across 16 Nerd files**, with
 many assertions and the 1,093 official Unicode vectors inside those tests.
 Nerd additionally discovers imported standard-library tests; its per-file totals
 must **not** be summed or described as the number of distinct ME tests.
@@ -58,7 +61,7 @@ must **not** be summed or described as the number of distinct ME tests.
 ### Real terminal integration
 
 `python3 tests/terminal.py --binary _bin/me` and the equivalent release command
-passed all **15 scenario groups**, including buffer lifecycle, gutter styling, selected-line duplication and word deletion,
+passed all **16 scenario groups**, including buffer lifecycle, gutter styling, selected-line duplication and word deletion,
 on both debug and release builds:
 
 1. Unsaved named continuation, individual undo, redo across saving/restart.
@@ -85,6 +88,8 @@ on both debug and release builds:
     deletion is one undo operation, including when invoked from Insert.
 15. Backspace Undo and insertion Redo restore the initiating caret, including
     after restart; legacy v1 snapshots retain history and upgrade to v2.
+16. Green Normal/red Insert cursors and status, UTF-8 mode/modified markers,
+    correct composite-grapheme RGB, contrast, narrow layouts and resize.
 
 Normal/signal exits compare the actual PTY attributes against startup and check
 alternate-screen restoration. Tests use isolated temporary HOME/folders and do

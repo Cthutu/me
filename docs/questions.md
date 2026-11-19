@@ -228,7 +228,9 @@ Remaining:
    indicated. Define prompt precedence and message-scroll bindings.
 4. Settled: preserve intentional scroll-away on resize; recentre only when the
    resize itself forces a previously visible caret out of view.
-5. Choose compact status markers and numbering/prompt presentation details.
+5. Settled direction: Normal cursor/status green, Insert red, with clearer UTF-8
+   status presentation. Current glyphs/palette are implementation choices;
+   textual labels and compact warning markers remain visible.
 
 ## Buffer contracts and tracked positions
 

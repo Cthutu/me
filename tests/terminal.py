@@ -549,6 +549,36 @@ def duplicate_selection(binary, folder):
         session.quit()
 
 
+def mode_presentation(binary, folder):
+    path = folder / "readable.txt"
+    emoji = "👩‍💻".encode()
+    original = b"a" + emoji + b"b"
+    path.write_bytes(original)
+    green = b"48;2;123;216;143m"
+    red = b"48;2;240;113;120m"
+    with Session(binary, folder, "-r", "readable.txt") as session:
+        assert green in session.output
+        assert b"48;2;33;76;56m" in session.output
+        assert "◆".encode() in session.output and "│".encode() in session.output
+        assert b"NORMAL" in session.output
+        changed = session.send(b"\x1b[C")
+        assert b"\x1b[" + green + emoji in changed, "composite cursor did not use the Normal palette"
+        changed = session.send("i")
+        assert b"\x1b[" + red + emoji in changed, "composite cursor did not use the Insert palette"
+        assert red in changed and b"48;2;96;45;53m" in changed
+        assert "✎".encode() in changed and b"INSERT" in changed
+        changed = session.send("x")
+        assert "●".encode() in changed, "UTF-8 modified marker did not appear"
+        fcntl.ioctl(session.master, termios.TIOCSWINSZ, struct.pack("HHHH", 2, 8, 0, 0))
+        session.drain(0.2)
+        session.normal()
+        fcntl.ioctl(session.master, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+        changed = session.drain(0.25)
+        assert green in changed and b"NORMAL" in changed, "mode colours did not survive resize"
+        session.quit("q!")
+    assert path.read_bytes() == original
+
+
 def gutter_highlight(binary, folder):
     (folder / "lines.txt").write_bytes(b"a\nb\nc")
     gold = rb"\x1b\[38;2;214;179;90m(?:\x1b\[[0-9;]*m)* *"
@@ -603,7 +633,7 @@ def main():
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
     checks = [recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
               search_replace_and_buffers, byte_paths_and_checkpoint_failures,
-              second_instance, crash_and_signals, undo_caret, word_delete, duplicate_selection, gutter_highlight, graphemes_and_resize]
+              second_instance, crash_and_signals, undo_caret, word_delete, duplicate_selection, mode_presentation, gutter_highlight, graphemes_and_resize]
     for check in checks:
         if args.filter not in check.__name__:
             continue

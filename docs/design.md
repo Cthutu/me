@@ -920,6 +920,9 @@ Debounce/stability checks, latency, missing files, and error policy remain open.
 
 ## 20. Status bars and workspace command/message area — agreed
 
+- Normal uses a green cursor and status bar; Insert uses red to signal editing
+  danger. Improve status readability using UTF-8 presentation, retaining clear
+  textual mode labels and file/error/position information.
 - Each pane has its own status bar, separate from a workspace-wide bottom area.
   Show interaction state, document identity/state, caret position, and pending
   input/counts as appropriate. Exact formatting remains open.
@@ -1143,6 +1146,12 @@ and command reference, and [MS1 progress](ms1-progress.md) for verified gates.
   scrolling. `!C`, `~`, `!conflict`, `?missing` are compact persistent markers.
   Tiny terminals prioritise the message/prompt area. Resize preserves deliberate
   scroll-away and recentres only a previously visible caret forced out.
+- **Mode presentation:** bright green/red caret and mode badge, with a dark
+  green/red status background. Dark caret text contrasts with both colours.
+  Default Unicode badges are `◆ NORMAL` / `✎ INSERT`, `●` marks modifications,
+  and `│` separates details. Below 32 columns, compact `N`/`I` badges leave room
+  for warnings. These glyph/palette details remain implementation choices, not
+  a requirement for a special font.
 - **Terminal bridge:** ordinary cells use `std.term`'s retained framebuffer; a
   bounded local overlay bridges single-codepoint cells to complex graphemes.
   Linux signal descriptors request safe termination without libc handlers.

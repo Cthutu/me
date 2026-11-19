@@ -195,7 +195,14 @@ SIGKILL recovery is limited to the last successful checkpoint.
 
 The gutter is absolute in Insert, relative in Normal/commands, with an absolute
 current line. The current line number is gold on a highlighted gutter background;
-other numbers remain muted. Horizontal scrolling is initially current-line-only. Messages
+other numbers remain muted. Normal uses a **green cursor and status bar**;
+Insert uses **red**. The status has contrasting `◆ NORMAL` / `✎ INSERT` badges,
+`│`-separated details and a `●` modified marker, using ordinary Unicode rather
+than special-font glyphs. Narrow terminals use compact `N` / `I` badges to leave
+room for warnings. Cursor text stays dark and legible on either accent colour.
+Complex graphemes use the same RGB palette as ordinary cells.
+
+Horizontal scrolling is initially current-line-only. Messages
 wrap/grow to half the terminal; Alt+Page Up/Down scroll overflow. Escape dismisses
 messages without changing caret/selection. `!C` marks checkpoint failure, `~` a
 non-persisting session, `!conflict` and `?missing` backing-file conditions.

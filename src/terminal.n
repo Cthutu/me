@@ -52,13 +52,17 @@ pub Terminal :: plex {
     signals_active      bool
 }
 
-INK    :: 0xd8dee9.as(Colour)
-PAPER  :: 0x171d27.as(Colour)
-MUTED  :: 0x738299.as(Colour)
-STATUS :: 0x29394f.as(Colour)
-SELECT :: 0x386a91.as(Colour)
-MATCH  :: 0x5b5030.as(Colour)
-CARET  :: 0xd6b35a.as(Colour)
+INK          :: 0xd8dee9.as(Colour)
+PAPER        :: 0x171d27.as(Colour)
+MUTED        :: 0x738299.as(Colour)
+GUTTER_PAPER :: 0x29394f.as(Colour)
+NORMAL_PAPER :: 0x214c38.as(Colour)
+INSERT_PAPER :: 0x602d35.as(Colour)
+NORMAL_CARET :: 0x7bd88f.as(Colour)
+INSERT_CARET :: 0xf07178.as(Colour)
+SELECT       :: 0x386a91.as(Colour)
+MATCH        :: 0x5b5030.as(Colour)
+GUTTER_INK   :: 0xd6b35a.as(Colour)
 
 message_rows :: fn (text: string, width: usize) -> [..]string {
     rows   : [..]string
@@ -126,7 +130,7 @@ impl Terminal {
                 on !glyph.pending => again
                 ink := glyph.ink.as(u32)
                 paper := glyph.paper.as(u32)
-                text := self.scratch.pr($"\x1b[{glyph.y + 1};{glyph.x + 1}H\x1b[38;2;{ink & 255};{(ink >> 8) & 255};{(ink >> 16) & 255}m\x1b[48;2;{paper & 255};{(paper >> 8) & 255};{(paper >> 16) & 255}m{glyph.text}\x1b[0m")
+                text := self.scratch.pr($"\x1b[{glyph.y + 1};{glyph.x + 1}H\x1b[38;2;{(ink >> 16) & 255};{(ink >> 8) & 255};{ink & 255}m\x1b[48;2;{(paper >> 16) & 255};{(paper >> 8) & 255};{paper & 255}m{glyph.text}\x1b[0m")
                 start := output.count
                 output.resize_undefined_to(start + text.count)
                 output[start ..] = text.as([]u8)
@@ -231,6 +235,13 @@ impl Terminal {
         editor := ^self.editor
         text_view := editor.workspace.active_view()
         view := ^text_view.interaction
+        inserting := view.state == Interaction.Insert
+        caret_paper := on inserting {
+            yes => INSERT_CARET else => NORMAL_CARET
+        }
+        status_paper := on inserting {
+            yes => INSERT_PAPER else => NORMAL_PAPER
+        }
         entry := editor.workspace.active_document()
         doc := ^entry.text
         caret_line := doc.line_at(view.selection.active)
@@ -289,10 +300,10 @@ impl Terminal {
             on gutter > 0 => {
                 current := line == caret_line
                 ink := on current {
-                    yes => CARET else => MUTED
+                    yes => GUTTER_INK else => MUTED
                 }
                 paper := on current {
-                    yes => STATUS else => PAPER
+                    yes => GUTTER_PAPER else => PAPER
                 }
                 on current => {
                     for x in [0.as(usize) .. gutter] {
@@ -322,6 +333,7 @@ impl Terminal {
                 cells := character_width(doc.text(), position, column)
                 on cells == 0 => cells = 1
                 paper := PAPER
+                ink := INK
                 on editor.highlights && query.count > 0 => {
                     for match_position < next &&
                         match_position + query.count <= doc.text().count {
@@ -331,29 +343,38 @@ impl Terminal {
                     on position < match_end => paper = MATCH
                 }
                 on position < view.selection.end() && next > view.selection.start() => paper = SELECT
-                on editor.prompt_kind == 0 && view.selection.active >= position && view.selection.active < next => paper = CARET
+                on editor.prompt_kind == 0 && view.selection.active >= position && view.selection.active < next => {
+                    paper = caret_paper
+                    ink = PAPER
+                }
                 on column >= horizontal && column - horizontal + cells <= view.columns => {
-                    self.character(gutter + column - horizontal, row, doc.text()[position .. next], cells, INK, paper)
+                    self.character(gutter + column - horizontal, row, doc.text()[position .. next], cells, ink, paper)
                 }
                 column += cells
                 position = next
                 on column >= horizontal + view.columns => break
             }
-            on editor.prompt_kind == 0 && view.selection.active == end && column >= horizontal && column - horizontal < view.columns => self.set(gutter + column - horizontal, row, ' '.as(u32), PAPER, CARET)
+            on editor.prompt_kind == 0 && view.selection.active == end && column >= horizontal && column - horizontal < view.columns => self.set(gutter + column - horizontal, row, ' '.as(u32), PAPER, caret_paper)
         }
         on height > message_height => {
             status_y := height - message_height - 1
             for x in [0.as(usize) .. width] {
-                self.set(x, status_y, ' '.as(u32), INK, STATUS)
+                self.set(x, status_y, ' '.as(u32), INK, status_paper)
             }
-            state := on view.state == Interaction.Insert {
-                yes => "INSERT" else => "NORMAL"
+            badge := on width < 32 {
+                yes => on inserting {
+                    yes => " I " else => " N "
+                }
+                else => on inserting {
+                    yes => " ✎ INSERT " else => " ◆ NORMAL "
+                }
             }
+            badge_width := display_column(badge, 0, badge.count)
             path := on entry.path.count == 0 {
                 yes => "[unnamed]" else => bytes_text(entry.path)
             }
             modified := on entry.modified() {
-                yes => " *" else => ""
+                yes => " ●" else => ""
             }
             conflict := on entry.conflict {
                 yes => " !conflict" else => ""
@@ -369,8 +390,9 @@ impl Terminal {
             count := on text_view.keyboard.count > 0 {
                 yes => self.scratch.pr($"  {text_view.keyboard.count}") else => ""
             }
-            status := self.scratch.pr($"{persistence}{conflict}{missing} {state}{modified} {caret_line + 1}:{display_column(doc.text(), doc.line_start(caret_line), view.selection.active) + 1}{count} [{text_view.document_id + 1}/{editor.workspace.documents.count}] {path}")
-            self.text(0, status_y, status, INK, STATUS, width)
+            status := self.scratch.pr($"{persistence}{conflict}{missing}{modified} │ {caret_line + 1}:{display_column(doc.text(), doc.line_start(caret_line), view.selection.active) + 1}{count} │ {text_view.document_id + 1}/{editor.workspace.documents.count} │ {path}")
+            self.text(0, status_y, badge, PAPER, caret_paper, width)
+            on width > badge_width => self.text(badge_width, status_y, status, INK, status_paper, width - badge_width)
         }
         bottom := height - message_height
         on editor.prompt_kind != 0 {
@@ -393,11 +415,11 @@ impl Terminal {
                 on column >= skipped && column - skipped < width => {
                     cell := ^self.cells[bottom * width + column - skipped]
                     cell.ink = PAPER
-                    cell.paper = CARET
+                    cell.paper = caret_paper
                     for glyph in self.glyphs {
                         on glyph.x == column - skipped && glyph.y == bottom => {
                             glyph.ink = PAPER
-                            glyph.paper = CARET
+                            glyph.paper = caret_paper
                         }
                     }
                 }
