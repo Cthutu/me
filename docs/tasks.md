@@ -18,8 +18,8 @@ tracker. Detailed design and verification evidence remain in repository document
 - Validated native cell contrast, mode colours, narrow warnings and layouts;
   real PTY output includes both palettes, UTF-8 markers and complex-glyph RGB.
 - Full verification: 23 project native tests across 16 files and 16 PTY scenario
-  groups on both debug and release builds. Commit, push and installation are
-  required at completion.
+  groups on both debug and release builds. Committed/pushed as `02b938d` and
+  installed; installed-binary presentation smoke passed.
 
 ## T2 — Open files with filename completion — agreed, not started
 
@@ -36,4 +36,43 @@ tracker. Detailed design and verification evidence remain in repository document
 - **Proposed, not agreed:** a popup listing files in the folder prefix already
   typed. If adopted, decide when it appears and how selection/accept/cancel work.
 
-No split panes, generic command palette or language services are implied by T2.
+No split panes, generic command palette or language services are bundled into T2.
+
+## Agreed MS2 queue — not started
+
+The following tasks were explicitly accepted after T1/T2. This is the intended
+sequence, not a claim that interaction details are settled or code exists.
+If a filename popup is adopted for T2, its shared infrastructure may need to be
+pulled forward rather than creating a one-off implementation.
+
+### T3 — Shared popup/picker infrastructure and buffer switcher
+
+- Build the shared popup/picker foundation, first exercised by a buffer switcher.
+- Keep input/focus, query, candidate selection and dismissal separate from buffers.
+- Choose bindings and exact accept/cancel behaviour before implementation.
+
+### T4 — File picker
+
+- Discover and filter file candidates without blocking normal input.
+- Support cancellation and opening/focusing a selected file.
+- Settle discovery roots, matching, hidden/ignored files and symlink policies.
+- Reuse T3; retain Linux filename fidelity and validate stale candidates.
+
+### T5 — Split-pane UI
+
+- Support pane creation, focus and closing, with independent views of shared text.
+- Keep shared buffer history and semantic position adjustment across views.
+- Agree commands/bindings, split directions and sizing before implementation.
+- Closing a pane is distinct from killing its buffer.
+
+### T6 — Explicit repeat recording and playback
+
+- Implement the agreed recording/replay direction in design §12: Normal-state
+  `[` starts recording, `]` ends it and `.` replays; brackets remain text in Insert.
+- Recording uses normal individual undo units; one replay is one undo unit.
+- Preserve the agreed failure policy: retain completed edits as a single undoable
+  group and report the failure, rather than automatically rolling them back.
+- Resolve remaining capture/state/selection, redo, scope and storage choices first.
+
+Language intelligence, desktop clipboard and configuration are not added to this
+queue by implication.

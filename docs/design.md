@@ -1160,3 +1160,17 @@ and command reference, and [MS1 progress](ms1-progress.md) for verified gates.
 
 This does not settle later facets, split trees, popup composition, repeat
 recording, system clipboard, configuration, or language-service APIs.
+
+## 25. Agreed follow-on task queue
+
+- Add `:e <path>` with filename Tab completion, preserving existing buffers and
+  reusing already-open files. A folder-candidate popup is still proposed;
+  its trigger and interaction require a decision.
+- The user also agreed the proposed MS2 sequence: shared popup/picker
+  infrastructure first exercised by a buffer switcher; then a non-blocking,
+  filterable, cancellable file picker; split panes with independent shared-buffer
+  views; and explicit repeat recording/playback using section 12's agreed rules.
+- Feature scope is agreed, not every binding, matching rule, popup interaction or
+  implementation mechanism. Keep unresolved choices explicit before building.
+- Track accepted tasks and actual status in `docs/tasks.md` and the single
+  agreed-task panel. Do not restore the removed progress/design/feature panels.

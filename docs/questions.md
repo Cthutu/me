@@ -302,3 +302,17 @@ During the undo-caret work, one full `just test` invocation terminated with
 SIGSEGV after the codec suite. The following editor-BOM test passed in isolation,
 and a complete rerun passed all 22 project tests. No minimal reproducer or cause
 is established; retain `_tmp/undo-core-initial.log` for investigation if it recurs.
+
+
+## Next: file opening, completion and MS2
+
+Agreed: `:e <path>` with filename Tab completion. The broader MS2 popup/buffer
+switcher, file picker, splits and explicit repeat tasks are also accepted; see
+`docs/tasks.md`. Their detailed interactions are not automatically settled.
+
+Before T2, choose whether Tab extends the common prefix, cycles matches or opens
+a list. The suggested folder-candidate popup remains optional: should it appear
+while typing a folder prefix, or only when Tab finds multiple matches? Settle
+directory navigation, accept/cancel, no-match, hidden files and byte-safe prompt
+presentation before implementation. If a popup is selected, reuse shared picker
+infrastructure rather than a disconnected one-off widget.
