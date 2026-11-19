@@ -141,9 +141,13 @@ impl Editor {
         self.prompt_caret += text.count
         on self.prompt_kind != ':'.as(u32) => self.preview_search()
     }
-    pub prompt_delete :: fn (self: ^Self, backwards: bool) {
+    pub prompt_delete :: fn (self: ^Self, backwards: bool, word: bool = no) {
         start := on backwards {
-            yes => previous_character(bytes_text(self.prompt), self.prompt_caret) else => self.prompt_caret
+            yes => on word {
+                yes => word_start_before(bytes_text(self.prompt), self.prompt_caret)
+                else => previous_character(bytes_text(self.prompt), self.prompt_caret)
+            }
+            else => self.prompt_caret
         }
         end := on backwards {
             yes => self.prompt_caret else => next_character(bytes_text(self.prompt), self.prompt_caret)
@@ -443,7 +447,7 @@ impl Editor {
         doc := ^entry.text
         -- These are state-changing command kinds, not a blanket Ctrl rule.
         on command {
-            Save, Undo, Redo, Duplicate => view.state = Interaction.Normal else => {
+            Save, Undo, Redo, Duplicate, DeleteWordBack => view.state = Interaction.Normal else => {
             }
         }
         on self.prompt_kind != 0 => {
@@ -465,6 +469,10 @@ impl Editor {
                 }
                 Backspace => {
                     self.prompt_delete(yes)
+                    return
+                }
+                DeleteWordBack => {
+                    self.prompt_delete(yes, word = yes)
                     return
                 }
                 Delete => {
@@ -585,7 +593,7 @@ impl Editor {
                     _error! => return "Cannot insert indentation"!
                 }
             }
-            Backspace, Delete => {
+            Backspace, Delete, DeleteWordBack => {
                 on view.selection.empty() => {
                     position := view.selection.active
                     on command {
@@ -605,6 +613,7 @@ impl Editor {
                             }
                             view.selection.anchor = start
                         }
+                        DeleteWordBack => view.move(doc, Direction.WordBack, 1, yes)
                         else => view.selection.anchor = next_character(doc.text(), position)
                     }
                 }

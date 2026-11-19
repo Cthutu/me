@@ -36,6 +36,7 @@ pub Command :: enum {
     InsertText(string)
     EnterInsert(u32)
     Backspace
+    DeleteWordBack
     Tab
     Delete
     Escape
@@ -86,6 +87,24 @@ pub display_column :: fn (text: string, start: usize, position: usize) -> usize 
 
 pub word_kind :: fn (text: string, position: usize) -> u8 {
     return character_kind(text, position)
+}
+
+-- Shared by word-back navigation and word deletion, including prompt editing.
+pub word_start_before :: fn (text: string, position: usize) -> usize {
+    start := previous_character(text, position)
+    for start > 0 && word_kind(text, start) == 0 {
+        start = previous_character(text, start)
+    }
+    kind := on start < text.count {
+        yes   => word_kind(text, start)
+        else  => 0
+    }
+    for start > 0 {
+        prior := previous_character(text, start)
+        on word_kind(text, prior) != kind => break
+        start = prior
+    }
+    return start
 }
 
 impl View {
@@ -229,20 +248,7 @@ impl View {
 
             WordBack => {
                 for _ in [0 .. amount] {
-                    position = previous_character(text, position)
-                    for position > 0 &&
-                        word_kind(text, position) == 0 {
-                        position = previous_character(text, position)
-                    }
-                    kind := on position < text.count {
-                        yes   => word_kind(text, position)
-                        else  => 0
-                    }
-                    for position > 0 {
-                        prior := previous_character(text, position)
-                        on word_kind(text, prior) != kind => break
-                        position = prior
-                    }
+                    position = word_start_before(text, position)
                 }
             }
 

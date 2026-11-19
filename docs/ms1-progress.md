@@ -19,6 +19,7 @@ refreshes. See the [README](../README.md) for usage and explicit limitations.
 - Normal/Insert editing, selection replacement, indentation heuristic, internal
   characterwise/linewise clipboard, cut/change/paste and one-operation duplicate
   of selected lines or the caret line, clearing character-based selections.
+  Ctrl+Backspace deletes selections or the previous Ctrl+Left word range.
 - Search preview, origin prefixes, cancellation/arrow restoration, wrap,
   remembered terms, next/previous match selections and passive highlighting.
   Literal one/all replacement; replace-all is one undo operation.
@@ -46,7 +47,7 @@ refreshes. See the [README](../README.md) for usage and explicit limitations.
 ### Headless
 
 `just check`, `just format`, Python tooling compilation and `just test` have
-passed. There are **19 project-authored named tests across 13 Nerd files**, with
+passed. There are **20 project-authored named tests across 14 Nerd files**, with
 many assertions and the 1,093 official Unicode vectors inside those tests.
 Nerd additionally discovers imported standard-library tests; its per-file totals
 must **not** be summed or described as the number of distinct ME tests.
@@ -54,7 +55,7 @@ must **not** be summed or described as the number of distinct ME tests.
 ### Real terminal integration
 
 `python3 tests/terminal.py --binary _bin/me` and the equivalent release command
-passed all **13 scenario groups**, including buffer lifecycle, gutter styling and selected-line duplication,
+passed all **14 scenario groups**, including buffer lifecycle, gutter styling, selected-line duplication and word deletion,
 on both debug and release builds:
 
 1. Unsaved named continuation, individual undo, redo across saving/restart.
@@ -76,6 +77,8 @@ on both debug and release builds:
     and preservation of emphasis in Insert.
 13. Repeated selected-line block duplication, one-operation undo, current-line
     fallback with character-selection clearing and mixed-ending fidelity.
+14. Distinct Ctrl+Backspace events delete previous words or active selections;
+    deletion is one undo operation, including when invoked from Insert.
 
 Normal/signal exits compare the actual PTY attributes against startup and check
 alternate-screen restoration. Tests use isolated temporary HOME/folders and do
@@ -100,12 +103,12 @@ hard real-time guarantee. Complex-grapheme overlays add one simulation step.
 Document projection/index rebuilding remains correctness-first, not a claim
 about very large-file scalability.
 
-## Nerd fixes — eight completed
+## Nerd fixes — nine completed
 
 All compiler changes used dedicated worktrees. Each fix passed the unified full
 gate (**72 passed, 0 failed, 2 platform skips**), formatting and isolated installed
 compiler smoke checks before integration. A combined-main gate also passed;
-the final string-fidelity gate includes all earlier fixes.
+the latest record-field context/layout gate includes all earlier fixes.
 
 | Commit | Fix |
 | --- | --- |
@@ -117,9 +120,10 @@ the final string-fidelity gate includes all earlier fixes.
 | `ae9e8acc` | Preserve extraction binders in formatted return guards |
 | `37a024a3` | Omit unused FFI libraries from executable links |
 | `2776f687` | Preserve unterminated string bytes and formatter idempotence |
+| `93c8a38a` | Wrap optional/result record fields and preserve enum payload storage layout |
 
 Fixes are committed, pushed on their own `agent` branches, and integrated into
-**local Nerd `main` at `2776f687`**, not pushed directly to remote `main`. Their
+**local Nerd `main` at `93c8a38a`**, not pushed directly to remote `main`. Their
 merged worktrees and local temporary branches have been removed. Other agents'
 worktrees/checkouts are untouched. `_tools/` contains the isolated compiler and
 modules; the shared checkout/build/installation have not been changed.

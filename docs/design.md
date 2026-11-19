@@ -779,16 +779,21 @@ Do not reserve `v` for a separate selection state or `l` for Vim-style movement.
   `my_variable` is one word. Punctuation forms separate selectable runs;
   whitespace is skipped when extending to the next word, while remaining inside
   the contiguous selected range. Exact Unicode classification remains open.
+- Ctrl+Backspace deletes the active selection, or deletes back to the previous
+  Ctrl+Left word boundary (including intervening whitespace). It is one undo
+  operation and enters Normal. In prompts it edits the prompt, not the buffer.
+  Bind the distinct modified Backspace event first; terminal-specific fallback
+  encodings remain unmodified until user testing shows a need.
 - Ctrl+D duplicates the whole line-selection block below itself, retaining the
   copied block as a line selection so duplication can repeat. Without a non-empty
   line selection, duplicate only the caret's current line, clear any character
   selection and move to the copy at the same display column. Either form is one
   undo operation and enters Normal under the Ctrl-command policy.
-  The entire duplication is one undo operation. Selection clearing and
-  unterminated-line handling still need exact definition.
+  Preserve source line endings; prepend a local/inferred ending when duplicating
+  an unterminated final line or block.
 - Ctrl+command shortcuts apply in both Normal and Insert where appropriate.
 - **Ctrl-bound non-navigation commands leave Insert and execute in Normal**,
-  including save, undo, redo, and line duplication. Remain in Normal even on
+  including save, undo, redo, word deletion and line duplication. Remain in Normal even on
   failure or a no-op. This supersedes Ctrl+D's earlier state-preservation rule.
 - Ctrl-modified navigation, such as word movement, preserves the interaction
   state. Classify this explicitly in binding/action metadata rather than

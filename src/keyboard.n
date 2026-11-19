@@ -107,7 +107,10 @@ impl Keyboard {
 
             Backspace => {
                 self.suppress_text = key.character != nil
-                return Command.Backspace
+                return on ctrl {
+                    yes   => Command.DeleteWordBack
+                    else  => Command.Backspace
+                }
             }
 
             Delete => {
