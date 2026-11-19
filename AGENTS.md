@@ -43,8 +43,12 @@ Check and report the source checkout's branch/revision; do not silently switch,
 reset or merge another agent's branch. Coordinate integration if the validated
 fix is not present in that checkout, and coordinate timing if another compiler
 installation is active. Once a fix is merged into Nerd's `main`, remove its dedicated
-worktree and merged temporary branch. Do not remove unmerged work or interfere
-with another agent's checkout. Add regression tests, update relevant
+worktree and merged temporary branch. Do not leave completed installation,
+review or comparison worktrees behind: the only persistent Nerd checkout should
+be `~/nerd`, currently used for libc removal. Before removing an auxiliary
+worktree, verify that it is clean, its commits are retained and no process is
+using it. Do not remove unmerged work or interfere with another agent's active
+checkout. Add regression tests, update relevant
 documentation, and follow its validation,
 formatting, installation, commit, and push requirements. Do not mistake an
 unsupported feature or incorrect ME code for a compiler bug.
