@@ -182,7 +182,8 @@ SIGKILL recovery is limited to the last successful checkpoint.
 ## Display, limits and development
 
 The gutter is absolute in Insert, relative in Normal/commands, with an absolute
-current line. Horizontal scrolling is initially current-line-only. Messages
+current line. The current line number is gold on a highlighted gutter background;
+other numbers remain muted. Horizontal scrolling is initially current-line-only. Messages
 wrap/grow to half the terminal; Alt+Page Up/Down scroll overflow. Escape dismisses
 messages without changing caret/selection. `!C` marks checkpoint failure, `~` a
 non-persisting session, `!conflict` and `?missing` backing-file conditions.

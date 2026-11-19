@@ -287,8 +287,20 @@ impl Terminal {
                 }
             }
             on gutter > 0 => {
+                current := line == caret_line
+                ink := on current {
+                    yes => CARET else => MUTED
+                }
+                paper := on current {
+                    yes => STATUS else => PAPER
+                }
+                on current => {
+                    for x in [0.as(usize) .. gutter] {
+                        self.set(x, row, ' '.as(u32), ink, paper)
+                    }
+                }
                 label := self.scratch.pr($"{number}")
-                self.text(gutter - 1 - label.count, row, label, MUTED, PAPER, label.count)
+                self.text(gutter - 1 - label.count, row, label, ink, paper, label.count)
             }
             horizontal := on line == caret_line {
                 yes => view.horizontal else => 0

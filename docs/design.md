@@ -693,6 +693,8 @@ MS1; persist the layout actually supported by each milestone.
 - Show line numbers in a gutter. Use relative line numbers in Normal state and
   while the `:` command prompt is active. Insert-state numbering and the current
   line's number remain to be specified.
+- Distinguish the current line number using a brighter colour and a highlighted
+  gutter background; other numbers remain muted. This applies in both states.
 - No mouse support for MS1. The user has further keyboard-navigation plans;
   do not assume click/drag/wheel support is required yet.
 - `/` starts forward search; `?` starts backward search.
@@ -1123,7 +1125,7 @@ and command reference, and [MS1 progress](ms1-progress.md) for verified gates.
   documents and all referencing views are removed; surviving layout is retained with an empty fallback
   when necessary. A second instance, including `-r`, never touches snapshots.
 - **Display:** absolute Insert gutter, relative Normal/command gutter with an
-  absolute current line; current-line-only horizontal scrolling resets on a
+  absolute current line, gold on a highlighted background; other numbers muted; current-line-only horizontal scrolling resets on a
   line change. Wrapped messages grow to half the terminal, with Alt+Page Up/Down
   scrolling. `!C`, `~`, `!conflict`, `?missing` are compact persistent markers.
   Tiny terminals prioritise the message/prompt area. Resize preserves deliberate

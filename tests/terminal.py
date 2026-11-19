@@ -5,6 +5,7 @@ import fcntl
 import os
 from pathlib import Path
 import pty
+import re
 import select
 import signal
 import struct
@@ -438,6 +439,22 @@ def crash_and_signals(binary, folder):
         session.quit()
 
 
+def gutter_highlight(binary, folder):
+    (folder / "lines.txt").write_bytes(b"a\nb\nc")
+    gold = rb"\x1b\[38;2;214;179;90m(?:\x1b\[[0-9;]*m)* *"
+    with Session(binary, folder, "-r", "lines.txt") as session:
+        assert re.search(gold + b"1", session.output), "current absolute line number was not highlighted"
+        moved = session.send(b"\x1b[B")
+        assert re.search(gold + b"2", moved), "gutter highlight did not follow caret movement"
+        assert b"38;2;115;130;153m" in moved, "former current line did not return to muted numbering"
+        inserted = session.send("i")
+        # Numbering becomes absolute, but the current line keeps its emphasis.
+        assert b"INSERT" in inserted
+        session.send(b"\x1b[B")
+        assert re.search(gold + b"3", session.output), "Insert-state current line lost its highlight"
+        session.quit()
+
+
 def graphemes_and_resize(binary, folder):
     with Session(binary, folder, "-r") as session:
         session.send("ae\u0301👩\u200d💻b")
@@ -476,7 +493,7 @@ def main():
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
     checks = [recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
               search_replace_and_buffers, byte_paths_and_checkpoint_failures,
-              second_instance, crash_and_signals, graphemes_and_resize]
+              second_instance, crash_and_signals, gutter_highlight, graphemes_and_resize]
     for check in checks:
         if args.filter not in check.__name__:
             continue

@@ -53,7 +53,7 @@ must **not** be summed or described as the number of distinct ME tests.
 ### Real terminal integration
 
 `python3 tests/terminal.py --binary _bin/me` and the equivalent release command
-passed all **11 scenario groups**, including the updated buffer lifecycle,
+passed all **12 scenario groups**, including buffer lifecycle and gutter styling,
 on both debug and release builds:
 
 1. Unsaved named continuation, individual undo, redo across saving/restart.
@@ -71,6 +71,8 @@ on both debug and release builds:
 10. Combining/ZWJ presentation, grapheme deletion, resize and retained idle output.
 11. Refused/forced kill, all shared views, fallback focus/order, disk preservation,
     no text-undo resurrection and removal from continuation.
+12. Current-line gutter emphasis, highlight movement, muted former-line numbers
+    and preservation of emphasis in Insert.
 
 Normal/signal exits compare the actual PTY attributes against startup and check
 alternate-screen restoration. Tests use isolated temporary HOME/folders and do
@@ -82,7 +84,7 @@ exception; ME has **no direct libc FFI or added runtime library**.
 
 ### Latency measurement
 
-The final release PTY probe (seven runs each, 80×24, this machine) measured
+The initial MS1 release PTY probe (seven runs each, 80×24, this machine) measured
 median startup-to-first-frame **17.1 ms empty / 22.7 ms with 1 MiB**, and
 input-to-present **16.2 ms** for both. Reproduce with:
 
