@@ -126,7 +126,11 @@ Fixes are committed, pushed on their own `agent` branches, and integrated into
 **local Nerd `main` at `93c8a38a`**, not pushed directly to remote `main`. Their
 merged worktrees and local temporary branches have been removed. Other agents'
 worktrees/checkouts are untouched. `_tools/` contains the isolated compiler and
-modules; the shared checkout/build/installation have not been changed.
+modules; the other agent's checkout/build remain unchanged. After explicit user
+authorisation, the normal install recipe also installed Nerd `93c8a38a`, matching
+modules and editor support to the user environment. Installed-compiler regression
+and ME word-deletion smoke tests passed. User installation is now required after
+each fully validated compiler fix.
 
 The investigation initially described as “pointer slice assignment” was the
 implicit receiver normalisation bug above. Typed expression-function return

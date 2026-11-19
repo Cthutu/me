@@ -34,9 +34,13 @@ external API/protocol names where required.
 Confirmed compiler bugs take priority over ME development. Do not work around
 compiler bugs here. **Use a dedicated Git worktree of `~/nerd` for all compiler
 changes**: another agent is actively changing the main checkout. Do not edit,
-reset, build into, or install over shared compiler state without coordination.
-Read the worktree's current README and applicable instructions and follow its
-complete workflow. Once a fix is merged into Nerd's `main`, remove its dedicated
+reset or build into another agent's checkout. Read the worktree's current README
+and applicable instructions and follow its complete workflow. The user explicitly
+authorises updating the user-installed Nerd after every fully validated compiler
+fix: run the normal `just install` recipe from the dedicated fixed worktree,
+installing `~/.local/bin/nerd` and matching modules, then smoke-test that installed
+compiler. An isolated installation alone is not sufficient. Coordinate timing if
+another compiler installation is active; do not overwrite its staging files. Once a fix is merged into Nerd's `main`, remove its dedicated
 worktree and merged temporary branch. Do not remove unmerged work or interfere
 with another agent's checkout. Add regression tests, update relevant
 documentation, and follow its validation,
