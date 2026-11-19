@@ -505,6 +505,7 @@ impl Editor {
         }
         old_revision := doc.storage.revision()
         old_applied := doc.applied
+        old_caret := view.selection.active
         invoking_view := self.workspace.surface.view_id
         on command {
             Move {
@@ -625,12 +626,24 @@ impl Editor {
             }
             Undo => {
                 on doc.undo_edit() {
-                    change => view.place(doc, change.range.start, no) else => self.tell("Nothing to undo")
+                    change => {
+                        position := on doc.history[doc.applied].caret_before {
+                            caret => caret else => change.range.start
+                        }
+                        view.place(doc, position, no)
+                    }
+                    else => self.tell("Nothing to undo")
                 }
             }
             Redo => {
                 on doc.redo_edit() {
-                    change => view.place(doc, change.range.start, no) else => self.tell("Nothing to redo")
+                    change => {
+                        position := on doc.history[doc.applied - 1].caret_after {
+                            caret => caret else => change.range.start
+                        }
+                        view.place(doc, position, no)
+                    }
+                    else => self.tell("Nothing to redo")
                 }
             }
             Duplicate => {
@@ -706,6 +719,14 @@ impl Editor {
                 yes => doc.applied else => doc.applied - 1
             }
             record := ^doc.history[record_index]
+            on command {
+                Undo, Redo => {
+                }
+                else => {
+                    record.caret_before = old_caret
+                    record.caret_after = view.selection.active
+                }
+            }
             removed := on undone {
                 yes => record.added.count else => record.removed.count
             }

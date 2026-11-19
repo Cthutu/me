@@ -1,0 +1,72 @@
+use src.document
+use src.editor
+use src.positions
+use src.view
+use src.workspace
+
+check_caret :: fn (text     : string,
+                   position : usize,
+                   command  : Command,
+                   changed  : string,
+                   after    : usize,
+                   anchor   : ?usize = nil) -> void\string {
+    editor : Editor
+    editor.workspace.lock_fd = -1
+    defer editor.release()
+    scratch : arena
+    defer scratch.done()
+    editor.workspace.add_empty()
+    doc := ^editor.workspace.active_document().text
+    on doc.load(text) {
+        _success => {
+        }
+
+        _error! => return "Caret fixture failed"!
+    }
+    view := ^editor.workspace.active_view().interaction
+    view.place(doc, position, no)
+    on anchor => [value] {
+        view.selection.anchor = value
+    }
+    editor.execute(^scratch, command)?
+    assert doc.text() == changed
+    assert doc.history.count == 1
+    assert view.selection.active == after && view.selection.empty()
+    -- Navigation does not rewrite placement hints or add history entries.
+    view.place(doc, doc.line_start(0), no)
+    editor.execute(^scratch, Command.Undo)?
+    assert doc.text() == text
+    assert view.selection.active == position && view.selection.empty()
+    assert view.state == Interaction.Normal
+    view.place(doc, doc.text().count, no)
+    editor.execute(^scratch, Command.Redo)?
+    assert doc.text() == changed
+    assert view.selection.active == after && view.selection.empty()
+    editor.execute(^scratch, Command.Undo)?
+    assert view.selection.active == position
+}
+
+exercise_carets :: fn () -> void\string {
+    check_caret("abcd", 3, Command.Backspace, "abd", 2)?
+    check_caret("abcd", 1, Command.Delete, "acd", 1)?
+    check_caret("alpha beta", 10, Command.DeleteWordBack, "alpha ", 6)?
+    check_caret("a👩‍💻b", 12, Command.Backspace, "ab", 1)?
+    check_caret("    x", 4, Command.Backspace, "x", 0)?
+    check_caret("ab\r\ncd", 4, Command.Backspace, "abcd", 2)?
+    check_caret("﻿abc", 6, Command.Backspace, "﻿ab", 5)?
+    check_caret("abcd", 3, Command.Backspace, "ad", 1, anchor = 1)?
+    check_caret("abcd", 1, Command.Delete, "ad", 1, anchor = 3)?
+    check_caret("abcd", 1, Command.InsertText("X"), "aXbcd", 2)?
+    check_caret("abcd", 2, Command.Duplicate, "abcd\nabcd", 7)?
+}
+
+test "undo and redo restore the initiating caret without replaying navigation or selections" {
+    on exercise_carets() {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+}

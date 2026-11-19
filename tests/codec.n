@@ -74,6 +74,110 @@ test "continuation codec round-trips bytes, branched history, undo position and 
     }
 }
 
+exercise_caret_codec :: fn () -> void\string {
+    doc : Document
+    defer doc.release()
+    on doc.load("ab") {
+        _success => {
+        }
+
+        _error! => return "load"!
+    }
+    on doc.edit({ start: 1 end: 2 }, "") {
+        _change => {
+        }
+
+        _error! => return "edit"!
+    }
+    doc.history[0].caret_before = 2.as(usize)
+    doc.history[0].caret_after = 1.as(usize)
+    encoded : Encoder
+    defer encoded.bytes.free()
+    encoded.document(^doc)
+    decoded : Document
+    defer decoded.release()
+    reader := Decoder { bytes: bytes_text(encoded.bytes) ... }
+    reader.document(^decoded)?
+    on decoded.history[0].caret_before {
+        position => {
+            assert position == 2
+        }
+
+        else => {
+            assert no
+        }
+    }
+    on decoded.history[0].caret_after {
+        position => {
+            assert position == 1
+        }
+
+        else => {
+            assert no
+        }
+    }
+    assert reader.offset == reader.bytes.count
+    encoded.bytes.clear()
+    encoded.document(^doc, legacy = yes)
+    reader = Decoder { bytes: bytes_text(encoded.bytes) ... }
+    reader.document(^decoded, legacy = yes)?
+    assert decoded.history[0].caret_before == nil
+    assert decoded.history[0].caret_after == nil
+    assert decoded.text() == "a"
+    assert reader.offset == reader.bytes.count
+    -- Reject invalid pre-edit/post-edit coordinates before exposing history.
+    for invalid in [3.as(usize), 100.as(usize)] {
+        doc.history[0].caret_before = invalid^
+        encoded.bytes.clear()
+        encoded.document(^doc)
+        reader = Decoder { bytes: bytes_text(encoded.bytes) ... }
+        on reader.document(^decoded) {
+            _success => {
+                assert no
+            }
+
+            _error! => {
+            }
+        }
+    }
+    on doc.load("éx") {
+        _success => {
+        }
+
+        _error! => return "load"!
+    }
+    on doc.edit({ start: 2 end: 3 }, "") {
+        _change => {
+        }
+
+        _error! => return "edit"!
+    }
+    doc.history[0].caret_before = 3.as(usize)
+    doc.history[0].caret_after = 1.as(usize)
+    encoded.bytes.clear()
+    encoded.document(^doc)
+    reader = Decoder { bytes: bytes_text(encoded.bytes) ... }
+    on reader.document(^decoded) {
+        _success => {
+            assert no
+        }
+
+        _error! => {
+        }
+    }
+}
+
+test "continuation caret hints round-trip, import legacy history and reject unsafe positions" {
+    on exercise_caret_codec() {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+}
+
 test "literal search wraps and skips the active occurrence" {
     on find_literal("one two one", "one", 0, no) {
         position => {

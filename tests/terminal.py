@@ -439,6 +439,72 @@ def crash_and_signals(binary, folder):
         session.quit()
 
 
+def undo_caret(binary, folder):
+    path = folder / "caret.txt"
+    path.write_bytes(b"abcd")
+    with Session(binary, folder, "-r", "caret.txt") as session:
+        session.send(b"\x1b[F")
+        session.send(b"\x7f")
+        session.quit()
+    # Caret hints must survive continuation, not merely an in-memory undo.
+    with Session(binary, folder) as session:
+        session.send(b"\x1a")
+        session.send("iX")
+        session.send(b"\x13")
+        assert path.read_bytes() == b"abcdX", "undo did not restore the pre-Backspace caret"
+        session.send(b"\x1a")
+        session.send(b"\x12")
+        session.send("iY")
+        session.send(b"\x13")
+        assert path.read_bytes() == b"abcdXY", "redo did not restore the post-insertion caret"
+        session.quit()
+
+    # Convert a real checkpoint to the previous envelope/history format.
+    # The new binary must still recover it, then write v2 on its next checkpoint.
+    snapshot = next((folder / "home/.config/me").glob("*/snapshot"))
+    data = snapshot.read_bytes()
+    offset = 0
+    def number():
+        nonlocal offset
+        value, = struct.unpack_from("<Q", data, offset)
+        offset += 8
+        return value
+    def text():
+        nonlocal offset
+        count = number()
+        value = data[offset:offset + count]
+        offset += count
+        return value
+    def encoded(value):
+        return struct.pack("<Q", len(value)) + value
+    assert text() == b"ME/MS1/2"
+    old = bytearray(encoded(b"ME/MS1/1") + encoded(text()))
+    documents = number()
+    old.extend(struct.pack("<Q", documents))
+    for _ in range(documents):
+        old.extend(encoded(text()) + encoded(text()))
+        old.extend(struct.pack("<QQ", number(), number()))
+        old.extend(encoded(text()))
+        applied, count = number(), number()
+        old.extend(struct.pack("<QQ", applied, count))
+        for _ in range(count):
+            old.extend(struct.pack("<Q", number()) + encoded(text()) + encoded(text()))
+            number()
+            number()
+    old.extend(data[offset:-8])
+    checksum = 14695981039346656037
+    for byte in old:
+        checksum = ((checksum ^ byte) * 1099511628211) & ((1 << 64) - 1)
+    snapshot.write_bytes(old + struct.pack("<Q", checksum))
+    with Session(binary, folder) as session:
+        assert b"version or folder mismatch" not in session.output
+        session.send(b"\x1a")
+        session.send(b"\x13")
+        assert path.read_bytes() == b"abcdX", "legacy history failed to recover"
+        session.quit()
+    assert snapshot.read_bytes()[8:16] == b"ME/MS1/2", "legacy continuation was not upgraded"
+
+
 def word_delete(binary, folder):
     path = folder / "words.txt"
     path.write_bytes(b"alpha beta")
@@ -537,7 +603,7 @@ def main():
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
     checks = [recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
               search_replace_and_buffers, byte_paths_and_checkpoint_failures,
-              second_instance, crash_and_signals, word_delete, duplicate_selection, gutter_highlight, graphemes_and_resize]
+              second_instance, crash_and_signals, undo_caret, word_delete, duplicate_selection, gutter_highlight, graphemes_and_resize]
     for check in checks:
         if args.filter not in check.__name__:
             continue

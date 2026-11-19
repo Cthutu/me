@@ -18,7 +18,7 @@ impl Encoder {
         self.bytes.resize_undefined_to(start + text.count)
         self.bytes[start ..] = text.as([]u8)
     }
-    pub document :: fn (self: ^Self, doc: ^Document) {
+    pub document :: fn (self: ^Self, doc: ^Document, legacy: bool = no) {
         self.text(doc.text())
         self.number(doc.applied.as(u64))
         self.number(doc.history.count.as(u64))
@@ -26,6 +26,14 @@ impl Encoder {
             self.number(record.start.as(u64))
             self.text(bytes_text(record.removed))
             self.text(bytes_text(record.added))
+            on !legacy => {
+                self.number(on record.caret_before {
+                    position => position.as(u64) + 1 else => 0
+                })
+                self.number(on record.caret_after {
+                    position => position.as(u64) + 1 else => 0
+                })
+            }
         }
     }
 }
@@ -58,7 +66,9 @@ impl Decoder {
         return self.bytes[start..self.offset]
     }
 
-    pub document :: fn (self: ^Self, doc: ^Document) -> void\string {
+    pub document :: fn (self   : ^Self,
+                        doc    : ^Document,
+                        legacy : bool = no) -> void\string {
         text := self.text()?
         on doc.load(text) {
             _success => {
@@ -69,16 +79,25 @@ impl Decoder {
         applied := self.number()?
         count   := self.number()?
 
-        -- Every record needs at least its start and two byte lengths.
+        -- Every record needs its start/two byte lengths and (in v2) caret hints.
         -- Bound allocation by the actual envelope, not an arbitrary history
         -- limit that the encoder could exceed during a long-lived session.
-        on count > ((self.bytes.count - self.offset) / 24).as(u64) ||
+        minimum := on legacy {
+            yes   => 24.as(usize)
+            else  => 40.as(usize)
+        }
+        on count > ((self.bytes.count - self.offset) / minimum).as(u64) ||
             applied > count => return "Invalid continuation history size"!
         for _ in [0 .. count] {
             start                := self.number()?
             removed              := self.text()?
             added                := self.text()?
+            before               := on legacy { yes => 0.as(u64) else => self.number()? }
+            after                := on legacy { yes => 0.as(u64) else => self.number()? }
             record  : EditRecord
+
+            on before > 0 => record.caret_before = (before - 1).as(usize)
+            on after > 0 => record.caret_after = (after - 1).as(usize)
 
             record.start = start.as(usize)
             own(^record.removed, removed)
@@ -106,7 +125,25 @@ impl Decoder {
         on doc.text() != text => return "Inconsistent continuation history"!
     }
 
-    verify_record :: fn (_self   : ^Self,
+    verify_caret :: fn (_self : ^Self,
+                        doc   : ^Document,
+                        caret : ?usize) -> void\string {
+        on caret => [position] {
+            on position > doc.storage.length() => return "Invalid continuation "
+                +"history caret"!
+            on position < doc.storage.length() => {
+                chunks := doc.storage.chunks()
+                byte := on position < chunks.before.count {
+                    yes   => chunks.before[position]
+                    else  => chunks.after[position - chunks.before.count]
+                }
+                on (byte & 0xc0) == 0x80 => return "Invalid continuation "
+                    +"history caret boundary"!
+            }
+        }
+    }
+
+    verify_record :: fn (self    : ^Self,
                          doc     : ^Document,
                          record  : ^EditRecord,
                          forward : bool) -> void\string {
@@ -122,6 +159,7 @@ impl Decoder {
             expected.count > doc.storage.length() - record.start => return "Inv"
             +"alid"
             +" continuation history range"!
+        self.verify_caret(doc, on forward { yes => record.caret_before else => record.caret_after })?
         chunks := doc.storage.chunks()
         for index, byte in expected {
             position := record.start + index
@@ -138,6 +176,7 @@ impl Decoder {
 
             _error! => return "Invalid continuation history boundary"!
         }
+        self.verify_caret(doc, on forward { yes => record.caret_after else => record.caret_before })?
         -- Keep validation operation-sized; refreshing the entire projection
         -- for every replay record would make recovery O(file size × history).
     }

@@ -255,7 +255,7 @@ impl Workspace {
         on !self.persistent => return "Continuation is unavailable"!
         encoded : Encoder
         defer encoded.bytes.free()
-        encoded.text("ME/MS1/1")
+        encoded.text("ME/MS1/2")
         encoded.text(bytes_text(self.folder))
         encoded.number(self.documents.count.as(u64))
         for entry in self.documents {
@@ -312,8 +312,10 @@ impl Workspace {
             +"snapshot retained"!
         check := Decoder { bytes offset: bytes.count - 8 }
         on check.number()? != fingerprint(bytes[..bytes.count - 8]) => return "Continuation checksum failed; original snapshot retained"!
-        reader := Decoder { bytes: bytes[..bytes.count - 8] offset: 0 }
-        on reader.text()? != "ME/MS1/1" ||
+        reader  := Decoder { bytes: bytes[..bytes.count - 8] offset: 0 }
+        version := reader.text()?
+
+        on (version != "ME/MS1/1" && version != "ME/MS1/2") ||
             reader.text()? != bytes_text(self.folder) => return "Continuation "
             +"version or folder mismatch"!
         documents := reader.number()?
@@ -327,7 +329,7 @@ impl Workspace {
             own(^entry.disk, reader.text()?)
             entry.disk_exists = reader.number()? != 0
             entry.missing = reader.number()? != 0
-            reader.document(^entry.text)?
+            reader.document(^entry.text, legacy = version == "ME/MS1/1")?
             -- Force content verification after restart: the disk may have
             -- changed while ME was not running.
             entry.stamp = nil

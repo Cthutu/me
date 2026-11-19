@@ -809,8 +809,12 @@ Do not reserve `v` for a separate selection state or `l` for Vim-style movement.
 - Navigation is independent of buffer undo/redo: viewed positions belong to
   views, while undo/redo records document edits. Navigation does not add buffer
   history entries. Any future navigation/jump history is a separate facility.
-- On undo/redo, the invoking view's caret moves to the affected edit and its
-  selection clears (agreed). Other views track content changes through anchors.
+- On undo/redo, the invoking view restores the editing operation's before/after
+  caret and clears its selection. Capture these hints only when an edit is made;
+  navigation neither rewrites them nor creates history entries. Older/unannotated
+  history falls back to the affected edit's start. Other views still track content
+  changes through anchors. Persist optional hints in snapshot v2, importing v1
+  without losing its document/history.
 - Ctrl+Z and Ctrl+R always enter Normal under the agreed Ctrl-command policy,
   including when there is no edit to undo/redo.
 - `d`, Ctrl+C/Ctrl+X/Ctrl+V, and no-selection errors were discussed as

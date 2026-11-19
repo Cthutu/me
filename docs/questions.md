@@ -292,3 +292,11 @@ Remaining:
 - Background work and cancellation without blocking editing.
 - Supported platforms/terminals, startup and latency measurements.
 - Standard Nerd scaffold, `just` recipes, tests, and first milestone.
+
+
+## Unconfirmed toolchain follow-up
+
+During the undo-caret work, one full `just test` invocation terminated with
+SIGSEGV after the codec suite. The following editor-BOM test passed in isolation,
+and a complete rerun passed all 22 project tests. No minimal reproducer or cause
+is established; retain `_tmp/undo-core-initial.log` for investigation if it recurs.

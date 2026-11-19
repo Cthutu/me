@@ -2,9 +2,12 @@ use buffer
 use characters
 
 pub EditRecord :: plex {
-    start   usize
-    removed [..]u8
-    added   [..]u8
+    start        usize
+    removed      [..]u8
+    added        [..]u8
+    -- Optional invoking-view caret hints, not navigation history or selections.
+    caret_before ?usize
+    caret_after  ?usize
 }
 
 -- Buffer-owned history and a revision-cached read projection. The projection is

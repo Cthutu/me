@@ -82,7 +82,9 @@ extends it in either state. Use cursor keys, not `hjkl`.
 Only `i` preserves selection on Insert entry; other entry commands clear it.
 Ctrl-bound editing commands enter Normal even on failure/no-op. Ctrl navigation
 preserves state. Each terminal character event, deletion, paste and duplicate is its own
-undo operation. Invoking undo/redo clears selection and moves to the edit.
+undo operation. Undo/redo clears selection and restores the operation's before/after
+caret, rather than replaying subsequent navigation. Older history without caret
+hints falls back to the start of the affected edit.
 
 Legacy byte `0x08` (Ctrl+H), used by WezTerm for Ctrl+Backspace, performs
 word deletion too. Byte `0x7f` remains ordinary Backspace. Terminals sending
@@ -165,6 +167,10 @@ paths, view positions/scroll/preferred columns and active surface. Startup
 normalises interaction state as above; prompts are not resumed. Typing is debounced by 400 ms, with an attempted
 maximum two-second interval during continuous edits; normal quit checkpoints
 synchronously. Prompts, messages, search and clipboard are transient.
+
+Snapshots now use format v2 to preserve undo/redo caret hints. Existing v1
+snapshots are imported without dropping their content or history; the next
+checkpoint writes v2. Older ME binaries cannot read the new format.
 
 `:q!` removes every buffer with unsaved work entirely, including recovered,
 unnamed, modified file-backed and missing-file buffers. It does not reset them to
