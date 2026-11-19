@@ -1,0 +1,30 @@
+{
+  "GraphemeBreakProperty.txt": {
+    "url": "https://www.unicode.org/Public/16.0.0/ucd/auxiliary/GraphemeBreakProperty.txt",
+    "sha256": "c29360bd6f7132811d701d29069541e827eb44bfc4c8fbde8c370d6982689dc1"
+  },
+  "emoji-data.txt": {
+    "url": "https://www.unicode.org/Public/16.0.0/ucd/emoji/emoji-data.txt",
+    "sha256": "f1365a5173eee18e1f98b240cdc492e84a25f1ce7e0c9d1094eb29c41a22696a"
+  },
+  "DerivedCoreProperties.txt": {
+    "url": "https://www.unicode.org/Public/16.0.0/ucd/DerivedCoreProperties.txt",
+    "sha256": "39d35161f2954497f69e08bdb9e701493f476a3d30222de20028feda36c1dabd"
+  },
+  "GraphemeBreakTest.txt": {
+    "url": "https://www.unicode.org/Public/16.0.0/ucd/auxiliary/GraphemeBreakTest.txt",
+    "sha256": "ee2b9354d270ac061b29f09662cafea06341d77e704b8cc6bd72aaeeda363cb5"
+  },
+  "EastAsianWidth.txt": {
+    "url": "https://www.unicode.org/Public/16.0.0/ucd/EastAsianWidth.txt",
+    "sha256": "43adc76c0686a42cb370764eb8cfe2b2a45b10b855e5572a2db4a0eecce15d5b"
+  },
+  "DerivedGeneralCategory.txt": {
+    "url": "https://www.unicode.org/Public/16.0.0/ucd/extracted/DerivedGeneralCategory.txt",
+    "sha256": "7676ab755a41ef82108460238569e60ad65c191ddafe61b36c6765ec1353f293"
+  },
+  "PropList.txt": {
+    "url": "https://www.unicode.org/Public/16.0.0/ucd/PropList.txt",
+    "sha256": "53d614508e2a0b2305a8aa21cd60d993de9326cdf65993660dfcce4503548583"
+  }
+}

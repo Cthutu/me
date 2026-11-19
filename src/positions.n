@@ -1,0 +1,71 @@
+use buffer
+
+-- Pure logical-position adjustment; ownership remains with each consumer.
+pub adjust_caret :: fn (position: usize, change: TextChange) -> usize {
+    on position <= change.range.start => return position
+    on position < change.range.end    => return change.range.start
+    return position - (change.range.end - change.range.start) + change.inserted_bytes
+}
+
+pub Selection :: plex {
+    anchor usize
+    active usize
+}
+
+impl Selection {
+
+    pub start :: fn (self: Self) =>
+        on self.anchor < self.active {
+            yes   => self.anchor
+            else  => self.active
+        }
+
+    pub end :: fn (self: Self) =>
+        on self.anchor > self.active {
+            yes   => self.anchor
+            else  => self.active
+        }
+
+    pub empty :: fn (self: Self) => self.anchor == self.active
+
+    pub range :: fn (self: Self) => TextRange {
+        start : self.start()
+        end   : self.end()
+    }
+
+    pub collapse :: fn (self: ^Self, position: usize) {
+        self.anchor = position
+        self.active = position
+    }
+
+    pub adjust :: fn (self: ^Self, change: TextChange) {
+        on self.empty() => {
+            self.collapse(adjust_caret(self.active, change))
+            return
+        }
+        start    := self.start()
+        end      := self.end()
+        reversed := self.active < self.anchor
+
+        on change.range.start == start &&
+            change.range.end == end => {
+            start = change.range.start
+            end   = start + change.inserted_bytes
+        } else {
+            start = adjust_caret(start, change)
+            end   = adjust_caret(end, change)
+            on change.range.start == change.range.end &&
+                change.range.start == self.start() => start += change.inserted_bytes
+        }
+        on end < start => end = start
+        self.anchor = on reversed {
+            yes   => end
+            else  => start
+        }
+        self.active = on reversed {
+            yes   => start
+            else  => end
+        }
+    }
+
+}

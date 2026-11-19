@@ -1,0 +1,86 @@
+use os.linux
+use src.buffer
+use src.document
+use src.native
+use src.view
+use src.workspace
+use std.text
+
+exercise_workspace :: fn () -> void\string {
+    scratch : arena
+    defer scratch.done()
+    folder := scratch.pr($"_tmp/workspace-test-{syscall(SYS_GETPID, 0, 0, 0, 0, 0, 0)}")
+    assert make_directory(^scratch, "_tmp")
+    assert make_directory(^scratch, folder)
+    path                 := scratch.pr($"{folder}/snapshot")
+    original : Workspace
+
+    original.lock_fd = -1
+    defer original.release()
+    own(^original.folder, "/test-folder")
+    own(^original.session_path, path)
+    original.persistent = yes
+    original.add_empty()
+    entry := original.active_document()
+    on entry.text.edit({ start: 0 end: 0 }, "recovered\r\ntext") {
+        _change => {
+        }
+
+        _error! => return "edit"!
+    }
+    original.active_view().interaction.place(^entry.text, 3, no)
+    -- A checkpoint may run before presentation has clamped a viewport after
+    -- deletion. Serialise a valid top line without discarding the document.
+    original.active_view().interaction.top = 10000
+    original.checkpoint(^scratch)?
+    recovered : Workspace
+    recovered.lock_fd = -1
+    defer recovered.release()
+    own(^recovered.folder, "/test-folder")
+    own(^recovered.session_path, path)
+    recovered.restore(^scratch)?
+    assert recovered.active_document().text.text() == "recovered\r\ntext"
+    assert recovered.active_view().interaction.selection.active == 3
+    assert recovered.active_view().interaction.top == 1
+    assert recovered.active_view().interaction.state == Interaction.Normal
+    assert recovered.active_document().text.history.count == 1
+    on recovered.active_document().text.edit({ start: 0 end: 0 }, "later ") {
+        _change => {
+        }
+
+        _error! => return "edit"!
+    }
+    recovered.add_empty()
+    on recovered.active_document().text.edit({ start: 0 end: 0 }, "new never "
+    +"saved") {
+        _change => {
+        }
+
+        _error! => return "edit"!
+    }
+    recovered.abandon()?
+    assert recovered.documents.count == 1 && recovered.views.count == 1
+    assert recovered.active_document().text.text() == "recovered\r\ntext"
+    assert recovered.active_document().text.history.count == 1
+    assert recovered.active_document().modified()
+    _ := syscall(SYS_UNLINK, path.c_string().as(usize).as(u64), 0, 0, 0, 0, 0)
+    _ := syscall(SYS_RMDIR, folder.c_string().as(usize).as(u64), 0, 0, 0, 0, 0)
+}
+
+test "workspace continuation retains history and recovered work, and drops only new unsaved documents on q!" {
+    on exercise_workspace() {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+}
+
+test "absolute path composition preserves kernel dot-segment and symlink semantics" {
+    scratch : arena
+    defer scratch.done()
+    assert absolute_path(^scratch, "/a/b", "../c/./file") == "/a/b/../c/./file"
+    assert absolute_path(^scratch, "/a/b", "/x/../y") == "/x/../y"
+}

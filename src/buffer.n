@@ -1,0 +1,190 @@
+use std.text
+
+-- Logical UTF-8 byte range, with an exclusive end; never a physical gap index.
+pub TextRange :: plex {
+    start usize
+    end   usize
+}
+
+pub EditError :: enum {
+    InvalidRange
+    InvalidUtf8
+    SplitCharacter
+    OutputTooSmall
+}
+
+impl Display for EditError {
+
+    pub show :: fn (self: ^Self) =>
+        on self^ {
+            InvalidRange    => "Invalid document range"
+            InvalidUtf8     => "Invalid UTF-8"
+            SplitCharacter  => "Position splits a UTF-8 character"
+            OutputTooSmall  => "Output storage is too small"
+        }
+
+}
+
+-- A replacement notification refers to the previous revision's coordinates.
+-- Receivers own their positions and adjust them themselves.
+pub TextChange :: plex {
+    range           TextRange
+    inserted_bytes  usize
+    before_revision u64
+    after_revision  u64
+}
+
+-- Borrowed chunks never include the gap. They expire on mutation or release.
+pub TextChunks :: plex {
+    before []u8
+    after  []u8
+}
+
+pub TextRead :: trait {
+    length     :: fn (self: ^Self) -> usize
+    revision   :: fn (self: ^Self) -> u64
+    chunks     :: fn (self: ^Self) -> TextChunks
+    copy_range ::
+                  fn (self   : ^Self,
+                      range  : TextRange,
+                      output : []u8) -> usize\EditError
+}
+
+pub TextEdit :: trait {
+    replace ::
+               fn (self  : ^Self,
+                   range : TextRange,
+                   text  : string) -> TextChange\EditError
+}
+
+-- Owns storage, not carets, selections, scrolling, or navigation history.
+-- Mutation is position-explicit; there is no public gap-moving operation.
+-- History, grapheme queries, and the line index are subsequent layers of work.
+pub GapBuffer :: plex {
+    storage          [..]u8
+    gap_start        usize
+    gap_end          usize
+    current_revision u64
+}
+
+impl GapBuffer {
+    pub release :: fn (self: ^Self) {
+        self.storage.free()
+        self.gap_start = 0
+        self.gap_end = 0
+        self.current_revision = 0
+    }
+
+    physical_index :: fn (self: ^Self, position: usize) -> usize {
+        return on position < self.gap_start {
+            yes => position
+            else => position + self.gap_end - self.gap_start
+        }
+    }
+
+    boundary :: fn (self: ^Self, position: usize) -> bool {
+        on position > self.length() => return no
+        on position == self.length() => return yes
+        byte := self.storage[self.physical_index(position)]
+        return (byte & 0xc0) != 0x80
+    }
+
+    -- Called only by replace. Copy directions protect overlapping regions.
+    move_gap :: fn (self: ^Self, position: usize) {
+        for self.gap_start > position {
+            self.gap_start -= 1
+            self.gap_end -= 1
+            self.storage[self.gap_end] = self.storage[self.gap_start]
+        }
+        for self.gap_start < position {
+            self.storage[self.gap_start] = self.storage[self.gap_end]
+            self.gap_start += 1
+            self.gap_end += 1
+        }
+    }
+
+    reserve_gap :: fn (self: ^Self, required: usize) {
+        on self.gap_end - self.gap_start >= required => return
+        size := self.length()
+        capacity := self.storage.count * 2 + 64
+        on capacity < size + required => capacity = size + required
+        replacement: [..]u8
+        replacement.resize_undefined_to(capacity)
+        tail := self.storage.count - self.gap_end
+        new_end := capacity - tail
+        replacement[.. self.gap_start] = self.storage[.. self.gap_start]
+        replacement[new_end ..] = self.storage[self.gap_end ..]
+        self.storage.free()
+        self.storage = replacement
+        self.gap_end = new_end
+    }
+}
+
+impl TextRead for GapBuffer {
+
+    pub length :: fn (self: ^Self) -> usize {
+        return self.storage.count - (self.gap_end - self.gap_start)
+    }
+
+    pub revision :: fn (self: ^Self) => self.current_revision
+
+    pub chunks :: fn (self: ^Self) -> TextChunks {
+        return {
+            before : self.storage[..self.gap_start]
+            after  : self.storage[self.gap_end..]
+        }
+    }
+
+    pub copy_range :: fn (self   : ^Self,
+                          range  : TextRange,
+                          output : []u8) -> usize\EditError {
+        on range.start > range.end ||
+            range.end > self.length() => return InvalidRange!
+        count := range.end - range.start
+        on output.count < count => return OutputTooSmall!
+        for index in [0 .. count] {
+            output[index] = self.storage[self.physical_index(range.start + index)]
+        }
+        return count
+    }
+
+}
+
+impl TextEdit for GapBuffer {
+    pub replace :: fn (self: ^Self, range: TextRange, text: string) -> TextChange\EditError {
+        on range.start > range.end || range.end > self.length() => return InvalidRange!
+        on !self.boundary(range.start) || !self.boundary(range.end) => return SplitCharacter!
+        on text.utf8_validate() {
+            _valid => {
+            }
+            _error! => return InvalidUtf8!
+        }
+        before := self.current_revision
+        on range.start == range.end && text.count == 0 => {
+            return {
+                range inserted_bytes: 0 before_revision: before after_revision: before
+            }
+        }
+
+        -- Stabilise borrowed input before gap relocation or allocation. This also
+        -- permits a caller to insert text borrowed from one of our read chunks.
+        input: [..]u8
+        defer input.free()
+        input.resize_undefined_to(text.count)
+        input[..] = text.as([]u8)
+        removed := range.end - range.start
+        available := self.gap_end - self.gap_start + removed
+        on input.count > available => self.reserve_gap(input.count - removed)
+        self.move_gap(range.start)
+        self.gap_end += removed
+        self.storage[self.gap_start .. self.gap_start + input.count] = input[..]
+        self.gap_start += input.count
+        self.current_revision += 1
+        return {
+            range
+            inserted_bytes: input.count
+            before_revision: before
+            after_revision: self.current_revision
+        }
+    }
+}

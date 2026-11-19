@@ -1,0 +1,369 @@
+use buffer
+use characters
+use document
+use positions
+
+pub Interaction :: enum {
+    Normal
+    Insert
+}
+
+pub Direction :: enum {
+    Left
+    Right
+    Up
+    Down
+    Home
+    End
+    First
+    Last
+    WordBack
+    WordForward
+    PageUp
+    PageDown
+    ParagraphBack
+    ParagraphForward
+    ScrollUp
+    ScrollDown
+}
+
+pub Command :: enum {
+    Move {
+        direction Direction
+        count     usize
+        extend    bool
+    }
+    InsertText(string)
+    EnterInsert(u32)
+    Backspace
+    Tab
+    Delete
+    Escape
+    Undo
+    Redo
+    Duplicate
+    SelectWord(usize)
+    SelectLine(usize)
+    Copy
+    Cut
+    Paste
+    Change
+    Save
+    Prompt(u32)
+    SearchNext(bool)
+    Error(string)
+}
+
+pub Clipboard :: plex {
+    bytes    [..]u8
+    linewise bool
+}
+
+pub View :: plex {
+    selection  Selection
+    state      Interaction
+    preferred  usize
+    top        usize
+    horizontal usize
+    rows       usize
+    columns    usize
+    reveal     bool
+    linewise   bool
+}
+
+pub display_column :: fn (text: string, start: usize, position: usize) -> usize {
+    offset         := start
+    column : usize = 0
+
+    for offset < position {
+        next := next_character(text, offset)
+        on next > position => break
+        column += character_width(text, offset, column)
+        offset = next
+    }
+    return column
+}
+
+pub word_kind :: fn (text: string, position: usize) -> u8 {
+    return character_kind(text, position)
+}
+
+impl View {
+
+    pub repair :: fn (self: ^Self, doc: ^Document) {
+        minimum := doc.line_start(0)
+        maximum := doc.text().count
+
+        on self.selection.anchor < minimum => self.selection.anchor = minimum
+        on self.selection.active < minimum => self.selection.active = minimum
+        on self.selection.anchor > maximum => self.selection.anchor = maximum
+        on self.selection.active > maximum => self.selection.active = maximum
+        self.reset_column(doc)
+    }
+
+    pub reset_column :: fn (self: ^Self, doc: ^Document) {
+        self.preferred = display_column(doc.text(),
+                                        doc.line_start(doc.line_at(self.selection.active)),
+                                        self.selection.active)
+    }
+
+    pub place :: fn (self          : ^Self,
+                     doc           : ^Document,
+                     position      : usize,
+                     extend        : bool,
+                     retain_column : bool = no) {
+        destination := on position < doc.line_start(0) {
+            yes   => doc.line_start(0)
+            else  => position
+        }
+        on destination > doc.text().count => destination = doc.text().count
+        on extend {
+            yes   => self.selection.active = destination
+            else  => self.selection.collapse(destination)
+        }
+        self.linewise = no
+        self.reveal = yes
+        on !retain_column => self.reset_column(doc)
+    }
+
+    pub position_column :: fn (self : ^Self,
+                               doc  : ^Document,
+                               line : usize) -> usize {
+        offset         := doc.line_start(line)
+        end            := doc.line_end(line)
+        column : usize = 0
+
+        for offset < end {
+            next  := next_character(doc.text(), offset)
+            width := character_width(doc.text(), offset, column)
+
+            on column + width > self.preferred => return on self.preferred - column <= column + width - self.preferred {
+                yes   => offset
+                else  => next
+            }
+            column += width
+            offset = next
+            on column == self.preferred => break
+        }
+        return offset
+    }
+
+    pub move :: fn (self      : ^Self,
+                    doc       : ^Document,
+                    direction : Direction,
+                    count     : usize,
+                    extend    : bool) {
+        text     := doc.text()
+        position := self.selection.active
+        line     := doc.line_at(position)
+
+        amount := on count == 0 {
+            yes   => 1
+            else  => count
+        }
+        retain := no
+        on direction {
+            Left => {
+                on !extend && !self.selection.empty() {
+                    yes   => position = self.selection.start()
+                    else  => position = previous_character(text, position)
+                }
+                for _ in [1 .. amount] {
+                    position = previous_character(text, position)
+                }
+            }
+
+            Right => {
+                on !extend && !self.selection.empty() {
+                    yes   => position = self.selection.end()
+                    else  => position = next_character(text, position)
+                }
+                for _ in [1 .. amount] {
+                    position = next_character(text, position)
+                }
+            }
+
+            Up, PageUp => {
+                step := amount * (on direction == Direction.PageUp { yes => self.rows else => 1 })
+                line = on step > line {
+                    yes   => 0
+                    else  => line - step
+                }
+                position = self.position_column(doc, line)
+                retain   = yes
+            }
+
+            Down, PageDown => {
+                step := amount * (on direction == Direction.PageDown { yes => self.rows else => 1 })
+
+                line += step
+                on line >= doc.lines.count => line = doc.lines.count - 1
+                position = self.position_column(doc, line)
+                retain   = yes
+            }
+
+            Home => position = on position == doc.first_text(line) {
+                yes   => doc.line_start(line)
+                else  => doc.first_text(line)
+            }
+
+            End    => position = doc.line_end(line)
+            First  => position = 0
+            Last   => position = text.count
+
+            WordForward => {
+                for _ in [0 .. amount] {
+                    on position < text.count => {
+                        kind := word_kind(text, position)
+                        for position < text.count &&
+                            word_kind(text, position) == kind {
+                            position = next_character(text, position)
+                        }
+                        for position < text.count &&
+                            word_kind(text, position) == 0 {
+                            position = next_character(text, position)
+                        }
+                    }
+                }
+            }
+
+            WordBack => {
+                for _ in [0 .. amount] {
+                    position = previous_character(text, position)
+                    for position > 0 &&
+                        word_kind(text, position) == 0 {
+                        position = previous_character(text, position)
+                    }
+                    kind := on position < text.count {
+                        yes   => word_kind(text, position)
+                        else  => 0
+                    }
+                    for position > 0 {
+                        prior := previous_character(text, position)
+                        on word_kind(text, prior) != kind => break
+                        position = prior
+                    }
+                }
+            }
+
+            ParagraphForward => {
+                for _ in [0 .. amount] {
+                    for line + 1 < doc.lines.count &&
+                        doc.first_text(line) != doc.line_end(line) {
+                        line += 1
+                    }
+                    for line + 1 < doc.lines.count &&
+                        doc.first_text(line) == doc.line_end(line) {
+                        line += 1
+                    }
+                }
+                position = doc.first_text(line)
+            }
+
+            ParagraphBack => {
+                for _ in [0 .. amount] {
+                    on line > 0 => line -= 1
+                    for line > 0 &&
+                        doc.first_text(line) == doc.line_end(line) {
+                        line -= 1
+                    }
+                    for line > 0 &&
+                        doc.first_text(line - 1) != doc.line_end(line - 1) {
+                        line -= 1
+                    }
+                }
+                position = doc.first_text(line)
+            }
+
+            ScrollUp => {
+                self.top = on self.top > amount {
+                    yes   => self.top - amount
+                    else  => 0
+                }
+                self.reveal = no
+                return
+            }
+
+            ScrollDown => {
+                self.top += amount
+                on self.top >= doc.lines.count => self.top = doc.lines.count - 1
+                self.reveal = no
+                return
+            }
+        }
+        self.place(doc, position, extend, retain_column = retain)
+    }
+
+    pub replace_selection :: fn (self : ^Self,
+                                 doc  : ^Document,
+                                 text : string) -> void\EditError {
+        range  := self.selection.range()
+        change := doc.edit(range, text)?
+
+        self.selection.collapse(range.start + change.inserted_bytes)
+        self.linewise = no
+        self.reveal = yes
+        self.reset_column(doc)
+    }
+
+    pub select_word :: fn (self: ^Self, doc: ^Document, count: usize) {
+        text  := doc.text()
+        start := self.selection.active
+
+        on start >= text.count => return
+        on self.selection.empty() {
+            yes => {
+                for start < text.count && word_kind(text, start) == 0 {
+                    start = next_character(text, start)
+                }
+                on start == text.count => return
+                kind := word_kind(text, start)
+                for start > 0 {
+                    prior := previous_character(text, start)
+                    on word_kind(text, prior) != kind => break
+                    start = prior
+                }
+                self.selection.anchor = start
+            }
+
+            else => {
+                start = self.selection.end()
+                for start < text.count &&
+                    word_kind(text, start) == 0 {
+                    start = next_character(text, start)
+                }
+            }
+        }
+        for index in [0 .. count] {
+            on index > 0 => {
+                for start < text.count && word_kind(text, start) == 0 {
+                    start = next_character(text, start)
+                }
+            }
+            on start >= text.count => break
+            kind := word_kind(text, start)
+            for start < text.count &&
+                word_kind(text, start) == kind {
+                start = next_character(text, start)
+            }
+        }
+        self.selection.active = start
+        self.linewise = no
+        self.reveal = yes
+        self.reset_column(doc)
+    }
+
+    pub select_line :: fn (self: ^Self, doc: ^Document, count: usize) {
+        line := doc.line_at(self.selection.active)
+        on self.selection.empty() => self.selection.anchor = doc.line_start(line)
+        end_line := line + count
+        self.selection.active = on end_line < doc.lines.count {
+            yes   => doc.line_start(end_line)
+            else  => doc.text().count
+        }
+        self.linewise = yes
+        self.reveal = yes
+        self.reset_column(doc)
+    }
+
+}

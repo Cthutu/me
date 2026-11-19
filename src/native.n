@@ -1,0 +1,298 @@
+use os.linux
+use std.files
+use std.text
+
+-- Linux ABI constants absent from the current standard-library surface.
+O_EXCL      :: 0x0080
+O_DIRECTORY :: 0x10000
+
+pub own :: fn (destination: ^[..]u8, text: string) {
+    -- Replacement text must not alias destination.
+    destination.resize_undefined_to(text.count)
+    destination^[..] = text.as([]u8)
+}
+
+pub bytes_text :: fn (bytes: [..]u8) => bytes[..].as(string)
+
+-- Filenames and OS-provided diagnostics are byte strings, unlike validated
+-- document content. Never feed invalid UTF-8 or executable controls to the UI.
+pub display_text :: fn (scratch     : ^arena,
+                        text        : string,
+                        single_line : bool = no) -> string {
+    on !single_line => {
+        on text.utf8_validate() {
+            _valid => return text
+
+            _invalid! => {
+            }
+        }
+    }
+    bytes          := scratch.alloc_bytes(text.count * 3)
+    offset : usize = 0
+    used   : usize = 0
+
+    for offset < text.count {
+        (rune, size) := utf8_decode(text[offset..].as([]u8))
+        on size == 0 => {
+            size = 1
+            rune = 0xfffd
+        }
+        on single_line &&
+            (rune < 32 || (rune >= 0x7f && rune < 0xa0)) => rune = 0xfffd
+        used   += rune.utf8_encode(bytes[used..])
+        offset += size
+    }
+    return bytes[..used].as(string)
+}
+
+pub read_file :: fn (scratch: ^arena, path: string) -> string\string {
+    on read_text(path, output_arena = scratch) {
+        text     => return text
+        _error!  => return "Cannot read file"!
+    }
+}
+
+zpath :: fn (scratch: ^arena, path: string) => scratch.pr($"{path}\0").data.as(^i8)
+
+pub fingerprint :: fn (text: string) -> u64 {
+    value : u64 = 14695981039346656037
+    for byte in text {
+        value = (value ~ byte^.as(u64)) * 1099511628211
+    }
+    return value
+}
+
+pub metadata :: fn (scratch: ^arena, path: string) -> ?Stat {
+    info : Stat
+    on sys_newfstatat(AT_FDCWD, zpath(scratch, path), ^info, 0) < 0 => return nil
+    return info
+}
+
+pub cwd :: fn (scratch: ^arena) -> string\string {
+    bytes := scratch.alloc_bytes(65536)
+    count := syscall(SYS_GETCWD, bytes.data.as(usize).as(u64), bytes.count.as(u64), 0, 0, 0, 0).as(i64)
+
+    on count < 1 => return "Cannot resolve startup folder"!
+    return bytes[..count.as(usize) - 1].as(string)
+}
+
+pub environment :: fn (scratch: ^arena, name: string) -> string {
+    on read_file(scratch, "/proc/self/environ") {
+        text => {
+            start : usize = 0
+            for start < text.count {
+                end := start
+                for end < text.count && text[end] != 0 {
+                    end += 1
+                }
+                entry := text[start..end]
+                on entry.count > name.count &&
+                    entry[..name.count] == name &&
+                    entry[name.count] == '=' => return entry[name.count + 1..]
+                start = end + 1
+            }
+        }
+
+        _error! => {
+        }
+    }
+    return ""
+}
+
+pub make_directory :: fn (scratch: ^arena, path: string) -> bool {
+    status := syscall(SYS_MKDIR, zpath(scratch, path).as(usize).as(u64), 0x1c0, 0, 0, 0, 0).as(i64)
+    on status >= 0 => return yes
+    on metadata(scratch, path) => [info] return (info.mode & 0xf000) == 0x4000
+    return no
+}
+
+-- Every failure before rename leaves the original path untouched. A directory
+-- fsync failure after rename is reported: the write happened but crash
+-- durability is not assured. Callers must not falsely claim a successful
+-- checkpoint.
+attribute_names :: fn (scratch: ^arena, fd: i32) -> string\string {
+    size := syscall(SYS_FLISTXATTR, fd.as(u64), 0, 0, 0, 0, 0).as(i64)
+    on size < 0 => {
+        -- Filesystems without extended attributes have nothing to preserve.
+        on last_error() == 95 || last_error() == 38 => return ""
+        return "Cannot inspect file attributes"!
+    }
+    on size == 0 => return ""
+    names := scratch.alloc_bytes(size.as(usize))
+    count := syscall(SYS_FLISTXATTR, fd.as(u64), names.data.as(usize).as(u64), names.count.as(u64), 0, 0, 0).as(i64)
+
+    on count < 0 ||
+        count.as(usize) > names.count => return "File attributes changed while "
+        +"saving"!
+    return names[..count.as(usize)].as(string)
+}
+
+copy_attributes :: fn (scratch     : ^arena,
+                       source      : i32,
+                       destination : i32) -> void\string {
+    original  := attribute_names(scratch, source)?
+    inherited := attribute_names(scratch, destination)?
+    -- Remove inherited ACLs/attributes not present on the original file.
+    start : usize = 0
+    for index, byte in inherited {
+        on byte^ != 0 => again
+        name := inherited[start..index]
+
+        start = index + 1
+        present             := no
+        other_start : usize = 0
+
+        for other, item in original {
+            on item^ != 0 => again
+            on original[other_start..other] == name => present = yes
+            other_start = other + 1
+        }
+        on !present &&
+            syscall(SYS_FREMOVEXATTR, destination.as(u64), zpath(scratch, name).as(usize).as(u64), 0, 0, 0, 0).as(i64) < 0 => return "Cannot preserve original file attributes"!
+    }
+    start = 0
+    for index, byte in original {
+        on byte^ != 0 => again
+        name := zpath(scratch, original[start..index])
+
+        start = index + 1
+        size := syscall(SYS_FGETXATTR, source.as(u64), name.as(usize).as(u64), 0, 0, 0, 0).as(i64)
+        on size < 0 => return "Cannot read original file attribute"!
+        value := scratch.alloc_bytes(size.as(usize))
+        count := syscall(SYS_FGETXATTR, source.as(u64), name.as(usize).as(u64), value.data.as(usize).as(u64), value.count.as(u64), 0, 0).as(i64)
+
+        on count != size => return "File attribute changed while saving"!
+        on syscall(SYS_FSETXATTR, destination.as(u64), name.as(usize).as(u64), value.data.as(usize).as(u64), value.count.as(u64), 0, 0).as(i64) < 0 => return "Cannot preserve original file attribute"!
+    }
+}
+
+pub same_file_state :: fn (left: Stat, right: Stat) -> bool {
+    return left.dev == right.dev && left.ino == right.ino && left.size == right.size && left.modify_sec == right.modify_sec && left.modify_nsec == right.modify_nsec && left.change_sec == right.change_sec && left.change_nsec == right.change_nsec && left.mode == right.mode && left.uid == right.uid && left.gid == right.gid
+}
+
+pub atomic_write :: fn (scratch        : ^arena,
+                        path           : string,
+                        text           : string,
+                        allow_existing : bool,
+                        expected_text  : ?string = nil) -> void\string {
+    target            := path
+    mode      : u32   = 0x180
+    original  : ?Stat = nil
+    source_fd : i32   = -1
+
+    defer on source_fd >= 0 => {
+        _ := sys_close(source_fd)
+    }
+
+    on metadata(scratch, path) {
+        info => {
+            on !allow_existing => return "Target already exists; use :w!"!
+            on (info.mode & 0xf000) != 0x8000 => return "Target is not a "
+                +"regular file"!
+            mode     = info.mode & 0xfff
+            original = info
+            -- Resolve existing symlinks to the opened target, not the link's
+            -- parent: atomic replacement must preserve the link itself.
+            source_fd = sys_open(zpath(scratch, path), O_RDONLY | O_CLOEXEC, 0)
+            on source_fd < 0 => return "Cannot open save target"!
+            proc_path := scratch.pr($"/proc/self/fd/{source_fd}")
+            resolved  := scratch.alloc_bytes(65536)
+            size      := syscall(SYS_READLINK, zpath(scratch, proc_path).as(usize).as(u64), resolved.data.as(usize).as(u64), resolved.count.as(u64), 0, 0, 0).as(i64)
+
+            on size < 1 ||
+                size.as(usize) >= resolved.count => return "Cannot resolve "
+                +"save target"!
+            target = resolved[..size.as(usize)].as(string)
+        }
+
+        else => {
+            -- Do not replace a dangling symlink as though it were an ordinary
+            -- new file. Resolving chains of missing targets is not safe here.
+            info : Stat
+            on sys_newfstatat(AT_FDCWD, zpath(scratch, path), ^info, 0x100) == 0 => return "Cannot save through a dangling symlink"!
+        }
+    }
+    parent := "."
+    for index, byte in target {
+        on byte^ == '/' => parent = on index == 0 {
+            yes   => "/"
+            else  => target[..index]
+        }
+    }
+    pid             := syscall(SYS_GETPID, 0, 0, 0, 0, 0, 0)
+    temporary       := ""
+    fd        : i32 = -1
+
+    for attempt in [0 .. 32] {
+        temporary = scratch.pr($"{parent}/.me-{pid}-{attempt}.tmp")
+        on temporary == target => again
+        fd = sys_open(zpath(scratch, temporary),
+                      O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC,
+                      mode.as(i32))
+        on fd >= 0 => break
+        on last_error() != EEXIST => return "Cannot create save temporary"!
+    }
+    on fd < 0 => return "Cannot create a unique save temporary"!
+    defer _ := sys_close(fd)
+    defer _ := syscall(SYS_UNLINK, zpath(scratch, temporary).as(usize).as(u64), 0, 0, 0, 0, 0)
+    offset : usize = 0
+    for offset < text.count {
+        written := sys_write(fd,
+                             text.as([]u8).data + offset,
+                             text.count - offset)
+        on written < 0 && last_error() == EINTR => again
+        on written <= 0 => return "Cannot write save temporary"!
+        offset += written.as(usize)
+    }
+    on original {
+        info => {
+            on syscall(SYS_FCHOWN, fd.as(u64), info.uid.as(u64), info.gid.as(u64), 0, 0, 0).as(i64) < 0 => return "Cannot preserve file ownership"!
+            copy_attributes(scratch, source_fd, fd)?
+        }
+
+        else => {
+        }
+    }
+    on syscall(SYS_FCHMOD, fd.as(u64), mode.as(u64), 0, 0, 0, 0).as(i64) < 0 => return "Cannot preserve file permissions"!
+    on sys_fsync(fd) != 0 => return "Cannot flush save temporary"!
+    -- Recheck both the logical path and resolved target after preparing the
+    -- temporary. This narrows external-writer and symlink-retargeting races.
+    on original {
+        expected => {
+            for candidate in [path, target] {
+                on metadata(scratch, candidate^) {
+                    current => {
+                        on !same_file_state(expected, current) => return "Save "
+                            +"target changed during write; retry after "
+                            +"reviewing"!
+                    }
+
+                    else => return "Save target disappeared during write"!
+                }
+            }
+        }
+
+        else => {
+            on metadata(scratch, target) => return "Save target appeared "
+                +"during write; retry after reviewing"!
+        }
+    }
+    on expected_text {
+        expected => {
+            on read_file(scratch, path)? != expected => return "Save target "
+                +"changed during write; retry after reviewing"!
+        }
+
+        else => {
+        }
+    }
+    flags : u64 = on original != nil { yes => 0 else => 1 }
+    on syscall(SYS_RENAMEAT2, AT_FDCWD.as(u64), zpath(scratch, temporary).as(usize).as(u64), AT_FDCWD.as(u64), zpath(scratch, target).as(usize).as(u64), flags, 0).as(i64) < 0 => return "Cannot atomically replace save target"!
+    parent_fd := sys_open(zpath(scratch, parent),
+                          O_RDONLY | O_DIRECTORY | O_CLOEXEC,
+                          0)
+    on parent_fd < 0 => return "Saved, but cannot open parent for durability"!
+    defer _ := sys_close(parent_fd)
+    on sys_fsync(parent_fd) != 0 => return "Saved, but cannot flush parent "
+        +"directory"!
+}

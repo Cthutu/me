@@ -1,0 +1,129 @@
+use std.text
+use unicode_data
+
+-- Local UAX #29 segmentation pending evaluation for std.text. Input must
+-- already be validated UTF-8; positions are cluster boundaries.
+pub next_character :: fn (text: string, position: usize) -> usize {
+    on position >= text.count => return text.count
+    (first, bytes) := utf8_decode(text[position..].as([]u8))
+    previous             := grapheme_property(first)
+    offset               := position + bytes
+    regional     : usize = on previous == 6 { yes => 1 else => 0 }
+    pictographic         := extended_pictographic(first) != 0
+    zwj_picture          := no
+    indic                := indic_property(first) == 2
+    linker               := no
+
+    for offset < text.count {
+        (rune, size) := utf8_decode(text[offset..].as([]u8))
+        current  := grapheme_property(rune)
+        picture  := extended_pictographic(rune) != 0
+        conjunct := indic_property(rune)
+
+        joins := on {
+            previous == 1 && current == 2                                                       => yes
+            previous == 1 || previous == 2 || previous == 3                                     => no
+            current == 1 || current == 2 || current == 3                                        => no
+            previous == 9 && (current == 9 || current == 10 || current == 12 || current == 13)  => yes
+            (previous == 12 || previous == 10) && (current == 10 || current == 11)              => yes
+            (previous == 13 || previous == 11) && current == 11                                 => yes
+            current == 4 || current == 5 || current == 8                                        => yes
+            previous == 7                                                                       => yes
+            indic && linker && conjunct == 2                                                    => yes
+            previous == 5 && zwj_picture && picture                                             => yes
+            previous == 6 && current == 6 && regional % 2 == 1                                  => yes
+            else                                                                                => no
+        }
+        on !joins => return offset
+        zwj_picture = current == 5 && pictographic
+        on picture {
+            yes => pictographic = yes
+
+            else => on current != 4 => pictographic = no
+        }
+        on conjunct {
+            2 => {
+                indic  = yes
+                linker = no
+            }
+
+            1 => {
+                on indic => linker = yes
+            }
+
+            3 => {
+            }
+
+            else => {
+                indic  = no
+                linker = no
+            }
+        }
+        regional = on current == 6 { yes => regional + 1 else => 0 }
+        previous = current
+        offset   += size
+    }
+    return offset
+}
+
+pub previous_character :: fn (text: string, position: usize) -> usize {
+    -- Start at this line's beginning; CRLF remains one grapheme cluster.
+    start := position
+    on start > text.count => start = text.count
+    for start > 0 &&
+        text[start - 1] != '\n' {
+        start -= 1
+    }
+    on start == position &&
+        start > 0 => {
+        start -= 1
+        on start > 0 && text[start - 1] == '\r' => start -= 1
+        return start
+    }
+    previous := start
+    for start < position {
+        previous = start
+        start    = next_character(text, start)
+    }
+    return previous
+}
+
+pub scalar_width :: fn (rune: u32) -> usize {
+    on zero_width_property(rune) != 0 => return 0
+    on wide_property(rune) != 0 ||
+        emoji_presentation_property(rune) != 0 => return 2
+    return 1
+}
+
+pub is_whitespace_character :: fn (text: string, position: usize) -> bool {
+    (rune, _size) := utf8_decode(text[position..].as([]u8))
+    return whitespace_property(rune) != 0
+}
+
+pub character_kind :: fn (text: string, position: usize) -> u8 {
+    (rune, _size) := utf8_decode(text[position..].as([]u8))
+    on whitespace_property(rune) != 0                  => return 0
+    on rune == '_'.as(u32) || word_property(rune) != 0 => return 1
+    return 2
+}
+
+pub character_width :: fn (text: string, start: usize, column: usize) -> usize {
+    on text[start] == '\t' => return 4 - column % 4
+    end                        := next_character(text, start)
+    width              : usize = 0
+    offset                     := start
+    regional           : usize = 0
+    emoji_presentation         := no
+
+    for offset < end {
+        (rune, size) := utf8_decode(text[offset..].as([]u8))
+        on rune >= 0x1f1e6 && rune <= 0x1f1ff => regional += 1
+        on rune == 0xfe0f || rune == 0x20e3 => emoji_presentation = yes
+        cells := scalar_width(rune)
+        on cells > width => width = cells
+        offset += size
+    }
+    on regional >= 2 || emoji_presentation => width = 2
+    on width == 0 && text[start] != '\r' && text[start] != '\n' => width = 1
+    return width
+}

@@ -1,0 +1,189 @@
+use buffer
+use characters
+
+pub EditRecord :: plex {
+    start   usize
+    removed [..]u8
+    added   [..]u8
+}
+
+-- Buffer-owned history and a revision-cached read projection. The projection is
+-- rebuilt on mutation, never on navigation or repaint. Incremental indexing is
+-- an optimisation still required before claiming large-file performance.
+pub Document :: plex {
+    storage GapBuffer
+    content [..]u8
+    lines   [..]usize
+    history [..]EditRecord
+    applied usize
+}
+
+pub DocumentEdits :: trait {
+    edit      ::
+                 fn (self  : ^Self,
+                     range : TextRange,
+                     text  : string) -> TextChange\EditError
+    undo_edit :: fn (self: ^Self) -> ?TextChange
+    redo_edit :: fn (self: ^Self) -> ?TextChange
+}
+
+impl Document {
+
+    pub release :: fn (self: ^Self) {
+        self.storage.release()
+        self.content.free()
+        self.lines.free()
+        for record in self.history {
+            record.removed.free()
+            record.added.free()
+        }
+        self.history.free()
+    }
+
+    pub text :: fn (self: ^Self) => self.content[..].as(string)
+
+    -- Rebuild after validated history restoration; ordinary edits use edit.
+    pub refresh :: fn (self: ^Self) {
+        self.content.resize_undefined_to(self.storage.length())
+        on self.storage.copy_range({ start: 0 end: self.storage.length() }, self.content[..]) {
+            _count => {
+            }
+
+            _error! => abort("Internal error: document projection range")
+        }
+        self.lines.clear()
+        -- A UTF-8 BOM is preserved in storage/history but is not editable
+        -- line content. All ordinary view commands begin after the preamble.
+        preamble : usize = 0
+        on self.content.count >= 3 &&
+            self.content[0] == 0xef &&
+            self.content[1] == 0xbb &&
+            self.content[2] == 0xbf => preamble = 3
+        self.lines.push(preamble)
+        for index, byte in self.content {
+            on byte^ == '\n' => self.lines.push(index + 1)
+        }
+    }
+
+    pub load :: fn (self: ^Self, text: string) -> void\EditError {
+        _ := self.storage.replace({ start: 0 end: self.storage.length() }, text)?
+        for record in self.history {
+            record.removed.free()
+            record.added.free()
+        }
+        self.history.clear()
+        self.applied = 0
+        self.refresh()
+    }
+
+    pub line_at :: fn (self: ^Self, position: usize) -> usize {
+        lower : usize = 0
+        upper         := self.lines.count
+
+        for lower + 1 < upper {
+            middle := (lower + upper) / 2
+            on self.lines[middle] <= position {
+                yes   => lower = middle
+                else  => upper = middle
+            }
+        }
+        return lower
+    }
+
+    pub line_start :: fn (self: ^Self, line: usize) -> usize {
+        return self.lines[line]
+    }
+
+    pub line_end :: fn (self: ^Self, line: usize) -> usize {
+        end := on line + 1 < self.lines.count {
+            yes   => self.lines[line + 1] - 1
+            else  => self.content.count
+        }
+        on end > self.lines[line] &&
+            self.content[end - 1] == '\r' &&
+            end < self.content.count => end -= 1
+        return end
+    }
+
+    pub first_text :: fn (self: ^Self, line: usize) -> usize {
+        position := self.line_start(line)
+        end      := self.line_end(line)
+
+        for position < end &&
+            is_whitespace_character(self.text(), position) {
+            position = next_character(self.text(), position)
+        }
+        return position
+    }
+
+}
+
+impl DocumentEdits for Document {
+    pub edit :: fn (self: ^Self, range: TextRange, text: string) -> TextChange\EditError {
+        -- Capture payloads before mutation, including borrowed replacement text.
+        record: EditRecord
+        record.start = range.start
+        on range.start > range.end || range.end > self.content.count => return InvalidRange!
+        record.removed.resize_undefined_to(range.end - range.start)
+        record.removed[..] = self.content[range.start .. range.end]
+        record.added.resize_undefined_to(text.count)
+        record.added[..] = text.as([]u8)
+        on self.storage.replace(range, record.added[..].as(string)) {
+            change => {
+                on change.before_revision == change.after_revision => {
+                    record.removed.free()
+                    record.added.free()
+                    return change
+                }
+                for self.history.count > self.applied {
+                    removed := self.history.pop()
+                    removed.removed.free()
+                    removed.added.free()
+                }
+                self.history.push(record)
+                self.applied += 1
+                self.refresh()
+                return change
+            }
+            error! => {
+                record.removed.free()
+                record.added.free()
+                return error!
+            }
+        }
+    }
+
+    pub undo_edit :: fn (self: ^Self) -> ?TextChange {
+        on self.applied == 0 => return nil
+        record := ^self.history[self.applied - 1]
+        return on self.storage.replace({
+            start: record.start end: record.start + record.added.count
+        }
+        , record.removed[..].as(string)) {
+            change => {
+                self.applied -= 1
+                self.refresh()
+                restored: ?TextChange = change
+                break restored
+            }
+            _error! => abort("Internal error: invalid undo record")
+        }
+    }
+
+    pub redo_edit :: fn (self: ^Self) -> ?TextChange {
+        on self.applied == self.history.count => return nil
+        record := ^self.history[self.applied]
+        return on self.storage.replace({
+            start: record.start end: record.start + record.removed.count
+        }
+        , record.added[..].as(string)) {
+            change => {
+                self.applied += 1
+                self.refresh()
+                restored: ?TextChange = change
+                break restored
+            }
+            _error! => abort("Internal error: invalid redo record")
+        }
+    }
+}

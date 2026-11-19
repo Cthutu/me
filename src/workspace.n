@@ -1,0 +1,589 @@
+use buffer
+use codec
+use document
+use keyboard
+use native
+use os.linux
+use positions
+use std.text
+use view
+
+pub DocumentEntry :: plex {
+    text             Document
+    path             [..]u8
+    disk             [..]u8
+    rollback         [..]u8
+    keep_on_rollback bool
+    disk_exists      bool
+    missing          bool
+    conflict         bool
+    stamp            ?Stat
+    candidate        ?Stat
+}
+
+impl DocumentEntry {
+
+    pub release :: fn (self: ^Self) {
+        self.text.release()
+        self.path.free()
+        self.disk.free()
+        self.rollback.free()
+    }
+
+    pub modified :: fn (self: ^Self) -> bool {
+        on self.path.count == 0 => return self.text.text().count > 0
+        return !self.disk_exists || self.missing || self.text.text() != bytes_text(self.disk)
+    }
+
+    pub baseline :: fn (self: ^Self) {
+        encoded : Encoder
+        encoded.document(^self.text)
+        self.rollback.free()
+        self.rollback = encoded.bytes
+        self.keep_on_rollback = yes
+    }
+
+    pub line_ending :: fn (self: ^Self, line: usize) -> string {
+        doc := ^self.text
+        -- Prefer an existing local ending, otherwise the file's majority.
+        on line + 1 < doc.lines.count => {
+            end := doc.line_start(line + 1) - 1
+            return on end > 0 && doc.content[end - 1] == '\r' {
+                yes   => "\r\n"
+                else  => "\n"
+            }
+        }
+        crlf : usize = 0
+        for index, byte in doc.content {
+            on byte^ == '\n' &&
+                index > 0 &&
+                doc.content[index - 1] == '\r' => crlf += 1
+        }
+        return on crlf * 2 > doc.lines.count - 1 { yes => "\r\n" else => "\n" }
+    }
+
+}
+
+-- Stable numeric IDs keep buffer, view, and surface ownership independent. MS1
+-- mounts one surface. Entries remain alive while views reference them.
+pub TextView :: plex {
+    document_id usize
+    interaction View
+    keyboard    Keyboard
+}
+
+pub Surface :: plex {
+    view_id usize
+}
+
+pub Workspace :: plex {
+    documents         [..]DocumentEntry
+    views             [..]TextView
+    surface           Surface
+    folder            [..]u8
+    session_path      [..]u8
+    lock_fd           i32
+    persistent        bool
+    checkpoint_failed bool
+}
+
+same_stamp :: fn (left: Stat, right: Stat) -> bool {
+    return same_file_state(left, right)
+}
+
+pub absolute_path :: fn (scratch : ^arena,
+                         folder  : string,
+                         path    : string) -> string {
+    -- Lexically collapsing ".." can select the wrong file when a preceding
+    -- component is a symlink (or does not exist). Leave resolution to Linux.
+    return on path.count > 0 && path[0] == '/' {
+        yes   => path
+        else  => scratch.pr($"{folder}/{path}")
+    }
+}
+
+impl Workspace {
+
+    pub release_documents :: fn (self: ^Self) {
+        for document in self.documents {
+            document.release()
+        }
+        self.documents.free()
+        self.views.free()
+    }
+
+    pub release :: fn (self: ^Self) {
+        self.release_documents()
+        self.folder.free()
+        self.session_path.free()
+        on self.lock_fd >= 0 => {
+            _ := sys_close(self.lock_fd)
+        }
+        self.lock_fd = -1
+    }
+
+    pub active_view :: fn (self: ^Self) => ^self.views[self.surface.view_id]
+
+    pub active_document :: fn (self: ^Self) => ^self.documents[self.active_view().document_id]
+
+    pub add_empty :: fn (self: ^Self) {
+        entry : DocumentEntry
+        on entry.text.load("") {
+            _success => {
+            }
+
+            _error! => abort("Internal error: empty document")
+        }
+        self.documents.push(entry)
+        text_view : TextView
+        text_view.document_id = self.documents.count - 1
+        text_view.interaction.state = Interaction.Insert
+        text_view.interaction.reveal = yes
+        self.views.push(text_view)
+        self.surface.view_id = self.views.count - 1
+    }
+
+    pub open_file :: fn (self    : ^Self,
+                         scratch : ^arena,
+                         path    : string) -> void\string {
+        absolute   := absolute_path(scratch, bytes_text(self.folder), path)
+        info       := metadata(scratch, absolute)
+        info_error := last_error()
+
+        for index, entry in self.documents {
+            same_file := bytes_text(entry.path) == absolute
+            on info => [current] {
+                previous := entry.stamp
+                on previous == nil &&
+                    entry.path.count > 0 => previous = metadata(scratch,
+                                                                bytes_text(entry.path))
+                on previous => [known] {
+                    on current.dev == known.dev &&
+                        current.ino == known.ino => same_file = yes
+                }
+            }
+            on same_file => {
+                for view_index, text_view in self.views {
+                    on text_view.document_id == index => {
+                        self.surface.view_id = view_index
+                        return
+                    }
+                }
+            }
+        }
+        entry       : DocumentEntry
+        transferred                 := no
+
+        defer on !transferred => entry.release()
+        own(^entry.path, absolute)
+        text := ""
+        on info {
+            current => {
+                on (current.mode & 0xf000) != 0x8000 => return "Cannot open a "
+                    +"non-regular file"!
+                text = read_file(scratch, absolute)?
+                entry.disk_exists = yes
+                entry.stamp = current
+                own(^entry.disk, text)
+            }
+
+            else => {
+                on info_error != ENOENT => return "Cannot inspect requested "
+                    +"file"!
+            }
+        }
+        on entry.text.load(text) {
+            _success => {
+            }
+
+            _error! => return "File is not valid UTF-8"!
+        }
+        on entry.disk_exists => entry.baseline()
+        self.documents.push(entry)
+        transferred = yes
+        text_view : TextView
+        text_view.document_id = self.documents.count - 1
+        text_view.interaction.selection.collapse(entry.text.line_start(0))
+        text_view.interaction.state = on text.count == entry.text.line_start(0) {
+            yes   => Interaction.Insert
+            else  => Interaction.Normal
+        }
+        text_view.interaction.reveal = yes
+        self.views.push(text_view)
+        self.surface.view_id = self.views.count - 1
+    }
+
+    pub initialise :: fn (self    : ^Self,
+                          scratch : ^arena,
+                          reset   : bool) -> void\string {
+        self.lock_fd = -1
+        own(^self.folder, cwd(scratch)?)
+        home := environment(scratch, "HOME")
+        on home.count == 0 => {
+            self.checkpoint_failed = yes
+            return "HOME is unset; continuation disabled"!
+        }
+        config  := scratch.pr($"{home}/.config")
+        root    := scratch.pr($"{config}/me")
+        session := scratch.pr($"{root}/{fingerprint(bytes_text(self.folder))}")
+
+        on !make_directory(scratch, config) ||
+            !make_directory(scratch, root) ||
+            !make_directory(scratch, session) => {
+            self.checkpoint_failed = yes
+            return "Cannot create private continuation folder"!
+        }
+        lock_path := scratch.pr($"{session}/lock")
+        fd        := sys_open(lock_path.c_string(), O_RDWR | O_CREAT, 0x180)
+
+        on fd < 0 => {
+            self.checkpoint_failed = yes
+            return "Cannot open continuation lock"!
+        }
+        on syscall(SYS_FLOCK, fd.as(u64), 6, 0, 0, 0, 0).as(i64) < 0 => {
+            _ := sys_close(fd)
+            return "Another ME owns this folder's continuation. This session starts fresh and will not read or write snapshots. Save files before :q, or use :q! to abandon edits."!
+        }
+        self.lock_fd = fd
+        self.persistent = yes
+        own(^self.session_path, scratch.pr($"{session}/snapshot"))
+        on !reset &&
+            metadata(scratch, bytes_text(self.session_path)) != nil => {
+            on self.restore(scratch) {
+                _success => {
+                }
+
+                error! => {
+                    self.release_documents()
+                    self.persistent = no
+                    self.checkpoint_failed = yes
+                    return error!
+                }
+            }
+        }
+    }
+
+    pub checkpoint :: fn (self: ^Self, scratch: ^arena) -> void\string {
+        on !self.persistent => return "Continuation is unavailable"!
+        encoded : Encoder
+        defer encoded.bytes.free()
+        encoded.text("ME/MS1/1")
+        encoded.text(bytes_text(self.folder))
+        encoded.number(self.documents.count.as(u64))
+        for entry in self.documents {
+            encoded.text(bytes_text(entry.path))
+            encoded.text(bytes_text(entry.disk))
+            encoded.number(on entry.disk_exists {
+                yes   => 1
+                else  => 0
+            })
+            encoded.number(on entry.missing {
+                yes   => 1
+                else  => 0
+            })
+            encoded.document(^entry.text)
+        }
+        encoded.number(self.views.count.as(u64))
+        for text_view in self.views {
+            view := ^text_view.interaction
+            encoded.number(text_view.document_id.as(u64))
+            encoded.number(view.selection.anchor.as(u64))
+            encoded.number(view.selection.active.as(u64))
+            encoded.number(view.preferred.as(u64))
+            doc := ^self.documents[text_view.document_id].text
+            top := on view.top < doc.lines.count { yes => view.top else => doc.lines.count - 1 }
+
+            encoded.number(top.as(u64))
+            encoded.number(view.horizontal.as(u64))
+            encoded.number(on view.state == Interaction.Insert {
+                yes   => 1
+                else  => 0
+            })
+            encoded.number(on view.linewise {
+                yes   => 1
+                else  => 0
+            })
+        }
+        encoded.number(self.surface.view_id.as(u64))
+        encoded.number(fingerprint(bytes_text(encoded.bytes)))
+        on atomic_write(scratch, bytes_text(self.session_path), bytes_text(encoded.bytes), yes) {
+            _success => {
+                self.checkpoint_failed = no
+            }
+
+            error! => {
+                self.checkpoint_failed = yes
+                return error!
+            }
+        }
+    }
+
+    pub restore :: fn (self: ^Self, scratch: ^arena) -> void\string {
+        bytes := read_file(scratch, bytes_text(self.session_path))?
+        on bytes.count < 8 => return "Truncated continuation; original "
+            +"snapshot retained"!
+        check := Decoder { bytes offset: bytes.count - 8 }
+        on check.number()? != fingerprint(bytes[..bytes.count - 8]) => return "Continuation checksum failed; original snapshot retained"!
+        reader := Decoder { bytes: bytes[..bytes.count - 8] offset: 0 }
+        on reader.text()? != "ME/MS1/1" ||
+            reader.text()? != bytes_text(self.folder) => return "Continuation "
+            +"version or folder mismatch"!
+        documents := reader.number()?
+        on documents > ((reader.bytes.count - reader.offset) / 56).as(u64) => return "Invalid continuation document count"!
+        for _ in [0 .. documents] {
+            entry       : DocumentEntry
+            transferred                 := no
+
+            defer on !transferred => entry.release()
+            own(^entry.path, reader.text()?)
+            own(^entry.disk, reader.text()?)
+            entry.disk_exists = reader.number()? != 0
+            entry.missing = reader.number()? != 0
+            reader.document(^entry.text)?
+            -- Force content verification after restart: the disk may have
+            -- changed while ME was not running.
+            entry.stamp = nil
+            entry.baseline()
+            self.documents.push(entry)
+            transferred = yes
+        }
+        views := reader.number()?
+        on views > ((reader.bytes.count - reader.offset) / 64).as(u64) => return "Invalid continuation view count"!
+        for _ in [0 .. views] {
+            text_view : TextView
+            text_view.document_id = reader.number()?.as(usize)
+            on text_view.document_id >= self.documents.count => return "Invalid"
+                +" continuation view document"!
+            doc  := ^self.documents[text_view.document_id].text
+            view := ^text_view.interaction
+
+            view.selection.anchor = reader.number()?.as(usize)
+            view.selection.active = reader.number()?.as(usize)
+            view.preferred = reader.number()?.as(usize)
+            view.top = reader.number()?.as(usize)
+            view.horizontal = reader.number()?.as(usize)
+            view.state = on reader.number()? != 0 {
+                yes   => Interaction.Insert
+                else  => Interaction.Normal
+            }
+            view.linewise = reader.number()? != 0
+            on view.selection.anchor > doc.text().count ||
+                view.selection.active > doc.text().count ||
+                view.top >= doc.lines.count => return "Invalid continuation "
+                +"view positions"!
+            on (view.selection.anchor < doc.text().count && (doc.content[view.selection.anchor] & 0xc0) == 0x80) ||
+                (view.selection.active < doc.text().count && (doc.content[view.selection.active] & 0xc0) == 0x80) => return "Invalid continuation character boundary"!
+            on view.selection.anchor < doc.line_start(0) ||
+                view.selection.active < doc.line_start(0) => view.repair(doc)
+            -- Retain positions/scroll, not a stale typing state: the startup
+            -- rule is Insert only for empty content, Normal otherwise.
+            view.state = on doc.text().count == doc.line_start(0) {
+                yes   => Interaction.Insert
+                else  => Interaction.Normal
+            }
+            self.views.push(text_view)
+        }
+        self.surface.view_id = reader.number()?.as(usize)
+        on self.surface.view_id >= self.views.count ||
+            reader.offset != reader.bytes.count => return "Invalid "
+            +"continuation layout"!
+    }
+
+    pub save :: fn (self           : ^Self,
+                    scratch        : ^arena,
+                    document_id    : usize,
+                    filename       : string,
+                    force_write    : bool,
+                    force_conflict : bool) -> void\string {
+        entry := ^self.documents[document_id]
+        path := on filename.count > 0 {
+            yes   => absolute_path(scratch, bytes_text(self.folder), filename)
+            else  => bytes_text(entry.path)
+        }
+        on path.count == 0 => return "A filename is required"!
+        reassociate := filename.count > 0
+        same_path   := path == bytes_text(entry.path)
+        -- Verify bytes immediately before every save, even if a monitor tick
+        -- has not yet observed an atomic replacement.
+        existing := metadata(scratch, path)
+        on existing => [current] {
+            on !same_path &&
+                entry.path.count > 0 => {
+                on metadata(scratch, bytes_text(entry.path)) => [backing] {
+                    on backing.dev == current.dev &&
+                        backing.ino == current.ino => same_path = yes
+                }
+            }
+            on !same_path &&
+                !force_conflict => return "Different target exists; use :w! "
+                +"filename"!
+            on !force_conflict &&
+                same_path => {
+                current := read_file(scratch, path)?
+                on current != bytes_text(entry.disk) ||
+                    !entry.disk_exists => {
+                    entry.conflict = yes
+                    return "File changed externally; use :w! to overwrite"!
+                }
+            }
+        }
+        on !reassociate &&
+            !force_write &&
+            !entry.modified() &&
+            existing != nil => return
+        expected : ?string = nil
+        on same_path &&
+            existing != nil &&
+            !force_conflict => expected = bytes_text(entry.disk)
+        atomic_write(scratch, path, entry.text.text(), existing != nil && (same_path || force_conflict), expected_text = expected)?
+        -- Path and baseline only advance after a successful durable write.
+        on reassociate => own(^entry.path, path)
+        own(^entry.disk, entry.text.text())
+        entry.disk_exists = yes
+        entry.missing = no
+        entry.conflict = no
+        entry.stamp = metadata(scratch, bytes_text(entry.path))
+        entry.baseline()
+    }
+
+    pub poll_files :: fn (self: ^Self, scratch: ^arena) -> void\string {
+        for id, entry in self.documents {
+            on entry.path.count == 0 => again
+            current := metadata(scratch, bytes_text(entry.path))
+            on current {
+                info => {
+                    changed := entry.missing
+                    on entry.stamp {
+                        previous => {
+                            on !same_stamp(previous, info) => changed = yes
+                        }
+
+                        else => changed = yes
+                    }
+                    on !changed => again
+                    -- Two matching samples avoid most partial-write reloads.
+                    stable := no
+                    on entry.candidate {
+                        previous => stable = same_stamp(previous, info)
+
+                        else => {
+                        }
+                    }
+                    entry.candidate = info
+                    on !stable => again
+                    bytes := read_file(scratch, bytes_text(entry.path))?
+                    on bytes == bytes_text(entry.disk) &&
+                        entry.disk_exists => {
+                        entry.missing = no
+                        entry.conflict = no
+                        entry.stamp = info
+                        again
+                    }
+                    on entry.text.text() != bytes_text(entry.disk) => {
+                        entry.conflict = yes
+                        entry.stamp = info
+                        again
+                    }
+                    on entry.text.edit({ start: 0 end: entry.text.text().count }, bytes) {
+                        change => {
+                            for text_view in self.views {
+                                on text_view.document_id == id => {
+                                    text_view.interaction.selection.adjust(change)
+                                    text_view.interaction.repair(^entry.text)
+                                }
+                            }
+                        }
+
+                        _error! => return "External file is no longer valid "
+                            +"UTF-8; content retained"!
+                    }
+                    own(^entry.disk, bytes)
+                    entry.disk_exists = yes
+                    entry.missing = no
+                    entry.conflict = no
+                    entry.stamp = info
+                    entry.baseline()
+                }
+
+                else => {
+                    on last_error() == ENOENT {
+                        yes => entry.missing = yes
+
+                        else => return "Cannot inspect backing file; content "
+                            +"retained"!
+                    }
+                }
+            }
+        }
+    }
+
+    pub abandon :: fn (self: ^Self) -> void\string {
+        for id, entry in self.documents {
+            on !entry.keep_on_rollback => again
+            restored : Document
+            reader              := Decoder { bytes: bytes_text(entry.rollback) offset: 0 }
+
+            on reader.document(^restored) {
+                _success => {
+                }
+
+                error! => {
+                    restored.release()
+                    return error!
+                }
+            }
+            entry.text.release()
+            entry.text = restored
+            for text_view in self.views {
+                on text_view.document_id != id => again
+                view := ^text_view.interaction
+                on view.selection.active > restored.text().count => view.selection.collapse(restored.text().count)
+                on view.top >= restored.lines.count => view.top = restored.lines.count - 1
+                view.repair(^entry.text)
+            }
+        }
+        -- Drop only views of newly created, never-saved documents. Keep current
+        -- mounted layout where its document survives, otherwise mount a fallback.
+        index  : usize = 0
+        active         := self.surface.view_id
+
+        for index < self.views.count {
+            on self.documents[self.views[index].document_id].keep_on_rollback {
+                yes => index += 1
+
+                else => {
+                    for next in [index + 1 .. self.views.count] {
+                        self.views[next - 1] = self.views[next]
+                    }
+                    _ := self.views.pop()
+                    on index < active => active -= 1
+                }
+            }
+        }
+        -- At quit, compact dropped documents and remap surviving view IDs.
+        -- During normal editing IDs remain stable.
+        index = 0
+        for index < self.documents.count {
+            on self.documents[index].keep_on_rollback {
+                yes => index += 1
+
+                else => {
+                    self.documents[index].release()
+                    for next in [index + 1 .. self.documents.count] {
+                        self.documents[next - 1] = self.documents[next]
+                    }
+                    _ := self.documents.pop()
+                    for text_view in self.views {
+                        on text_view.document_id > index => text_view.document_id -= 1
+                    }
+                }
+            }
+        }
+        on self.views.count == 0 => self.add_empty()
+        self.surface.view_id = on active < self.views.count {
+            yes   => active
+            else  => self.views.count - 1
+        }
+    }
+
+}

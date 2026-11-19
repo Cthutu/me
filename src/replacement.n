@@ -1,0 +1,105 @@
+use buffer
+use search
+
+pub ReplaceCommand :: plex {
+    needle      string
+    replacement string
+    all         bool
+}
+
+pub Replacement :: plex {
+    range TextRange
+    text  string
+    count usize
+}
+
+-- Delimiters and backslashes can be escaped; all other bytes are literal. In
+-- particular, a backslash-n is not a request to rewrite line endings.
+pub parse_replace :: fn (scratch: ^arena, spec: string) -> ReplaceCommand\string {
+    on spec.count < 3 => return "Use :replace /old/new/ or :replace /old/new/g"!
+    delimiter := spec[0]
+    on delimiter < 33 ||
+        delimiter > 126 ||
+        delimiter == '\\' ||
+        (delimiter >= '0' && delimiter <= '9') ||
+        (delimiter >= 'a' && delimiter <= 'z') ||
+        (delimiter >= 'A' && delimiter <= 'Z') => return "Replacement needs a "
+        +"punctuation delimiter"!
+    bytes              := scratch.alloc_bytes(spec.count)
+    parts  : [2]string
+    field  : usize     = 0
+    start  : usize     = 0
+    used   : usize     = 0
+    offset : usize     = 1
+
+    for offset < spec.count && field < 2 {
+        byte := spec[offset]
+
+        offset += 1
+        on byte == delimiter => {
+            parts[field] = bytes[start..used].as(string)
+            field += 1
+            start = used
+            again
+        }
+        on byte == '\\' &&
+            offset < spec.count &&
+            (spec[offset] == delimiter || spec[offset] == '\\') => {
+            byte   = spec[offset]
+            offset += 1
+        }
+        bytes[used] = byte
+        used += 1
+    }
+    on field != 2 ||
+        (spec[offset..] != "" && spec[offset..] != "g") => return "Use "
+        +":replace /old/new/ or :replace /old/new/g"!
+    on parts[0].count == 0 => return "Replacement needs a non-empty search term"!
+    return ReplaceCommand { needle: parts[0] replacement: parts[1] all: spec[offset..] == "g" }
+}
+
+-- Plan a single contiguous operation spanning only the affected matches. All
+-- matches are non-overlapping; replacement text is never recursively searched.
+pub plan_replacement :: fn (scratch: ^arena, text: string, command: ReplaceCommand, origin: usize, minimum: usize = 0) -> ?Replacement {
+    on command.needle.count == 0 || minimum > text.count => return nil
+    matches: [..]usize
+    defer matches.free()
+    cursor := on command.all {
+        yes => minimum else => on origin >= minimum {
+            yes => origin else => minimum
+        }
+    }
+    for cursor <= text.count {
+        on find_literal(text[minimum ..], command.needle, cursor - minimum, no) {
+            relative => {
+                position := relative + minimum
+                on command.all && position < cursor => break
+                matches.push(position)
+                on !command.all => break
+                cursor = position + command.needle.count
+            }
+            else => break
+        }
+    }
+    on matches.count == 0 => return nil
+    start := matches[0]
+    end := matches[matches.count - 1] + command.needle.count
+    size := end - start - matches.count * command.needle.count + matches.count * command.replacement.count
+    payload := scratch.alloc_bytes(size)
+    source := start
+    destination: usize = 0
+    for position in matches {
+        unchanged := position^ - source
+        payload[destination .. destination + unchanged] = text[source .. position^].as([]u8)
+        destination += unchanged
+        payload[destination .. destination + command.replacement.count] = command.replacement.as([]u8)
+        destination += command.replacement.count
+        source = position^ + command.needle.count
+    }
+    return Replacement {
+        range: {
+            start end
+        }
+        text: payload.as(string) count: matches.count
+    }
+}

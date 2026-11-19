@@ -1,0 +1,3 @@
+# Generated conformance literals include significant whitespace-only lines.
+tests/unicode.n whitespace=-blank-at-eol linguist-generated=true
+src/unicode_data.n linguist-generated=true

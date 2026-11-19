@@ -1,0 +1,183 @@
+use std.term
+use view
+
+pub Keyboard :: plex {
+    count         usize
+    suppress_text bool
+}
+
+impl Keyboard {
+
+    take_count :: fn (self: ^Self) -> usize {
+        count := on self.count == 0 {
+            yes   => 1
+            else  => self.count
+        }
+        self.count = 0
+        return count
+    }
+
+    pub key :: fn (self: ^Self, key: TermKeyEvent) -> ?Command {
+        on key.action == TermKeyAction.Release => return nil
+        ctrl  := (key.modifiers & TERM_MOD_CONTROL) != 0
+        shift := (key.modifiers & TERM_MOD_SHIFT) != 0
+
+        on self.count > 0 &&
+            ((ctrl && (key.scan_code == TermScanCode.S || key.scan_code == TermScanCode.Z || key.scan_code == TermScanCode.R || key.scan_code == TermScanCode.D)) || key.scan_code == TermScanCode.Tab || key.scan_code == TermScanCode.Enter || key.scan_code == TermScanCode.Backspace || key.scan_code == TermScanCode.Delete) => {
+            self.count = 0
+            self.suppress_text = key.character != nil
+            return Command.Error("Command does not accept a count")
+        }
+        on ctrl => {
+            on key.scan_code {
+                S => {
+                    self.suppress_text = key.character != nil
+                    return Command.Save
+                }
+
+                Z => {
+                    self.suppress_text = key.character != nil
+                    return Command.Undo
+                }
+
+                R => {
+                    self.suppress_text = key.character != nil
+                    return Command.Redo
+                }
+
+                D => {
+                    self.suppress_text = key.character != nil
+                    return Command.Duplicate
+                }
+
+                else => {
+                }
+            }
+        }
+        direction: ?Direction = on key.scan_code {
+            ArrowLeft => on ctrl {
+                yes   => Direction.WordBack
+                else  => Direction.Left
+            }
+
+            ArrowRight => on ctrl {
+                yes   => Direction.WordForward
+                else  => Direction.Right
+            }
+
+            ArrowUp => on ctrl {
+                yes   => Direction.ScrollUp
+                else  => Direction.Up
+            }
+
+            ArrowDown => on ctrl {
+                yes   => Direction.ScrollDown
+                else  => Direction.Down
+            }
+
+            Home => on ctrl { yes => Direction.First else => Direction.Home }
+
+            End => on ctrl { yes => Direction.Last else => Direction.End }
+
+            PageUp => on ctrl {
+                yes   => Direction.ParagraphBack
+                else  => Direction.PageUp
+            }
+
+            PageDown => on ctrl {
+                yes   => Direction.ParagraphForward
+                else  => Direction.PageDown
+            }
+
+            else => nil
+        }
+        on direction => [value] {
+            counted := self.count > 0
+            amount  := self.take_count()
+
+            on counted &&
+                (value == Direction.Home || value == Direction.End || value == Direction.First || value == Direction.Last) => return Command.Error("Command does not accept a count")
+            return Command.Move { direction: value count: amount extend: shift }
+        }
+        on key.scan_code {
+            Escape => {
+                self.suppress_text = key.character != nil
+                return Command.Escape
+            }
+
+            Backspace => {
+                self.suppress_text = key.character != nil
+                return Command.Backspace
+            }
+
+            Delete => {
+                self.suppress_text = key.character != nil
+                on key.character => [code] {
+                    on code == 127 => return Command.Backspace
+                }
+                return Command.Delete
+            }
+
+            Enter, NumpadEnter => {
+                self.suppress_text = key.character != nil
+                return Command.InsertText("\n")
+            }
+
+            Tab => {
+                self.suppress_text = key.character != nil
+                return Command.Tab
+            }
+
+            else => {
+            }
+        }
+        return nil
+    }
+
+    pub character :: fn (self: ^Self, rune: u32, state: Interaction) -> ?Command {
+        on self.suppress_text => {
+            self.suppress_text = no
+            return nil
+        }
+        -- Traditional terminals send control bytes without modifier metadata.
+        on rune {
+            19  => return Command.Save
+            26  => return Command.Undo
+            18  => return Command.Redo
+            4   => return Command.Duplicate
+
+            else => {
+            }
+        }
+        on rune < 32 || rune == 127    => return nil
+        on state == Interaction.Insert => return nil
+        on rune >= '0'.as(u32) &&
+            rune <= '9'.as(u32) => {
+            on self.count >= 100000 => {
+                self.count = 0
+                return Command.Error("Count is too large")
+            }
+            self.count = self.count * 10 + (rune - '0'.as(u32)).as(usize)
+            return nil
+        }
+        count := self.take_count()
+        on count > 1 &&
+            rune != 'w'.as(u32) &&
+            rune != 'l'.as(u32) => return Command.Error("Command does not "
+            +"accept a count")
+        return on rune {
+            'i'.as(u32), 'a'.as(u32), 'A'.as(u32), 'I'.as(u32), 'o'.as(u32), 'O'.as(u32)  => Command.EnterInsert(rune)
+            'w'.as(u32)                                                                   => Command.SelectWord(count)
+            'l'.as(u32)                                                                   => Command.SelectLine(count)
+            'y'.as(u32)                                                                   => Command.Copy
+            'x'.as(u32)                                                                   => Command.Cut
+            'v'.as(u32)                                                                   => Command.Paste
+            'c'.as(u32)                                                                   => Command.Change
+            ':'.as(u32), '/'.as(u32), '?'.as(u32)                                         => Command.Prompt(rune)
+            'n'.as(u32)                                                                   => Command.SearchNext(no)
+            'p'.as(u32)                                                                   => Command.SearchNext(yes)
+            else                                                                          => Command.Error("Unknown Normal command")
+        }
+    }
+
+}

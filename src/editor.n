@@ -1,0 +1,756 @@
+use buffer
+use characters
+use document
+use keyboard
+use native
+use positions
+use replacement
+use search
+use std.term
+use std.text
+use std.time
+use view
+use workspace
+
+document_match :: fn (doc         : ^Document,
+                      query       : string,
+                      origin      : usize,
+                      backwards   : bool,
+                      skip_origin : bool = no) -> ?usize {
+    start    := doc.line_start(0)
+    relative := on origin >= start { yes => origin - start else => 0 }
+
+    on find_literal(doc.text()[start..], query, relative, backwards, skip_origin = skip_origin) {
+        position  => return position + start
+        else      => return nil
+    }
+}
+
+pub Editor :: plex {
+    workspace        Workspace
+    clipboard        Clipboard
+    prompt           [..]u8
+    prompt_kind      u32
+    prompt_caret     usize
+    search_saved     View
+    last_search      [..]u8
+    highlights       bool
+    active_match     ?usize
+    message          [..]u8
+    message_scroll   usize
+    dirty            bool
+    changed_at       Instant
+    checkpoint_at    Instant
+    quit             bool
+    save_all_pending bool
+}
+
+impl Editor {
+    pub release :: fn (self: ^Self) {
+        self.workspace.release()
+        self.clipboard.bytes.free()
+        self.prompt.free()
+        self.last_search.free()
+        self.message.free()
+    }
+    pub notify_others :: fn (self: ^Self, document_id: usize, invoking_view: usize, change: TextChange) {
+        doc := ^self.workspace.documents[document_id].text
+        for id, other in self.workspace.views {
+            on id != invoking_view && other.document_id == document_id => {
+                other.interaction.selection.adjust(change)
+                other.interaction.repair(doc)
+            }
+        }
+    }
+    pub tell :: fn (self: ^Self, message: string) {
+        own(^self.message, message)
+        self.message_scroll = 0
+    }
+    pub changed :: fn (self: ^Self) {
+        self.dirty = yes
+        self.changed_at = now()
+        self.highlights = no
+        self.active_match = nil
+        self.message.clear()
+    }
+    pub prompt_open :: fn (self: ^Self, kind: u32, initial: string = "") {
+        self.prompt_kind = kind
+        own(^self.prompt, initial)
+        self.prompt_caret = initial.count
+        self.workspace.active_view().keyboard.count = 0
+        self.workspace.active_view().interaction.state = Interaction.Normal
+        self.search_saved = self.workspace.active_view().interaction
+        on kind != ':'.as(u32) => self.preview_search()
+    }
+    pub search_query :: fn (self: ^Self) -> string {
+        query := bytes_text(self.prompt)
+        on query.count > 0 && query[0].as(u32) == self.prompt_kind => query = query[1 ..]
+        else on query.count > 1 && query[0] == '\\' && query[1].as(u32) == self.prompt_kind => query = query[1 ..]
+        return on query.count > 0 {
+            yes => query else => bytes_text(self.last_search)
+        }
+    }
+    pub preview_search :: fn (self: ^Self) {
+        query := self.search_query()
+        view := ^self.workspace.active_view().interaction
+        doc := ^self.workspace.active_document().text
+        view^ = self.search_saved
+        view.selection.collapse(view.selection.active)
+        origin := view.selection.active
+        on self.prompt.count > 0 && self.prompt[0].as(u32) == self.prompt_kind => {
+            origin = on self.prompt_kind == '/'.as(u32) {
+                yes => 0 else => doc.text().count
+            }
+        }
+        self.highlights = query.count > 0
+        self.active_match = document_match(doc, query, origin, self.prompt_kind == '?'.as(u32))
+        on self.active_match {
+            position => {
+                view.place(doc, position, no)
+                self.message.clear()
+            }
+            else => {
+                on query.count > 0 => self.tell("No match")
+            }
+        }
+    }
+    pub prompt_cancel :: fn (self: ^Self) {
+        on self.prompt_kind != ':'.as(u32) && self.prompt_kind != 0 => {
+            query := self.search_query()
+            on query.count > 0 && query != bytes_text(self.last_search) => own(^self.last_search, query)
+            view := ^self.workspace.active_view().interaction
+            view^ = self.search_saved
+            view.selection.collapse(view.selection.active)
+            view.reveal = no
+        }
+        self.prompt_kind = 0
+        self.prompt.clear()
+        self.highlights = no
+        self.active_match = nil
+        self.save_all_pending = no
+    }
+    pub prompt_insert :: fn (self: ^Self, text: string) {
+        old_count := self.prompt.count
+        self.prompt.resize_undefined_to(old_count + text.count)
+        index := old_count
+        for index > self.prompt_caret {
+            index -= 1
+            self.prompt[index + text.count] = self.prompt[index]
+        }
+        self.prompt[self.prompt_caret .. self.prompt_caret + text.count] = text.as([]u8)
+        self.prompt_caret += text.count
+        on self.prompt_kind != ':'.as(u32) => self.preview_search()
+    }
+    pub prompt_delete :: fn (self: ^Self, backwards: bool) {
+        start := on backwards {
+            yes => previous_character(bytes_text(self.prompt), self.prompt_caret) else => self.prompt_caret
+        }
+        end := on backwards {
+            yes => self.prompt_caret else => next_character(bytes_text(self.prompt), self.prompt_caret)
+        }
+        for index in [end .. self.prompt.count] {
+            self.prompt[index - (end - start)] = self.prompt[index]
+        }
+        self.prompt.resize_undefined_to(self.prompt.count - (end - start))
+        self.prompt_caret = start
+        on self.prompt_kind != ':'.as(u32) => self.preview_search()
+    }
+    pub finish_search :: fn (self: ^Self) -> void\string {
+        query := self.search_query()
+        on query.count == 0 => {
+            self.prompt_cancel()
+            return "No previous search"!
+        }
+        on query != bytes_text(self.last_search) => own(^self.last_search, query)
+        matched := self.active_match != nil
+        self.prompt_kind = 0
+        self.prompt.clear()
+        self.highlights = no
+        self.active_match = nil
+        view := ^self.workspace.active_view().interaction
+        view.selection.collapse(view.selection.active)
+        self.dirty = yes
+        on !matched => return "No match"!
+    }
+    pub find_next :: fn (self: ^Self, backwards: bool) -> void\string {
+        query := bytes_text(self.last_search)
+        on query.count == 0 => return "No previous search"!
+        view := ^self.workspace.active_view().interaction
+        doc := ^self.workspace.active_document().text
+        on document_match(doc, query, view.selection.active, backwards, skip_origin = yes) {
+            position => {
+                view.place(doc, position, no)
+                view.selection.anchor = position + query.count
+                view.selection.active = position
+                self.highlights = yes
+                self.active_match = position
+                self.dirty = yes
+            }
+            else => return "No other match"!
+        }
+    }
+    pub save_all :: fn (self: ^Self, scratch: ^arena) -> void\string {
+        for id, entry in self.workspace.documents {
+            on !entry.modified() => again
+            on entry.path.count == 0 => {
+                for index, text_view in self.workspace.views {
+                    on text_view.document_id == id => self.workspace.surface.view_id = index
+                }
+                self.prompt_open(':'.as(u32), initial = "w ")
+                self.save_all_pending = yes
+                return
+            }
+            on self.workspace.save(scratch, id, "", no, no) {
+                _success => self.dirty = yes
+                error! => {
+                    for index, text_view in self.workspace.views {
+                        on text_view.document_id == id => self.workspace.surface.view_id = index
+                    }
+                    return scratch.pr($"Cannot save {bytes_text(entry.path)}: {error}")!
+                }
+            }
+        }
+        self.quit_safely(scratch)?
+    }
+    pub quit_safely :: fn (self: ^Self, scratch: ^arena) -> void\string {
+        on self.workspace.persistent {
+            yes => self.workspace.checkpoint(scratch)?
+            else => {
+                for entry in self.workspace.documents {
+                    on entry.modified() => return "Cannot quit safely without "
+                        +"continuation. Save files or use :q! to abandon this "
+                        +"invocation's edits."!
+                }
+            }
+        }
+        self.quit = yes
+    }
+    pub command_line :: fn (self: ^Self, scratch: ^arena) -> void\string {
+        command := scratch.pr(bytes_text(self.prompt)).trim()
+        pending := self.save_all_pending
+        self.prompt_kind = 0
+        self.prompt.clear()
+        self.save_all_pending = no
+        on command == "q" => {
+            self.quit_safely(scratch)?
+            return
+        }
+        on command == "q!" => {
+            self.workspace.abandon()?
+            on self.workspace.persistent => self.workspace.checkpoint(scratch)?
+            self.quit = yes
+            return
+        }
+        on command == "wq" => {
+            self.save_all(scratch)?
+            return
+        }
+        number: usize = 0
+        numeric := command.count > 0
+        maximum := self.workspace.active_document().text.lines.count
+        for byte in command {
+            on byte^ < '0' || byte^ > '9' {
+                yes => numeric = no
+                else => {
+                    on number > maximum / 10 {
+                        yes => number = maximum
+                        else => number = number * 10 + (byte^ - '0').as(usize)
+                    }
+                    on number > maximum => number = maximum
+                }
+            }
+        }
+        on numeric => {
+            doc := ^self.workspace.active_document().text
+            line := on number == 0 {
+                yes => 0 else => number - 1
+            }
+            on line >= doc.lines.count => line = doc.lines.count - 1
+            self.workspace.active_view().interaction.place(doc, doc.first_text(line), no)
+            self.highlights = no
+            self.dirty = yes
+            return
+        }
+        split: usize = 0
+        for split < command.count &&
+            command[split] != ' ' {
+            split += 1
+        }
+        verb := command[.. split]
+        filename := command[split ..].trim()
+        on verb == "replace" => {
+            parsed := parse_replace(scratch, filename)?
+            entry := self.workspace.active_document()
+            doc := ^entry.text
+            view := ^self.workspace.active_view().interaction
+            on plan_replacement(scratch, doc.text(), parsed, view.selection.active, minimum = doc.line_start(0)) {
+                plan => {
+                    on doc.edit(plan.range, plan.text) {
+                        change => self.notify_others(self.workspace.active_view().document_id, self.workspace.surface.view_id, change)
+                        _error! => return "Replacement is not valid UTF-8"!
+                    }
+                    view.place(doc, plan.range.start + plan.text.count, no)
+                    own(^self.last_search, parsed.needle)
+                    self.changed()
+                    self.tell(scratch.pr($"Replaced {plan.count} match(es)"))
+                }
+                else => self.tell("No match")
+            }
+            return
+        }
+        on verb == "buffers" => {
+            listing := ""
+            active := self.workspace.active_view().document_id
+            for id, entry in self.workspace.documents {
+                marker := on id == active {
+                    yes => ">" else => " "
+                }
+                modified := on entry.modified() {
+                    yes => "*" else => " "
+                }
+                path := on entry.path.count == 0 {
+                    yes => "[unnamed]" else => bytes_text(entry.path)
+                }
+                listing = scratch.pr($"{listing}{marker}{id + 1}{modified} {path}\n")
+            }
+            self.tell(listing)
+            return
+        }
+        on verb == "buffer" => {
+            number: usize = 0
+            for byte in filename {
+                on byte^ < '0' || byte^ > '9' || number > 10000 => return "Expe"
+                    +"cted :buffer and a number from :buffers"!
+                number = number * 10 + (byte^ - '0').as(usize)
+            }
+            on number == 0 || number > self.workspace.documents.count => return "No such buffer; use :buffers"!
+            for id, text_view in self.workspace.views {
+                on text_view.document_id == number - 1 => {
+                    self.workspace.surface.view_id = id
+                    text_view.interaction.state = Interaction.Normal
+                    self.highlights = no
+                    self.dirty = yes
+                    self.message.clear()
+                    return
+                }
+            }
+            return "No view for that buffer"!
+        }
+        on verb != "w" && verb != "ww" && verb != "w!" => return "Unknown "
+            +"command"!
+        id := self.workspace.active_view().document_id
+        on filename.count == 0 && self.workspace.documents[id].path.count == 0 => {
+            self.prompt_open(':'.as(u32), initial = "w ")
+            self.save_all_pending = pending
+            return
+        }
+        self.workspace.save(scratch, id, filename, verb != "w", verb == "w!")?
+        self.dirty = yes
+        self.tell("Saved")
+        on pending => self.save_all(scratch)?
+    }
+    pub indent_width :: fn (self: ^Self) -> usize {
+        doc := ^self.workspace.active_document().text
+        width: usize = 0
+        samples: usize = 0
+        for line in [0.as(usize) .. doc.lines.count] {
+            start := doc.line_start(line)
+            first := doc.first_text(line)
+            on first == start || first == doc.line_end(line) => again
+            spaces := first - start
+            on doc.content[start] != ' ' || spaces > 8 => again
+            on width == 0 {
+                yes => width = spaces else => {
+                    remainder := spaces
+                    for remainder != 0 {
+                        next := width % remainder
+                        width = remainder
+                        remainder = next
+                    }
+                }
+            }
+            samples += 1
+        }
+        return on samples >= 2 && width >= 2 && width <= 8 {
+            yes => width else => 4
+        }
+    }
+    pub duplicate :: fn (self: ^Self, scratch: ^arena) -> void\EditError {
+        entry := self.workspace.active_document()
+        doc := ^entry.text
+        view := ^self.workspace.active_view().interaction
+        line := doc.line_at(view.selection.active)
+        column := display_column(doc.text(), doc.line_start(line), view.selection.active)
+        start := doc.line_start(line)
+        end := on line + 1 < doc.lines.count {
+            yes => doc.line_start(line + 1) else => doc.text().count
+        }
+        payload := scratch.pr(doc.text()[start .. end])
+        insertion := end
+        on line + 1 == doc.lines.count => payload = scratch.pr($"{entry.line_ending(line)}{payload}")
+        _ := doc.edit({
+            start: insertion end: insertion
+        }
+        , payload)?
+        view.preferred = column
+        view.place(doc, view.position_column(doc, line + 1), no, retain_column = yes)
+    }
+    pub execute :: fn (self: ^Self, scratch: ^arena, command: Command) -> void\string {
+        text_view := self.workspace.active_view()
+        view := ^text_view.interaction
+        entry := self.workspace.active_document()
+        doc := ^entry.text
+        -- These are state-changing command kinds, not a blanket Ctrl rule.
+        on command {
+            Save, Undo, Redo, Duplicate => view.state = Interaction.Normal else => {
+            }
+        }
+        on self.prompt_kind != 0 => {
+            on command {
+                Escape => {
+                    self.prompt_cancel()
+                    return
+                }
+                InsertText(text) => {
+                    on text == "\n" {
+                        yes => {
+                            on self.prompt_kind == ':'.as(u32) {
+                                yes => self.command_line(scratch)? else => self.finish_search()?
+                            }
+                        }
+                        else => self.prompt_insert(text)
+                    }
+                    return
+                }
+                Backspace => {
+                    self.prompt_delete(yes)
+                    return
+                }
+                Delete => {
+                    self.prompt_delete(no)
+                    return
+                }
+                Move {
+                    direction, count, extend
+                }
+                => {
+                    on self.prompt_kind == ':'.as(u32) => {
+                        on direction {
+                            Left => self.prompt_caret = previous_character(bytes_text(self.prompt), self.prompt_caret)
+                            Right => self.prompt_caret = next_character(bytes_text(self.prompt), self.prompt_caret)
+                            Home, First => self.prompt_caret = 0
+                            End, Last => self.prompt_caret = self.prompt.count
+                            else => {
+                            }
+                        }
+                        return
+                    }
+                    self.prompt_cancel()
+                    view.move(doc, direction, count, extend)
+                    self.dirty = yes
+                    return
+                }
+                Save, Undo, Redo, Duplicate => self.prompt_cancel()
+                else => return
+            }
+        }
+        old_revision := doc.storage.revision()
+        old_applied := doc.applied
+        invoking_view := self.workspace.surface.view_id
+        on command {
+            Move {
+                direction, count, extend
+            }
+            => {
+                view.move(doc, direction, count, extend)
+                self.highlights = no
+                self.active_match = nil
+                self.dirty = yes
+            }
+            Escape => {
+                on self.message.count > 0 {
+                    yes => self.message.clear() else => {
+                        on text_view.keyboard.count > 0 {
+                            yes => text_view.keyboard.count = 0 else => {
+                                on view.state == Interaction.Insert {
+                                    yes => view.state = Interaction.Normal else => view.selection.collapse(view.selection.active)
+                                }
+                                self.highlights = no
+                                self.active_match = nil
+                            }
+                        }
+                    }
+                }
+                self.dirty = yes
+            }
+            EnterInsert(key) => {
+                view.state = Interaction.Insert
+                on key != 'i'.as(u32) => {
+                    position := view.selection.active
+                    line := doc.line_at(position)
+                    view.selection.collapse(position)
+                    on key {
+                        'a'.as(u32) => {
+                            on position < doc.line_end(line) => position = next_character(doc.text(), position)
+                        }
+                        'A'.as(u32) => position = doc.line_end(line)
+                        'I'.as(u32) => position = doc.first_text(line)
+                        'o'.as(u32) => {
+                            position = doc.line_end(line)
+                            on doc.edit({
+                                start: position end: position
+                            }
+                            , entry.line_ending(line)) {
+                                change => position += change.inserted_bytes _error! => return "Cannot open line"!
+                            }
+                        }
+                        'O'.as(u32) => {
+                            position = doc.line_start(line)
+                            on doc.edit({
+                                start: position end: position
+                            }
+                            , entry.line_ending(line)) {
+                                _change => {
+                                }
+                                _error! => return "Cannot open line"!
+                            }
+                        }
+                        else => {
+                        }
+                    }
+                    view.place(doc, position, no)
+                }
+                self.dirty = yes
+            }
+            InsertText(text) => {
+                on view.state != Interaction.Insert => return "Enter Insert "
+                    +"before typing text"!
+                payload := on text == "\n" {
+                    yes => entry.line_ending(doc.line_at(view.selection.active)) else => text
+                }
+                on view.replace_selection(doc, payload) {
+                    _success => {
+                    }
+                    _error! => return "Cannot insert text"!
+                }
+            }
+            Tab => {
+                on view.state != Interaction.Insert => return "Tab is only "
+                    +"available in Insert"!
+                spaces := "        "
+                on view.replace_selection(doc, spaces[.. self.indent_width()]) {
+                    _success => {
+                    }
+                    _error! => return "Cannot insert indentation"!
+                }
+            }
+            Backspace, Delete => {
+                on view.selection.empty() => {
+                    position := view.selection.active
+                    on command {
+                        Backspace => {
+                            start := previous_character(doc.text(), position)
+                            on start < doc.line_start(0) => start = doc.line_start(0)
+                            line := doc.line_at(position)
+                            leading := position <= doc.first_text(line)
+                            trailing := position == doc.line_end(line)
+                            width := self.indent_width()
+                            on (leading || trailing) && position >= width && position - width >= doc.line_start(line) => {
+                                spaces := yes
+                                for index in [position - width .. position] {
+                                    on doc.content[index] != ' ' => spaces = no
+                                }
+                                on spaces => start = position - width
+                            }
+                            view.selection.anchor = start
+                        }
+                        else => view.selection.anchor = next_character(doc.text(), position)
+                    }
+                }
+                on view.replace_selection(doc, "") {
+                    _success => {
+                    }
+                    _error! => return "Cannot delete text"!
+                }
+            }
+            Undo => {
+                on doc.undo_edit() {
+                    change => view.place(doc, change.range.start, no) else => self.tell("Nothing to undo")
+                }
+            }
+            Redo => {
+                on doc.redo_edit() {
+                    change => view.place(doc, change.range.start, no) else => self.tell("Nothing to redo")
+                }
+            }
+            Duplicate => {
+                on self.duplicate(scratch) {
+                    _success => {
+                    }
+                    _error! => return "Cannot duplicate line"!
+                }
+            }
+            SelectWord(count) => view.select_word(doc, count)
+            SelectLine(count) => view.select_line(doc, count)
+            Copy, Cut => {
+                on view.selection.empty() => return "No selection"!
+                own(^self.clipboard.bytes, doc.text()[view.selection.start() .. view.selection.end()])
+                self.clipboard.linewise = view.linewise
+                on command {
+                    Cut => {
+                        on view.replace_selection(doc, "") {
+                            _success => {
+                            }
+                            _error! => return "Cannot cut selection"!
+                        }
+                    } else => {
+                    }
+                }
+            }
+            Paste => {
+                on self.clipboard.bytes.count == 0 => return "Clipboard is "
+                    +"empty"!
+                payload := bytes_text(self.clipboard.bytes)
+                on self.clipboard.linewise && view.selection.empty() => {
+                    line := doc.line_at(view.selection.active)
+                    position := doc.text().count
+                    on line + 1 < doc.lines.count {
+                        yes => {
+                            position = doc.line_start(line + 1)
+                            on payload[payload.count - 1] != '\n' => payload = scratch.pr($"{payload}{entry.line_ending(line)}")
+                        }
+                        else => payload = scratch.pr($"{entry.line_ending(line)}{payload}")
+                    }
+                    view.selection.collapse(position)
+                }
+                on view.replace_selection(doc, payload) {
+                    _success => {
+                    }
+                    _error! => return "Cannot paste"!
+                }
+            }
+            Change => {
+                on view.replace_selection(doc, "") {
+                    _success => {
+                    }
+                    _error! => return "Cannot change selection"!
+                }
+                view.state = Interaction.Insert
+            }
+            Save => {
+                on entry.path.count == 0 {
+                    yes => self.prompt_open(':'.as(u32), initial = "w ") else => {
+                        self.workspace.save(scratch, text_view.document_id, "", no, no)?
+                        self.dirty = yes
+                        self.tell("Saved")
+                    }
+                }
+            }
+            Prompt(kind) => self.prompt_open(kind)
+            SearchNext(backwards) => self.find_next(backwards)?
+            Error(message) => return message!
+        }
+        on doc.storage.revision() != old_revision => {
+            undone := doc.applied < old_applied
+            record_index := on undone {
+                yes => doc.applied else => doc.applied - 1
+            }
+            record := ^doc.history[record_index]
+            removed := on undone {
+                yes => record.added.count else => record.removed.count
+            }
+            inserted := on undone {
+                yes => record.removed.count else => record.added.count
+            }
+            change := TextChange {
+                range: {
+                    start: record.start end: record.start + removed
+                }
+                inserted_bytes: inserted
+                before_revision: old_revision
+                after_revision: doc.storage.revision()
+            }
+            self.notify_others(text_view.document_id, invoking_view, change)
+            self.changed()
+        }
+    }
+    pub key :: fn (self: ^Self, scratch: ^arena, key: TermKeyEvent) {
+        on self.message.count > 0 && self.prompt_kind == 0 && (key.modifiers & TERM_MOD_ALT) != 0 => {
+            on key.scan_code {
+                PageUp => {
+                    on self.message_scroll > 0 => self.message_scroll -= 1
+                    return
+                }
+                PageDown => {
+                    self.message_scroll += 1
+                    return
+                } else => {
+                }
+            }
+        }
+        on self.workspace.active_view().keyboard.key(key) => [command] {
+            on self.execute(scratch, command) {
+                _success => {
+                }
+                error! => self.tell(error)
+            }
+        }
+    }
+    pub character :: fn (self: ^Self, scratch: ^arena, rune: u32) {
+        text_view := self.workspace.active_view()
+        suppressed := text_view.keyboard.suppress_text
+        state := text_view.interaction.state
+        on text_view.keyboard.character(rune, on self.prompt_kind != 0 {
+            yes => Interaction.Insert else => state
+        }) {
+            command => {
+                on self.execute(scratch, command) {
+                    _success => {
+                    }
+                    error! => self.tell(error)
+                }
+                return
+            }
+            else => {
+            }
+        }
+        on suppressed || rune < 32 || rune == 127 => return
+        encoded: [4]u8
+        size := rune.as(Rune).utf8_encode(encoded[..])
+        text := encoded[.. size].as(string)
+        on self.prompt_kind != 0 {
+            yes => self.prompt_insert(text) else => {
+                on state == Interaction.Insert => {
+                    on self.execute(scratch, Command.InsertText(text)) {
+                        _success => {
+                        }
+                        error! => self.tell(error)
+                    }
+                }
+            }
+        }
+    }
+    pub tick :: fn (self: ^Self, scratch: ^arena) {
+        before: u64 = 0
+        for entry in self.workspace.documents {
+            before += entry.text.storage.revision()
+        }
+        on self.workspace.poll_files(scratch) {
+            _success => {
+            }
+            error! => self.tell(error)
+        }
+        after: u64 = 0
+        for entry in self.workspace.documents {
+            after += entry.text.storage.revision()
+        }
+        on before != after => self.changed()
+        current := now()
+        on self.dirty && self.workspace.persistent && elapsed(self.checkpoint_at, current) >= from_ms(1000) && (elapsed(self.changed_at, current) >= from_ms(400) || elapsed(self.checkpoint_at, current) >= from_ms(2000)) => {
+            on self.workspace.checkpoint(scratch) {
+                _success => self.dirty = no error! => self.tell(error)
+            }
+            self.checkpoint_at = current
+        }
+    }
+}

@@ -1,0 +1,102 @@
+use src.buffer
+use src.document
+use src.keyboard
+use src.positions
+use src.view
+use std.term
+
+exercise_view :: fn () -> void\EditError {
+    doc : Document
+    defer doc.release()
+    doc.load("abcdefghij\nx\nabcdefghij")?
+    assert doc.lines.count == 3
+    view : View
+    view.rows = 10
+    view.place(^doc, 8, no)
+    view.move(^doc, Direction.Down, 1, no)
+    assert view.selection.active == 12
+    assert view.preferred == 8
+    view.move(^doc, Direction.Down, 1, no)
+    assert view.selection.active == 21
+    view.move(^doc, Direction.First, 1, no)
+    view.select_word(^doc, 1)
+    assert view.selection.start() == 0 && view.selection.end() == 10
+    view.replace_selection(^doc, "replacement")?
+    assert doc.text() == "replacement\nx\nabcdefghij"
+    view.top = 0
+    view.move(^doc, Direction.ScrollDown, 99, no)
+    assert view.top == 2
+    view.move(^doc, Direction.ScrollUp, 2, no)
+    assert view.top == 0
+}
+
+test "vertical movement retains preferred display column across short lines" {
+    on exercise_view() {
+        _success => {
+        }
+
+        error! => {
+            assert no, error.show()
+        }
+    }
+}
+
+test "view positions adjust independently of buffer ownership" {
+    change := TextChange { range: { start: 4 end: 4 } inserted_bytes: 3 before_revision: 0 after_revision: 1 }
+    assert adjust_caret(4, change) == 4
+    assert adjust_caret(5, change) == 8
+    selection := Selection { anchor: 4 active: 9 }
+    selection.adjust(change)
+    assert selection.anchor == 7 && selection.active == 12
+    replacement := TextChange { range: { start: 7 end: 12 } inserted_bytes: 2 before_revision: 1 after_revision: 2 }
+    selection.adjust(replacement)
+    assert selection.anchor == 7 && selection.active == 9
+}
+
+test "keyboard counts emit commands rather than directly moving a view" {
+    keyboard : Keyboard
+    on keyboard.character('3'.as(u32), Interaction.Normal) {
+        _command => {
+            assert no
+        }
+
+        else => {
+        }
+    }
+    on keyboard.character('w'.as(u32), Interaction.Normal) {
+        command => {
+            on command {
+                SelectWord(count) => {
+                    assert count == 3
+                }
+
+                else => {
+                    assert no
+                }
+            }
+        }
+
+        else => {
+            assert no
+        }
+    }
+    assert keyboard.count == 0
+    keyboard.count = 3
+    on keyboard.key(TermKeyEvent { scan_code: TermScanCode.Home action: TermKeyAction.Press ... }) {
+        command => {
+            on command {
+                Error(_message) => {
+                }
+
+                else => {
+                    assert no
+                }
+            }
+        }
+
+        else => {
+            assert no
+        }
+    }
+    assert keyboard.count == 0
+}

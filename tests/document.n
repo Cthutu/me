@@ -1,0 +1,65 @@
+use src.buffer
+use src.document
+
+exercise_history :: fn () -> void\EditError {
+    document : Document
+    defer document.release()
+    document.load("one\r\ntwo\nlast")?
+    assert document.lines.count == 3
+    assert document.line_end(0) == 3
+    assert document.line_start(1) == 5
+    assert document.line_end(2) == 13
+    _ := document.edit({ start: 0 end: 0 }, "a")?
+    _ := document.edit({ start: 1 end: 1 }, "b")?
+
+    assert document.text() == "abone\r\ntwo\nlast"
+    assert document.applied == 2
+    on document.undo_edit() {
+        _change => {
+        }
+
+        else => {
+            assert no
+        }
+    }
+    assert document.text() == "aone\r\ntwo\nlast"
+    on document.redo_edit() {
+        _change => {
+        }
+
+        else => {
+            assert no
+        }
+    }
+    assert document.text() == "abone\r\ntwo\nlast"
+    on document.undo_edit() {
+        _change => {
+        }
+
+        else => {
+            assert no
+        }
+    }
+    _ := document.edit({ start: 0 end: 1 }, "replacement")?
+    assert document.history.count == 2
+    on document.redo_edit() {
+        _change => {
+            assert no
+        }
+
+        else => {
+        }
+    }
+    assert document.text() == "replacementone\r\ntwo\nlast"
+}
+
+test "document history is operation-sized, branches safely, and preserves line endings" {
+    on exercise_history() {
+        _success => {
+        }
+
+        error! => {
+            assert no, error.show()
+        }
+    }
+}

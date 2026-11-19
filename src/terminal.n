@@ -1,0 +1,460 @@
+use characters
+use document
+use editor
+use native
+use os.linux
+use positions
+use std.term
+use std.text
+use std.time
+use unicode_data
+use view
+use workspace
+
+Cell :: plex {
+    rune  u32
+    ink   Colour
+    paper Colour
+    force bool
+}
+
+Glyph :: plex {
+    x       usize
+    y       usize
+    text    string
+    ink     Colour
+    paper   Colour
+    pending bool
+}
+
+-- std.term cells currently store one codepoint. Local compositing adds full
+-- graphemes on the next simulation step, after dirty-cell output has completed.
+-- Plain cells and all layout still use std.term's retained framebuffer. Keep
+-- this bridge bounded to complex glyphs; a native glyph-cell API is a library
+-- candidate, not a reason to replace the terminal backend.
+pub Terminal :: plex {
+    editor              Editor
+    scratch             arena
+    cells               [..]Cell
+    previous_cells      [..]Cell
+    glyphs              [..]Glyph
+    previous_glyphs     [..]Glyph
+    glyph_arena         arena
+    previous_arena      arena
+    glyph_storage       ^arena
+    width               usize
+    height              usize
+    frames              usize
+    last_poll           Instant
+    previous_caret_line usize
+    signal_fd           i32
+    signal_mask         u64
+    signals_active      bool
+}
+
+INK    :: 0xd8dee9.as(Colour)
+PAPER  :: 0x171d27.as(Colour)
+MUTED  :: 0x738299.as(Colour)
+STATUS :: 0x29394f.as(Colour)
+SELECT :: 0x386a91.as(Colour)
+MATCH  :: 0x5b5030.as(Colour)
+CARET  :: 0xd6b35a.as(Colour)
+
+message_rows :: fn (text: string, width: usize) -> [..]string {
+    rows   : [..]string
+    start  : usize      = 0
+    offset : usize      = 0
+    column : usize      = 0
+
+    for offset < text.count {
+        next := next_character(text, offset)
+        on text[offset] == '\n' ||
+            text[offset] == '\r' => {
+            rows.push(text[start..offset])
+            start  = next
+            offset = next
+            column = 0
+            again
+        }
+        cells := character_width(text, offset, column)
+        on column + cells > width &&
+            offset > start => {
+            rows.push(text[start..offset])
+            start  = offset
+            column = 0
+            again
+        }
+        column += cells
+        offset = next
+    }
+    rows.push(text[start..])
+    return rows
+}
+
+impl Terminal {
+    pub release :: fn (self: ^Self) {
+        self.editor.release()
+        self.scratch.done()
+        self.cells.free()
+        self.previous_cells.free()
+        self.glyphs.free()
+        self.previous_glyphs.free()
+        self.glyph_arena.done()
+        self.previous_arena.done()
+        on self.signal_fd >= 0 => {
+            _ := sys_close(self.signal_fd)
+        }
+        on self.signals_active => {
+            _ := syscall(SYS_RT_SIGPROCMASK, 2, (^self.signal_mask).as(usize).as(u64), 0, 8, 0, 0)
+        }
+    }
+    pub signals_start :: fn (self: ^Self) -> void\string {
+        self.signal_fd = - 1
+        mask: u64 = (1 << 14) | 3
+        on syscall(SYS_RT_SIGPROCMASK, 0, (^mask).as(usize).as(u64), (^self.signal_mask).as(usize).as(u64), 8, 0, 0).as(i64) < 0 => return "Cannot arrange safe termination signals"!
+        self.signals_active = yes
+        fd := syscall(SYS_SIGNALFD4, (- 1).as(u64), (^mask).as(usize).as(u64), 8, (0x800 | 0x80000), 0, 0).as(i32)
+        on fd < 0 => return "Cannot open termination signal descriptor"!
+        self.signal_fd = fd
+    }
+    pub simulate :: fn (self: ^Self) {
+        self.scratch.reset()
+        on self.frames >= 2 => {
+            output: [..]u8
+            defer output.free()
+            for glyph in self.glyphs {
+                on !glyph.pending => again
+                ink := glyph.ink.as(u32)
+                paper := glyph.paper.as(u32)
+                text := self.scratch.pr($"\x1b[{glyph.y + 1};{glyph.x + 1}H\x1b[38;2;{ink & 255};{(ink >> 8) & 255};{(ink >> 16) & 255}m\x1b[48;2;{paper & 255};{(paper >> 8) & 255};{(paper >> 16) & 255}m{glyph.text}\x1b[0m")
+                start := output.count
+                output.resize_undefined_to(start + text.count)
+                output[start ..] = text.as([]u8)
+                glyph.pending = no
+            }
+            on output.count > 0 => term_print(bytes_text(output))
+        }
+        signal: [128]u8
+        on self.signal_fd >= 0 && sys_read(self.signal_fd, ^signal, 128) == 128 => {
+            on self.editor.quit_safely(^self.scratch) {
+                _success => {
+                }
+                error! => self.editor.tell(error)
+            }
+        }
+        current := now()
+        on elapsed(self.last_poll, current) >= from_ms(250) => {
+            self.editor.tick(^self.scratch)
+            self.last_poll = current
+        }
+        on self.editor.quit => term_done()
+    }
+    set :: fn (self: ^Self, x: usize, y: usize, rune: u32, ink: Colour, paper: Colour) {
+        on x < self.width && y < self.height => self.cells[y * self.width + x] = Cell {
+            rune ink paper ...
+        }
+    }
+    text :: fn (self: ^Self, x: usize, y: usize, input: string, ink: Colour, paper: Colour, max_width: usize) {
+        text := display_text(^self.scratch, input, single_line = yes)
+        offset: usize = 0
+        column: usize = 0
+        for offset < text.count &&
+            column < max_width &&
+            x + column < self.width {
+            next := next_character(text, offset)
+            on text[offset] == '\n' || text[offset] == '\r' => break
+            width := character_width(text, offset, column)
+            on width == 0 => width = 1
+            on column + width > max_width || x + column + width > self.width => break
+            self.character(x + column, y, text[offset .. next], width, ink, paper)
+            column += width
+            offset = next
+        }
+    }
+    character :: fn (self: ^Self, x: usize, y: usize, text: string, width: usize, ink: Colour, paper: Colour) {
+        (rune, size) := utf8_decode(text.as([]u8))
+        on rune < 32 || (rune >= 0x7f && rune < 0xa0) || grapheme_property(rune) == 3 => {
+            rune = 0xfffd
+            on text[0] == '\t' => rune = ' '.as(u32)
+        }
+        cluster := text
+        on scalar_width(rune) == 0 => {
+            rune = 0x25cc
+            cluster = self.glyph_storage.pr($"◌{text}")
+        }
+        native_width := rune.display_width()
+        composite := (size < text.count || rune == 0x25cc || native_width.as(usize) != width) && text[0] != '\t'
+        -- The backend's scalar-width table is narrower than Unicode 16.
+        -- Do not emit a misleading head cell: it would shift subsequent
+        -- physical output. Reserve spaces and overlay the real glyph instead.
+        on composite && native_width.as(usize) != width => {
+            rune = ' '.as(u32)
+            native_width = 1
+        }
+        self.set(x, y, rune, ink, paper)
+        for tail in [1.as(usize) .. width] {
+            padding := on native_width > 0 && tail < native_width.as(usize) {
+                yes => 0.as(u32) else => ' '.as(u32)
+            }
+            self.set(x + tail, y, padding, ink, paper)
+        }
+        on composite => {
+            self.glyphs.push(Glyph {
+                x y text: self.glyph_storage.pr(cluster) ink paper pending: yes
+            })
+        }
+    }
+    pub paint :: fn (self: ^Self, width: usize, height: usize) {
+        self.scratch.reset()
+        on width == 0 || height == 0 => return
+        resized := width != self.width || height != self.height
+        self.width = width
+        self.height = height
+        self.frames += 1
+        old_glyphs := self.previous_glyphs
+        self.previous_glyphs = self.glyphs
+        self.glyphs = old_glyphs
+        self.glyphs.clear()
+        self.glyph_storage = on self.frames % 2 == 0 {
+            yes => ^self.glyph_arena else => ^self.previous_arena
+        }
+        self.glyph_storage.reset()
+        old_cells := self.previous_cells
+        self.previous_cells = self.cells
+        self.cells = old_cells
+        self.cells.resize_undefined_to(width * height)
+        for cell in self.cells {
+            cell^ = Cell {
+                rune: ' '.as(u32) ink: INK paper: PAPER ...
+            }
+        }
+        editor := ^self.editor
+        text_view := editor.workspace.active_view()
+        view := ^text_view.interaction
+        entry := editor.workspace.active_document()
+        doc := ^entry.text
+        caret_line := doc.line_at(view.selection.active)
+        message := display_text(^self.scratch, bytes_text(editor.message))
+        messages := message_rows(message, width)
+        defer messages.free()
+        message_lines := messages.count
+        message_height := on message.count > 0 {
+            yes => message_lines else => 1
+        }
+        on message_height > height / 2 => message_height = height / 2
+        on message_height == 0 => message_height = 1
+        rows := on height > message_height + 1 {
+            yes => height - message_height - 1 else => 0
+        }
+        previously_visible := caret_line >= view.top && caret_line < view.top + view.rows
+        on resized && previously_visible && (caret_line < view.top || caret_line >= view.top + rows) => {
+            view.top = on caret_line > rows / 2 {
+                yes => caret_line - rows / 2 else => 0
+            }
+        }
+        view.rows = on rows > 0 {
+            yes => rows else => 1
+        }
+        digits: usize = 1
+        magnitude := doc.lines.count
+        for magnitude >= 10 {
+            magnitude /= 10
+            digits += 1
+        }
+        gutter := on width >= digits + 5 {
+            yes => digits + 2 else => 0
+        }
+        view.columns = width - gutter
+        on caret_line != self.previous_caret_line => view.horizontal = 0
+        self.previous_caret_line = caret_line
+        on view.reveal => {
+            on caret_line < view.top => view.top = caret_line
+            on caret_line >= view.top + view.rows => view.top = caret_line - view.rows + 1
+            column := display_column(doc.text(), doc.line_start(caret_line), view.selection.active)
+            on column < view.horizontal => view.horizontal = column
+            on view.columns > 0 && column >= view.horizontal + view.columns => view.horizontal = column - view.columns + 1
+            view.reveal = no
+        }
+        query := on editor.prompt_kind != 0 && editor.prompt_kind != ':'.as(u32) {
+            yes => editor.search_query() else => bytes_text(editor.last_search)
+        }
+        for row in [0.as(usize) .. rows] {
+            line := view.top + row
+            on line >= doc.lines.count => again
+            number := on view.state == Interaction.Insert || line == caret_line {
+                yes => line + 1 else => on line > caret_line {
+                    yes => line - caret_line else => caret_line - line
+                }
+            }
+            on gutter > 0 => {
+                label := self.scratch.pr($"{number}")
+                self.text(gutter - 1 - label.count, row, label, MUTED, PAPER, label.count)
+            }
+            horizontal := on line == caret_line {
+                yes => view.horizontal else => 0
+            }
+            position := doc.line_start(line)
+            end := doc.line_end(line)
+            column: usize = 0
+            match_end: usize = 0
+            -- Find visible-line occurrences independently; include a match
+            -- beginning on an earlier line and continuing into this one.
+            match_position: usize = 0
+            on editor.highlights && query.count > 0 => {
+                match_position = on position > query.count {
+                    yes => position - query.count else => 0
+                }
+            }
+            for position < end {
+                next := next_character(doc.text(), position)
+                cells := character_width(doc.text(), position, column)
+                on cells == 0 => cells = 1
+                paper := PAPER
+                on editor.highlights && query.count > 0 => {
+                    for match_position < next &&
+                        match_position + query.count <= doc.text().count {
+                        on doc.text()[match_position .. match_position + query.count] == query => match_end = match_position + query.count
+                        match_position += 1
+                    }
+                    on position < match_end => paper = MATCH
+                }
+                on position < view.selection.end() && next > view.selection.start() => paper = SELECT
+                on editor.prompt_kind == 0 && view.selection.active >= position && view.selection.active < next => paper = CARET
+                on column >= horizontal && column - horizontal + cells <= view.columns => {
+                    self.character(gutter + column - horizontal, row, doc.text()[position .. next], cells, INK, paper)
+                }
+                column += cells
+                position = next
+                on column >= horizontal + view.columns => break
+            }
+            on editor.prompt_kind == 0 && view.selection.active == end && column >= horizontal && column - horizontal < view.columns => self.set(gutter + column - horizontal, row, ' '.as(u32), PAPER, CARET)
+        }
+        on height > message_height => {
+            status_y := height - message_height - 1
+            for x in [0.as(usize) .. width] {
+                self.set(x, status_y, ' '.as(u32), INK, STATUS)
+            }
+            state := on view.state == Interaction.Insert {
+                yes => "INSERT" else => "NORMAL"
+            }
+            path := on entry.path.count == 0 {
+                yes => "[unnamed]" else => bytes_text(entry.path)
+            }
+            modified := on entry.modified() {
+                yes => " *" else => ""
+            }
+            conflict := on entry.conflict {
+                yes => " !conflict" else => ""
+            }
+            missing := on entry.missing {
+                yes => " ?missing" else => ""
+            }
+            persistence := on editor.workspace.checkpoint_failed {
+                yes => " !C" else => on editor.workspace.persistent {
+                    yes => "" else => " ~"
+                }
+            }
+            count := on text_view.keyboard.count > 0 {
+                yes => self.scratch.pr($"  {text_view.keyboard.count}") else => ""
+            }
+            status := self.scratch.pr($"{persistence}{conflict}{missing} {state}{modified} {caret_line + 1}:{display_column(doc.text(), doc.line_start(caret_line), view.selection.active) + 1}{count} [{text_view.document_id + 1}/{editor.workspace.documents.count}] {path}")
+            self.text(0, status_y, status, INK, STATUS, width)
+        }
+        bottom := height - message_height
+        on editor.prompt_kind != 0 {
+            yes => {
+                encoded: [4]u8
+                size := editor.prompt_kind.as(Rune).utf8_encode(encoded[..])
+                prompt := self.scratch.pr($"{encoded[..size].as(string)}{bytes_text(editor.prompt)}")
+                column := 1 + display_column(bytes_text(editor.prompt), 0, editor.prompt_caret)
+                horizontal := on column >= width {
+                    yes => column - width + 1 else => 0
+                }
+                offset: usize = 0
+                skipped: usize = 0
+                for offset < prompt.count &&
+                    skipped < horizontal {
+                    skipped += character_width(prompt, offset, skipped)
+                    offset = next_character(prompt, offset)
+                }
+                self.text(0, bottom, prompt[offset ..], INK, PAPER, width)
+                on column >= skipped && column - skipped < width => {
+                    cell := ^self.cells[bottom * width + column - skipped]
+                    cell.ink = PAPER
+                    cell.paper = CARET
+                    for glyph in self.glyphs {
+                        on glyph.x == column - skipped && glyph.y == bottom => {
+                            glyph.ink = PAPER
+                            glyph.paper = CARET
+                        }
+                    }
+                }
+            }
+            else => {
+                scroll := editor.message_scroll
+                on scroll + message_height > message_lines => scroll = on message_lines > message_height {
+                    yes => message_lines - message_height else => 0
+                }
+                editor.message_scroll = scroll
+                for row in [0.as(usize) .. message_height] {
+                    on scroll + row < messages.count => self.text(0, bottom + row, messages[scroll + row], INK, PAPER, width)
+                }
+            }
+        }
+        -- Invalidate an old composite only when its text/colour/position changes.
+        -- Otherwise std.term must leave its base cell clean for the overlay.
+        for previous in self.previous_glyphs {
+            same := no
+            for glyph in self.glyphs {
+                on glyph.x == previous.x && glyph.y == previous.y && glyph.text == previous.text && glyph.ink == previous.ink && glyph.paper == previous.paper => {
+                    glyph.pending = previous.pending || resized
+                    same = yes
+                }
+            }
+            on !same && previous.x < width && previous.y < height => {
+                term_fb_put(previous.x.as(i32), previous.y.as(i32), ' '.as(u32), ink = previous.ink, paper = previous.paper)
+                self.cells[previous.y * width + previous.x].force = yes
+                on previous.x + 1 < width => self.cells[previous.y * width + previous.x + 1].force = yes
+            }
+        }
+        for y in [0.as(usize) .. height] {
+            for x in [0.as(usize) .. width] {
+                cell := self.cells[y * width + x]
+                on cell.rune == 0 => again
+                on !resized && !cell.force && y * width + x < self.previous_cells.count => {
+                    previous := self.previous_cells[y * width + x]
+                    on cell.rune == previous.rune && cell.ink == previous.ink && cell.paper == previous.paper => again
+                }
+                term_fb_put(x.as(i32), y.as(i32), cell.rune, ink = cell.ink, paper = cell.paper)
+            }
+        }
+        term_present_cursor(0, 0, visible = no)
+    }
+}
+
+pub input_hook :: fn (input: TermInput) {
+    terminal := input.user_data.as(^Terminal)
+    terminal.scratch.reset()
+    for event in input.events {
+        on event^ {
+            Key(key)         => terminal.editor.key(^terminal.scratch, key)
+            Character(rune)  => terminal.editor.character(^terminal.scratch, rune)
+
+            else => {
+            }
+        }
+        on terminal.editor.quit => {
+            term_done()
+            break
+        }
+    }
+}
+
+pub simulation_hook :: fn (simulation: TermSimulate) {
+    simulation.user_data.as(^Terminal).simulate()
+}
+
+pub presentation_hook :: fn (presentation: TermPresent) {
+    presentation.user_data.as(^Terminal).paint(presentation.width.as(usize),
+                                               presentation.height.as(usize))
+}

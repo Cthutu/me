@@ -1,0 +1,7 @@
+/_bin/
+/_obj/
+/_tmp/
+/_tools/
+/.env
+__pycache__/
+*.pyc

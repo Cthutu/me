@@ -1,0 +1,74 @@
+use src.buffer
+use src.document
+use src.replacement
+
+exercise_replacement :: fn () -> void\string {
+    scratch : arena
+    defer scratch.done()
+    command := parse_replace(^scratch, "/one/two/g")?
+    assert command.needle == "one" && command.replacement == "two" && command.all
+    text := "before one middle one after"
+    on plan_replacement(^scratch, text, command, 0) {
+        plan => {
+            assert plan.range.start == 7
+            assert plan.range.end == 21
+            assert plan.text == "two middle two"
+            assert plan.count == 2
+            doc : Document
+            defer doc.release()
+            on doc.load(text) {
+                _success => {
+                }
+
+                _error! => return "Fixture failed"!
+            }
+            on doc.edit(plan.range, plan.text) {
+                _success => {
+                }
+
+                _error! => return "Replace failed"!
+            }
+            assert doc.text() == "before two middle two after"
+            on doc.undo_edit() {
+                _change => {
+                }
+
+                else => return "Undo failed"!
+            }
+            assert doc.text() == text
+        }
+
+        else => return "Missing replacement plan"!
+    }
+    escaped := parse_replace(^scratch, "/a\\/b/c\\\\d/")?
+    assert escaped.needle == "a/b"
+    assert escaped.replacement == "c\\d"
+    deletion := parse_replace(^scratch, "/a//g")?
+    on plan_replacement(^scratch, "a a", deletion, 0) {
+        plan => {
+            assert plan.text == " " && plan.count == 2
+        }
+
+        else => return "Missing deletion plan"!
+    }
+    assert plan_replacement(^scratch, "anything", command, 0) == nil
+    on parse_replace(^scratch, "//new/") {
+        _valid => {
+            assert no
+        }
+
+        _invalid! => {
+        }
+    }
+}
+
+test "literal replacement plans preserve surrounding content and replace-all is one undo" {
+    on exercise_replacement() {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+}

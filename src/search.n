@@ -1,0 +1,24 @@
+-- Literal byte search on validated UTF-8. A valid query cannot begin with a
+-- continuation byte, so occurrences also begin at UTF-8 boundaries.
+pub find_literal :: fn (text        : string,
+                        query       : string,
+                        origin      : usize,
+                        backwards   : bool,
+                        skip_origin : bool = no) -> ?usize {
+    on query.count == 0 || query.count > text.count => return nil
+    limit := text.count - query.count + 1
+    start := on origin < limit {
+        yes => origin
+
+        else => on backwards { yes => limit - 1 else => 0 }
+    }
+    for step in [0 .. limit] {
+        index := on backwards {
+            yes   => (start + limit - step) % limit
+            else  => (start + step) % limit
+        }
+        on skip_origin && index == origin => again
+        on text[index..index + query.count] == query => return index
+    }
+    return nil
+}

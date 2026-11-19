@@ -1,0 +1,82 @@
+use os.linux
+use src.editor
+use src.native
+use src.terminal
+use src.workspace
+use std.term
+use std.time
+
+main :: fn (args: []string) -> i32 {
+    reset    := no
+    filename := ""
+
+    for argument in args[1..] {
+        on argument^ == "--help" => {
+            prn("ME — Matt's Editor\nUsage: me [-r] [filename]\n-r starts a fresh workspace. Normal quit preserves unsaved work.\n:q quit  :q! abandon this invocation's edits  :w[!] [filename] save\nCursor keys navigate; i enters Insert; Escape returns to Normal.\nCtrl+S save  Ctrl+Z undo  Ctrl+R redo  Ctrl+D duplicate line\nw/l select words/lines; y/x/v copy/cut/paste; c changes selection.\n/ and ? search; n/p select next/previous matches.")
+            return 0
+        }
+        on argument^ == "-r" {
+            yes => reset = yes
+
+            else => {
+                on filename.count > 0 ||
+                    (argument.count > 0 && argument^[0] == '-') => {
+                    eprn("\x1b[31mME: expected me [-r] [filename]\x1b[0m")
+                    return 2
+                }
+                filename = argument^
+            }
+        }
+    }
+    attributes : Termios
+    on sys_ioctl(STDIN_FILENO, TCGETS.as(u64), ^attributes) != 0 ||
+        sys_ioctl(STDOUT_FILENO, TCGETS.as(u64), ^attributes) != 0 => {
+        eprn("ME requires an interactive Linux terminal. Use --help for usage.")
+        return 2
+    }
+    terminal : Terminal
+    terminal.signal_fd = -1
+    terminal.editor.workspace.lock_fd = -1
+    defer terminal.release()
+    on terminal.editor.workspace.initialise(^terminal.scratch, reset) {
+        _success => {
+        }
+
+        message! => terminal.editor.tell(message)
+    }
+    on filename.count > 0 => {
+        on terminal.editor.workspace.open_file(^terminal.scratch, filename) {
+            _success => {
+            }
+
+            error! => {
+                eprn($"\x1b[31mME: {display_text(^terminal.scratch, filename, single_line = yes)}: {error}\x1b[0m")
+                on terminal.editor.workspace.documents.count == 0 => return 2
+                terminal.editor.tell(error)
+            }
+        }
+    }
+    on terminal.editor.workspace.views.count == 0 => terminal.editor.workspace.add_empty()
+    on terminal.signals_start() {
+        _success => {
+        }
+
+        error! => {
+            eprn($"\x1b[31mME: {error}\x1b[0m")
+            return 2
+        }
+    }
+    terminal.editor.dirty = yes
+    terminal.editor.changed_at = now()
+    term_init(min_width = 1,
+              min_height = 1,
+              too_small_policy = TermTooSmallPolicy.ContinueSimulation)
+    term_cursor_enable(no)
+    term_hook_input(input_hook, user_data = ^terminal)
+    term_hook_simulation(from_ms(16), simulation_hook, user_data = ^terminal)
+    term_hook_presentation(from_ms(16),
+                           presentation_hook,
+                           user_data = ^terminal)
+    term_run()
+    return 0
+}

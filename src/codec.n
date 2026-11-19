@@ -1,0 +1,145 @@
+use buffer
+use document
+use native
+
+pub Encoder :: plex {
+    bytes [..]u8
+}
+
+impl Encoder {
+    pub number :: fn (self: ^Self, value: u64) {
+        for shift in [0.as(usize) .. 8] {
+            self.bytes.push(((value >> (shift * 8).as(u64)) & 255).as(u8))
+        }
+    }
+    pub text :: fn (self: ^Self, text: string) {
+        self.number(text.count.as(u64))
+        start := self.bytes.count
+        self.bytes.resize_undefined_to(start + text.count)
+        self.bytes[start ..] = text.as([]u8)
+    }
+    pub document :: fn (self: ^Self, doc: ^Document) {
+        self.text(doc.text())
+        self.number(doc.applied.as(u64))
+        self.number(doc.history.count.as(u64))
+        for record in doc.history {
+            self.number(record.start.as(u64))
+            self.text(bytes_text(record.removed))
+            self.text(bytes_text(record.added))
+        }
+    }
+}
+
+pub Decoder :: plex {
+    bytes  string
+    offset usize
+}
+
+impl Decoder {
+
+    pub number :: fn (self: ^Self) -> u64\string {
+        on self.offset > self.bytes.count ||
+            self.bytes.count - self.offset < 8 => return "Truncated "
+            +"continuation"!
+        number : u64 = 0
+        for shift in [0.as(usize) .. 8] {
+            number |= self.bytes[self.offset + shift].as(u64) << (shift * 8).as(u64)
+        }
+        self.offset += 8
+        return number
+    }
+
+    pub text :: fn (self: ^Self) -> string\string {
+        count := self.number()?
+        on count > (self.bytes.count - self.offset).as(u64) => return "Invalid "
+            +"continuation length"!
+        start := self.offset
+        self.offset += count.as(usize)
+        return self.bytes[start..self.offset]
+    }
+
+    pub document :: fn (self: ^Self, doc: ^Document) -> void\string {
+        text := self.text()?
+        on doc.load(text) {
+            _success => {
+            }
+
+            _error! => return "Invalid UTF-8 in continuation"!
+        }
+        applied := self.number()?
+        count   := self.number()?
+
+        -- Every record needs at least its start and two byte lengths.
+        -- Bound allocation by the actual envelope, not an arbitrary history
+        -- limit that the encoder could exceed during a long-lived session.
+        on count > ((self.bytes.count - self.offset) / 24).as(u64) ||
+            applied > count => return "Invalid continuation history size"!
+        for _ in [0 .. count] {
+            start                := self.number()?
+            removed              := self.text()?
+            added                := self.text()?
+            record  : EditRecord
+
+            record.start = start.as(usize)
+            own(^record.removed, removed)
+            own(^record.added, added)
+            doc.history.push(record)
+        }
+        -- Validate both the undo and redo chain before exposing recovered data.
+        -- User-writable or truncated snapshots must never reach abort-only
+        -- internal history invariants during ordinary editing.
+        doc.applied = applied.as(usize)
+        index := doc.applied
+        for index > 0 {
+            index -= 1
+            self.verify_record(doc, ^doc.history[index], no)?
+        }
+        for record in doc.history {
+            self.verify_record(doc, record, yes)?
+        }
+        index = doc.history.count
+        for index > doc.applied {
+            index -= 1
+            self.verify_record(doc, ^doc.history[index], no)?
+        }
+        doc.refresh()
+        on doc.text() != text => return "Inconsistent continuation history"!
+    }
+
+    verify_record :: fn (_self   : ^Self,
+                         doc     : ^Document,
+                         record  : ^EditRecord,
+                         forward : bool) -> void\string {
+        expected := on forward {
+            yes   => bytes_text(record.removed)
+            else  => bytes_text(record.added)
+        }
+        replacement := on forward {
+            yes   => bytes_text(record.added)
+            else  => bytes_text(record.removed)
+        }
+        on record.start > doc.storage.length() ||
+            expected.count > doc.storage.length() - record.start => return "Inv"
+            +"alid"
+            +" continuation history range"!
+        chunks := doc.storage.chunks()
+        for index, byte in expected {
+            position := record.start + index
+            actual := on position < chunks.before.count {
+                yes   => chunks.before[position]
+                else  => chunks.after[position - chunks.before.count]
+            }
+            on actual != byte^ => return "Invalid continuation history payload"!
+        }
+        -- Loading a projection must not clear the history being checked.
+        on doc.storage.replace({ start: record.start end: record.start + expected.count }, replacement) {
+            _change => {
+            }
+
+            _error! => return "Invalid continuation history boundary"!
+        }
+        -- Keep validation operation-sized; refreshing the entire projection
+        -- for every replay record would make recovery O(file size × history).
+    }
+
+}
