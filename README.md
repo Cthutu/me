@@ -16,6 +16,7 @@ not for the editor at runtime. No external terminal library is used.
 just build
 just run [filename]
 just release                  # _bin/me-release
+just install                  # release build → ~/.local/bin/me
 just check
 just test                     # native Nerd headless tests
 just test-terminal            # real PTY integration checks
@@ -23,6 +24,9 @@ just test-all
 just format
 just clean
 ```
+
+`just install` creates `~/.local/bin` if needed and installs the release binary
+as `me`. Ensure `~/.local/bin` is on your `PATH`; no root privileges are needed.
 
 Recipe aliases: `b` → build, `r` → run, `rel` → release, `c` → check,
 `t` → test, `tt` → test-terminal, `ta` → test-all, and `f` → format.

@@ -26,6 +26,9 @@ release:
     mkdir -p _bin
     {{nerd}} build --release main.n -o _bin/me-release
 
+install: release
+    install -Dm755 _bin/me-release "$HOME/.local/bin/me"
+
 check:
     {{nerd}} check main.n
 
