@@ -53,8 +53,10 @@ external libraries or automatically modify the standard library for these gaps.
 ## Task completion and GitHub
 
 After each completed task, run appropriate checks, commit the changes and push
-them to the configured GitHub remote. Report the commit/branch or any push
-failure. Never force-push or overwrite unrelated remote history. `origin` is
+them to the configured GitHub remote, then run `just install` to update
+`~/.local/bin/me` with the latest release build. Report the commit/branch and any
+push or installation failure. Installation after each task is explicitly
+authorised by the user. Never force-push or overwrite unrelated remote history. `origin` is
 `git@cthutu.github.com:Cthutu/me.git` (the Cthutu SSH identity), tracking `main`.
 The user authorised replacing the legacy GitHub repository with this project;
 that replacement is complete. Do not merge the unrelated legacy C tree into
