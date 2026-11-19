@@ -1,0 +1,59 @@
+use src.document
+use src.native
+use src.workspace
+
+exercise_kill :: fn () -> void\string {
+    workspace : Workspace
+    workspace.lock_fd = -1
+    defer workspace.release()
+    workspace.add_empty()
+    own(^workspace.documents[0].path, "/saved-a")
+    workspace.documents[0].disk_exists = yes
+    workspace.add_empty()
+    on workspace.active_document().text.edit({ start: 0 end: 0 }, "discard") {
+        _change => {
+        }
+
+        _error! => return "Fixture failed"!
+    }
+    workspace.add_empty()
+    own(^workspace.documents[2].path, "/saved-c")
+    workspace.documents[2].disk_exists = yes
+    other : TextView
+    other.document_id = 1
+    workspace.views.push(other)
+    on workspace.kill_document(1, no) {
+        _success => {
+            assert no
+        }
+
+        _refused! => {
+        }
+    }
+    assert workspace.documents.count == 3 && workspace.views.count == 4
+    workspace.kill_document(1, yes)?
+    assert workspace.documents.count == 2 && workspace.views.count == 2
+    assert bytes_text(workspace.documents[0].path) == "/saved-a"
+    assert bytes_text(workspace.documents[1].path) == "/saved-c"
+    assert workspace.surface.view_id == 1
+    assert workspace.active_view().document_id == 1
+    workspace.kill_document(0, no)?
+    assert workspace.surface.view_id == 0
+    assert bytes_text(workspace.active_document().path) == "/saved-c"
+    workspace.kill_document(0, no)?
+    assert workspace.documents.count == 1 && workspace.views.count == 1
+    assert workspace.active_document().path.count == 0
+    assert workspace.active_document().text.history.count == 0
+    assert !workspace.active_document().modified()
+}
+
+test "kill refuses unsaved work, removes all shared views and preserves surviving order and focus" {
+    on exercise_kill() {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+}

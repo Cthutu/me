@@ -33,8 +33,8 @@ refreshes. See the [README](../README.md) for usage and explicit limitations.
   deletion without recreation, and reappearance handling.
 - Per-startup-folder continuation with flock ownership, content/history codec,
   checksum/version/path validation, debounced checkpoints and synchronous quit.
-  Recovered work survives `:q!`; new never-saved documents drop; successful disk
-  writes never roll back. Second-instance and persistent-failure safeguards.
+  `:q!` removes all unsaved buffers, including recovered work. `:kill[!]` removes
+  the active buffer and all its views; disk writes never roll back. Second-instance and persistent-failure safeguards.
 - SIGTERM/SIGHUP/SIGINT safe-exit requests through Linux signal descriptors;
   tested raw-terminal/alternate-screen restoration and SIGKILL checkpoint recovery.
 - Standard `just` recipes, compiler/module overrides, debug/release executables
@@ -45,7 +45,7 @@ refreshes. See the [README](../README.md) for usage and explicit limitations.
 ### Headless
 
 `just check`, `just format`, Python tooling compilation and `just test` have
-passed. There are **17 project-authored named tests across 11 Nerd files**, with
+passed. There are **18 project-authored named tests across 12 Nerd files**, with
 many assertions and the 1,093 official Unicode vectors inside those tests.
 Nerd additionally discovers imported standard-library tests; its per-file totals
 must **not** be summed or described as the number of distinct ME tests.
@@ -53,10 +53,11 @@ must **not** be summed or described as the number of distinct ME tests.
 ### Real terminal integration
 
 `python3 tests/terminal.py --binary _bin/me` and the equivalent release command
-passed all **10 scenario groups** on the final rebuilt binaries:
+passed all **11 scenario groups**, including the updated buffer lifecycle,
+on both debug and release builds:
 
 1. Unsaved named continuation, individual undo, redo across saving/restart.
-2. Recovered unnamed retention, invocation rollback, newly created abandonment.
+2. Removal of recovered and newly created unsaved buffers on `:q!`.
 3. BOM/tabs/mixed endings/no final newline, unchanged/forced save, invalid input.
 4. Live external reload/undo, conflict, missing/reappearing files.
 5. Symlink target and symlink/`..` semantics, recovered inode-alias reuse,
@@ -68,6 +69,8 @@ passed all **10 scenario groups** on the final rebuilt binaries:
 8. Second-instance isolation, no snapshot writes and safe quit policy.
 9. SIGKILL recovery, persisted history, safe signal shutdown and terminal cleanup.
 10. Combining/ZWJ presentation, grapheme deletion, resize and retained idle output.
+11. Refused/forced kill, all shared views, fallback focus/order, disk preservation,
+    no text-undo resurrection and removal from continuation.
 
 Normal/signal exits compare the actual PTY attributes against startup and check
 alternate-screen restoration. Tests use isolated temporary HOME/folders and do

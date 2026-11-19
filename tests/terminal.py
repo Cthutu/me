@@ -102,25 +102,21 @@ def recovery(binary, folder):
         session.send(b"\x12")  # redo survives a successful save
         session.quit("q!")
     assert path.read_bytes() == b"on", "q! must never undo a disk write"
-    with Session(binary, folder) as session:
+    with Session(binary, folder, "note.txt") as session:
         session.send(b"\x12")
         session.send(b"\x13")
-        assert path.read_bytes() == b"one", "matching redo history was not recovered"
+        assert path.read_bytes() == b"on", "discarded buffer history reappeared"
         session.quit()
 
 
-def unnamed_rollback(binary, folder):
+def unnamed_discard(binary, folder):
     with Session(binary, folder, "-r") as session:
         session.send("recovered")
         session.quit()
     with Session(binary, folder) as session:
-        session.send("i later")
         session.quit("q!")
-    with Session(binary, folder) as session:
-        session.send(b"\x13")
-        session.send("named.txt\r")
-        assert (folder / "named.txt").read_bytes() == b"recovered"
-        session.quit()
+    snapshot = next((folder / "home/.config/me").glob("*/snapshot"))
+    assert b"recovered" not in snapshot.read_bytes(), "q! retained recovered unsaved work"
     with Session(binary, folder, "-r") as session:
         session.send("discard-me")
         session.quit("q!")
@@ -131,6 +127,39 @@ def unnamed_rollback(binary, folder):
         session.send(b"\x13")
         session.send("fresh.txt\r")
         assert (folder / "fresh.txt").read_bytes() == b"fresh"
+        session.quit()
+
+
+def buffer_kill(binary, folder):
+    path = folder / "saved.txt"
+    path.write_bytes(b"saved")
+    with Session(binary, folder, "-r", "saved.txt") as session:
+        session.command("kill")
+        assert path.read_bytes() == b"saved"
+        session.send("recovered")
+        session.quit()
+    with Session(binary, folder) as session:
+        session.command("kill")
+        assert session.process.poll() is None
+        session.send(b"\x13")
+        session.send("retained.txt\r")
+        assert (folder / "retained.txt").read_bytes() == b"recovered", "refused kill changed content"
+        session.send("i!")
+        session.command("kill!")
+        session.send(b"\x1a")
+        session.send("ifresh")
+        session.send(b"\x13")
+        session.send("fresh.txt\r")
+        assert (folder / "fresh.txt").read_bytes() == b"fresh", "text undo resurrected a killed buffer"
+        assert (folder / "retained.txt").read_bytes() == b"recovered"
+        session.command("kill")
+        session.quit()
+    with Session(binary, folder) as session:
+        assert b"INSERT" in session.output
+        session.send("new")
+        session.send(b"\x13")
+        session.send("new.txt\r")
+        assert (folder / "new.txt").read_bytes() == b"new", "killed buffer reappeared from continuation"
         session.quit()
 
 
@@ -445,7 +474,7 @@ def main():
     allowed = {"libc.so.6", "libm.so.6", "libgcc_s.so.1", "linux-vdso.so.1"}
     unexpected = {name for name in names if name not in allowed and not Path(name).name.startswith("ld-linux-")}
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
-    checks = [recovery, unnamed_rollback, fidelity, external_files, symlinks_and_save_as,
+    checks = [recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
               search_replace_and_buffers, byte_paths_and_checkpoint_failures,
               second_instance, crash_and_signals, graphemes_and_resize]
     for check in checks:

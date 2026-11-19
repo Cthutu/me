@@ -218,8 +218,7 @@ impl Editor {
             else => {
                 for entry in self.workspace.documents {
                     on entry.modified() => return "Cannot quit safely without "
-                        +"continuation. Save files or use :q! to abandon this "
-                        +"invocation's edits."!
+                        +"continuation. Save files or use :q! to discard unsaved buffers."!
                 }
             }
         }
@@ -237,8 +236,19 @@ impl Editor {
         }
         on command == "q!" => {
             self.workspace.abandon()?
+            self.changed()
             on self.workspace.persistent => self.workspace.checkpoint(scratch)?
             self.quit = yes
+            return
+        }
+        on command == "kill" || command == "kill!" => {
+            self.workspace.kill_document(self.workspace.active_view().document_id, command == "kill!")?
+            self.changed()
+            on self.workspace.persistent => {
+                self.workspace.checkpoint(scratch)?
+                self.dirty = no
+            }
+            self.tell("Buffer killed")
             return
         }
         on command == "wq" => {

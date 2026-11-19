@@ -78,19 +78,16 @@ Also settled:
 - External changes: flag conflict for edited buffers; reload unedited buffers.
 - Restore then open/focus CLI paths; `me -r file.n` resets the workspace instead.
 - Undo history survives restarts unless reset with `-r`.
-- Latest correction: `:q!` preserves current layout and affects only unsaved
-  documents. It never reverts writes to original files. This supersedes the
-  whole-startup-snapshot rollback rule. Exact document rollback points and
-  recovered/unnamed-document treatment remain under discussion.
+- Latest correction: `:q!` removes all unsaved buffers entirely, including
+  recovered work. Saved unchanged buffers/layout survive. Disk files are untouched.
+- `:kill` refuses unsaved work; `:kill!` forces removal of the active buffer and
+  all its views, with surviving-view/empty fallback. Kill is not text-undoable.
 - No confirmation for reset; bare `me -r` opens an empty default workspace.
 
 Remaining:
 
-1. Settled: `:q!` abandons this invocation's unsaved edits using per-document
-   startup-or-last-successful-save checkpoints, retaining matching history.
-   Previously recovered unsaved work survives. New documents created during
-   this invocation and never saved are dropped. Precise checkpoint capture
-   timing and fallback views for dropped documents remain open.
+1. Settled: `:q!` removes every unsaved buffer, not just this invocation's edits.
+   This supersedes startup/last-save rollback and recovered-work retention.
 2. Confirm `:w!` forces both unchanged writes and conflict overwrite; `:ww` only
    forces an unchanged write, without conflict override. No `:ww!` needed.
 3. Should failed file opening leave pre-reset recovery state intact? What history
@@ -207,13 +204,12 @@ Remaining:
   and makes it modified relative to disk. Preserve earlier history.
 - Settled: external deletion retains visible buffer content, marks the file
   missing, and allows explicit save to recreate it.
-- Settled: successful external reload advances the document's `:q!` rollback
-  point, including matching history. Reappearance reloads unedited buffers and
-  flags conflicts for edited ones.
+- Settled: external reload preserves matching undo history. Reappearance reloads
+  unedited buffers and flags conflicts for edited ones.
 - Externally deleted documents follow new/unsaved continuation rules: normal
   quit preserves in-memory content, known path, and missing status without
-  recreating the original file. `:q!` retains startup-baseline content for a
-  file deleted externally, marked missing, unless a later rollback point applies.
+  recreating the original file. `:q!` removes missing-file buffers entirely,
+  regardless of recovery origin.
 - Discuss detection latency, partial writes, and view-position mapping.
 
 ## Next: status and workspace messages

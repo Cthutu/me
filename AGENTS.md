@@ -50,6 +50,16 @@ the candidate, rationale, local location, and evaluation status in
 `docs/standard-library-candidates.md` for later consideration. Do not introduce
 external libraries or automatically modify the standard library for these gaps.
 
+## Task completion and GitHub
+
+After each completed task, run appropriate checks, commit the changes and push
+them to the configured GitHub remote. Report the commit/branch or any push
+failure. Never force-push or overwrite unrelated remote history. `origin` is
+`git@cthutu.github.com:Cthutu/me.git` (the Cthutu SSH identity), tracking `main`.
+The user authorised replacing the legacy GitHub repository with this project;
+that replacement is complete. Do not merge the unrelated legacy C tree into
+this project. Its local mirror backup is `/home/matt/me-github-backup.git`.
+
 ## Development environment
 
 Use a standard Nerd environment with `just` recipes. Prefer underscore-prefixed

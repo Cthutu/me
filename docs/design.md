@@ -467,13 +467,13 @@ external API names, protocol identifiers, and literal compatibility requirements
   a separate Save/Discard/Cancel dialogue.
 - With continuation (see section 15), ordinary quitting preserves unsaved work
   for restoration rather than requiring a save/discard prompt. `:q!` remains an
-  explicit way to discard changes; exact discard scope still needs definition.
+  explicit way to remove every unsaved buffer, including recovered work.
 - `:w` and Ctrl+S save the active document.
 - `:wq` saves all modified documents, then quits only if every required save
   succeeds. Obtain filenames for unnamed documents; cancellation or any save
   failure leaves ME open. Successful writes before a failure remain saved:
-  multi-file saving is not atomic. Each successful save advances that document's
-  rollback point. Exact filename-prompt sequencing remains to be designed.
+  multi-file saving is not atomic. Each successful save updates that document's
+  known disk content; later unsaved work is discarded by removing the buffer.
 - `:w` and Ctrl+S perform no filesystem write for an unchanged existing buffer.
   Ctrl+S still returns the view to Normal; its save action alone is a no-op.
 - Add `:ww` to force writing even when unchanged, without bypassing external
@@ -583,12 +583,14 @@ ME should support continuation, similar to Sublime Text:
   different folder gets that folder's independent/default setup, not another
   folder's session. A previously visited folder can restore its own session.
 - Ordinary quit should preserve work rather than force the user to save/discard.
-- `:q!` quits and affects **only unsaved document changes** in the current
-  workspace. It does **not** roll back layout; preserve the current layout.
-  It never writes or reverts original files. Other workspaces are unaffected.
-- Use per-document startup-or-last-successful-save rollback points: abandon
-  this invocation's unsaved edits, not all recovered unsaved work. This
-  supersedes earlier whole-editor rollback semantics.
+- `:q!` removes every buffer with unsaved work entirely and quits, including
+  recovered, unnamed, modified file-backed and missing-file buffers. It never
+  deletes or reverts backing files. Saved unchanged buffers survive.
+- This supersedes all earlier invocation/startup/last-save rollback policies:
+  recovered unsaved content has no special protection.
+- `:kill` kills the active buffer, refusing unsaved work; `:kill!` forces it.
+  Remove all referencing views, preserve surviving order, and mount another
+  surviving view or an empty default. Buffer kill is not text-undoable.
 - Checkpoint during editing as well as on normal quit, providing crash recovery.
   A short debounced checkpoint is the proposed mechanism; interval and durability
   guarantees remain to be specified. Do not synchronously write each keystroke.
@@ -643,25 +645,14 @@ and original-file content fingerprints to detect external changes (proposed).
   confirmation. Bare `me -r` starts an empty default workspace. Whether reset
   should become durable only after successful file opening remains proposed.
 - Undo history survives ordinary restarts. `-r` starts without restored history.
-- Keep ongoing crash-recovery checkpoints separate from any document rollback
-  snapshots needed for `:q!`. Normal quit commits current continuation state.
-- Latest clarification: `:q!` preserves **current layout**, not startup layout;
-  its discard behaviour applies only to unsaved documents. Older proposals to
-  restore all startup editor state are superseded.
-- Explicit writes already made to original files are never undone by `:q!`.
-  This filesystem boundary is agreed.
-- Agreed document rule: a successful save advances a per-document rollback
-  point (content and matching history); `:q!` abandons later edits. Documents not
-  saved in this invocation return to their startup rollback points. Recovered
-  unsaved content from before this invocation therefore survives `:q!`.
-- Recovered unnamed documents likewise retain their startup content.
-- On `:q!`, drop documents created during this invocation that have never been
-  saved. Previously recovered unnamed documents remain. Current layout remains
-  retained, but fallback views for panes showing dropped documents still need
-  specification.
-- Retained history must match retained content. History checkpoint mechanics,
-  baseline capture timing, externally changed files, and any effect on restored
-  selections/anchors remain open.
+- Normal quit commits current continuation state. Discarded/killed buffers and
+  their histories are omitted from subsequent snapshots.
+- `:q!` preserves surviving layout, removing every unsaved buffer rather than
+  resetting it to any earlier content. No recovered/new distinction applies.
+- Explicit disk writes are never undone. No backing file is deleted by kill.
+- `:kill` and `:kill!` affect only the active buffer, including every view that
+  references it. A persisting session checkpoints the removal immediately;
+  failure remains indicated and retried. Use an empty fallback if no view survives.
 
 Still to specify:
 
@@ -682,7 +673,7 @@ Still to specify:
   persistence failures, and corrupt state recovery still need specification.
 - In a non-persisting session, `:q` refuses to quit while documents have unsaved
   changes. `:wq` saves all modified documents and quits only if every required
-  save succeeds; `:q!` explicitly abandons this invocation's unsaved work
+  save succeeds; `:q!` explicitly removes all unsaved buffers
   and quits. No continuation state belonging to another instance is changed.
 - Still define `-r` when another instance owns continuation and whether ownership
   can transfer.
@@ -889,9 +880,8 @@ Do not reserve `v` for a separate selection state or `l` for Vim-style movement.
   and flag conflicts.
 - A successful external reload is one undoable buffer operation, not a history
   reset. Undoing it restores the previous content and marks the buffer modified
-  relative to disk. A successful external reload advances that document's
-  `:q!` rollback point to the reloaded content and matching history. Preserve
-  prior history; exact anchor mapping still needs design.
+  relative to disk. Preserve prior history. An unchanged reloaded buffer survives
+  `:q!`; one modified afterwards is removed entirely.
 - If a backing file is deleted externally, keep the buffer content visible and
   mark the file missing. Do not empty or close the buffer. An explicit save may
   recreate the file; saving must not incorrectly no-op merely because the user
@@ -900,12 +890,8 @@ Do not reserve `v` for a separate selection state or `l` for Vim-style movement.
   continuation rules: normal quit retains its in-memory content for recovery,
   even if the user made no text edits. Preserve its known path and missing-file
   status, and do not silently recreate the file on quit or restoration.
-- Apply the existing invocation-baseline rules to `:q!`; deletion does not imply
-  permission to discard previously recovered content. If a file existed at
-  startup and is deleted externally, `:q!` retains its startup-baseline content
-  in continuation, with the path marked missing, rather than losing it or
-  recreating the original file. A later established rollback point (successful
-  save or external reload) remains authoritative under the existing rules.
+- Missing-file buffers count as unsaved work: `:q!` removes them entirely,
+  including recovered content, without recreating or deleting a backing file.
 - If the missing file reappears, use ordinary external-change handling: reload
   if there are no user edits; preserve content and flag a conflict otherwise.
 
@@ -1130,11 +1116,11 @@ and command reference, and [MS1 progress](ms1-progress.md) for verified gates.
   Positions/selection/scroll/preferred columns survive; startup normalises every
   view to Insert only for empty content, Normal otherwise. Prompts/messages,
   clipboard/search, counts and incomplete commands do not survive.
-- **Failure/rollback:** failed reset/open leaves the existing snapshot intact.
+- **Failure/discard:** failed reset/open leaves the existing snapshot intact.
   A corrupt snapshot disables fallback-session persistence rather than
   overwriting evidence. `:wq` asks unnamed documents in document order, retains
-  successful earlier saves, and focuses a later failed document. Dropped new
-  documents are compacted; surviving layout is retained with an empty fallback
+  successful earlier saves, and focuses a later failed document. Killed/discarded
+  documents and all referencing views are removed; surviving layout is retained with an empty fallback
   when necessary. A second instance, including `-r`, never touches snapshots.
 - **Display:** absolute Insert gutter, relative Normal/command gutter with an
   absolute current line; current-line-only horizontal scrolling resets on a

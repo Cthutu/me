@@ -117,9 +117,11 @@ selection inserts below; with a selection, paste replaces precisely that range.
 | `:w filename` | Write and reassociate; a different existing target needs `!` |
 | `:wq` | Save all modified documents and quit only on success |
 | `:q` | Quit, checkpointing unsaved/unnamed work and undo history |
-| `:q!` | Abandon this invocation's unsaved edits, not previous recovered work |
+| `:q!` | Remove every unsaved buffer, including recovered work, and quit |
 | `:buffers` | List retained workspace documents |
 | `:buffer N` | Focus a retained document's view in the single pane |
+| `:kill` | Kill active buffer and all its views; refuse unsaved work |
+| `:kill!` | Kill active buffer and all its views, discarding unsaved work |
 
 UTF-8 is required for editable **content**. Invalid/unsupported encodings are
 refused without rewriting the file. A UTF-8 BOM is retained but hidden/protected
@@ -139,7 +141,7 @@ a transactional filesystem or an advisory lock on other programs.
 
 External files are polled at 250 ms, using two matching metadata samples before
 reload (normally about 0.5–0.75 seconds). Unedited content reloads as one undoable
-edit, retaining history and advancing the rollback baseline. Edited content
+edit, retaining history and updating the known disk content. Edited content
 produces a conflict. Deletion retains text/path and marks missing; only an
 explicit save recreates it. Reappearance uses the same reload/conflict policy.
 
@@ -150,10 +152,17 @@ normalises interaction state as above; prompts are not resumed. Typing is deboun
 maximum two-second interval during continuous edits; normal quit checkpoints
 synchronously. Prompts, messages, search and clipboard are transient.
 
-`:q!` rolls each retained document to its startup/recovered, latest successful
-save, or external-reload baseline with matching history. It preserves the
-current surviving layout, drops newly created never-saved documents, and never
-reverts disk writes. A recovered unnamed/unsaved document is not discarded.
+`:q!` removes every buffer with unsaved work entirely, including recovered,
+unnamed, modified file-backed and missing-file buffers. It does not reset them to
+saved contents. Saved unchanged buffers survive; no backing file is deleted or
+reverted. The next continuation omits the removed buffers and their history.
+
+`:kill` removes the active buffer only, refusing unsaved work unless `!` is used.
+All views of that buffer are removed; affected panes mount another surviving
+view. If none remain, an empty default is created. Surviving buffer order is
+preserved. Killing is not a text undo operation; backing files remain untouched.
+A persisting session checkpoints the removal immediately, reporting failures
+and retrying rather than pretending the continuation was updated.
 
 Only one process per startup folder owns continuation. A second starts empty,
 warns, and neither reads nor writes snapshots. There, `:q` refuses unsaved work;

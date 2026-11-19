@@ -60,14 +60,14 @@ exercise_workspace :: fn () -> void\string {
     }
     recovered.abandon()?
     assert recovered.documents.count == 1 && recovered.views.count == 1
-    assert recovered.active_document().text.text() == "recovered\r\ntext"
-    assert recovered.active_document().text.history.count == 1
-    assert recovered.active_document().modified()
+    assert recovered.active_document().text.text() == ""
+    assert recovered.active_document().text.history.count == 0
+    assert !recovered.active_document().modified()
     _ := syscall(SYS_UNLINK, path.c_string().as(usize).as(u64), 0, 0, 0, 0, 0)
     _ := syscall(SYS_RMDIR, folder.c_string().as(usize).as(u64), 0, 0, 0, 0, 0)
 }
 
-test "workspace continuation retains history and recovered work, and drops only new unsaved documents on q!" {
+test "continuation retains history but q! removes recovered and new unsaved buffers" {
     on exercise_workspace() {
         _success => {
         }

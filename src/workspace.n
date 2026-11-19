@@ -9,16 +9,14 @@ use std.text
 use view
 
 pub DocumentEntry :: plex {
-    text             Document
-    path             [..]u8
-    disk             [..]u8
-    rollback         [..]u8
-    keep_on_rollback bool
-    disk_exists      bool
-    missing          bool
-    conflict         bool
-    stamp            ?Stat
-    candidate        ?Stat
+    text        Document
+    path        [..]u8
+    disk        [..]u8
+    disk_exists bool
+    missing     bool
+    conflict    bool
+    stamp       ?Stat
+    candidate   ?Stat
 }
 
 impl DocumentEntry {
@@ -27,20 +25,11 @@ impl DocumentEntry {
         self.text.release()
         self.path.free()
         self.disk.free()
-        self.rollback.free()
     }
 
     pub modified :: fn (self: ^Self) -> bool {
         on self.path.count == 0 => return self.text.text().count > 0
         return !self.disk_exists || self.missing || self.text.text() != bytes_text(self.disk)
-    }
-
-    pub baseline :: fn (self: ^Self) {
-        encoded : Encoder
-        encoded.document(^self.text)
-        self.rollback.free()
-        self.rollback = encoded.bytes
-        self.keep_on_rollback = yes
     }
 
     pub line_ending :: fn (self: ^Self, line: usize) -> string {
@@ -198,7 +187,6 @@ impl Workspace {
 
             _error! => return "File is not valid UTF-8"!
         }
-        on entry.disk_exists => entry.baseline()
         self.documents.push(entry)
         transferred = yes
         text_view : TextView
@@ -242,7 +230,7 @@ impl Workspace {
         }
         on syscall(SYS_FLOCK, fd.as(u64), 6, 0, 0, 0, 0).as(i64) < 0 => {
             _ := sys_close(fd)
-            return "Another ME owns this folder's continuation. This session starts fresh and will not read or write snapshots. Save files before :q, or use :q! to abandon edits."!
+            return "Another ME owns this folder's continuation. This session starts fresh and will not read or write snapshots. Save files before :q, or use :q! to discard unsaved buffers."!
         }
         self.lock_fd = fd
         self.persistent = yes
@@ -343,7 +331,6 @@ impl Workspace {
             -- Force content verification after restart: the disk may have
             -- changed while ME was not running.
             entry.stamp = nil
-            entry.baseline()
             self.documents.push(entry)
             transferred = yes
         }
@@ -443,7 +430,6 @@ impl Workspace {
         entry.missing = no
         entry.conflict = no
         entry.stamp = metadata(scratch, bytes_text(entry.path))
-        entry.baseline()
     }
 
     pub poll_files :: fn (self: ^Self, scratch: ^arena) -> void\string {
@@ -502,7 +488,6 @@ impl Workspace {
                     entry.missing = no
                     entry.conflict = no
                     entry.stamp = info
-                    entry.baseline()
                 }
 
                 else => {
@@ -517,38 +502,19 @@ impl Workspace {
         }
     }
 
-    pub abandon :: fn (self: ^Self) -> void\string {
-        for id, entry in self.documents {
-            on !entry.keep_on_rollback => again
-            restored : Document
-            reader              := Decoder { bytes: bytes_text(entry.rollback) offset: 0 }
-
-            on reader.document(^restored) {
-                _success => {
-                }
-
-                error! => {
-                    restored.release()
-                    return error!
-                }
-            }
-            entry.text.release()
-            entry.text = restored
-            for text_view in self.views {
-                on text_view.document_id != id => again
-                view := ^text_view.interaction
-                on view.selection.active > restored.text().count => view.selection.collapse(restored.text().count)
-                on view.top >= restored.lines.count => view.top = restored.lines.count - 1
-                view.repair(^entry.text)
-            }
-        }
-        -- Drop only views of newly created, never-saved documents. Keep current
-        -- mounted layout where its document survives, otherwise mount a fallback.
-        index  : usize = 0
+    -- Kill is a workspace operation, never a text undo operation.
+    pub kill_document :: fn (self        : ^Self,
+                             document_id : usize,
+                             force       : bool) -> void\string {
+        on document_id >= self.documents.count => return "No such buffer"!
+        on !force &&
+            self.documents[document_id].modified() => return "Buffer has "
+            +"unsaved work; use :kill! to discard it"!
         active         := self.surface.view_id
+        index  : usize = 0
 
         for index < self.views.count {
-            on self.documents[self.views[index].document_id].keep_on_rollback {
+            on self.views[index].document_id != document_id {
                 yes => index += 1
 
                 else => {
@@ -560,29 +526,28 @@ impl Workspace {
                 }
             }
         }
-        -- At quit, compact dropped documents and remap surviving view IDs.
-        -- During normal editing IDs remain stable.
-        index = 0
-        for index < self.documents.count {
-            on self.documents[index].keep_on_rollback {
-                yes => index += 1
-
-                else => {
-                    self.documents[index].release()
-                    for next in [index + 1 .. self.documents.count] {
-                        self.documents[next - 1] = self.documents[next]
-                    }
-                    _ := self.documents.pop()
-                    for text_view in self.views {
-                        on text_view.document_id > index => text_view.document_id -= 1
-                    }
-                }
-            }
+        self.documents[document_id].release()
+        for next in [document_id + 1 .. self.documents.count] {
+            self.documents[next - 1] = self.documents[next]
+        }
+        _ := self.documents.pop()
+        for text_view in self.views {
+            on text_view.document_id > document_id => text_view.document_id -= 1
         }
         on self.views.count == 0 => self.add_empty()
         self.surface.view_id = on active < self.views.count {
             yes   => active
             else  => self.views.count - 1
+        }
+    }
+
+    pub abandon :: fn (self: ^Self) -> void\string {
+        index : usize = 0
+        for index < self.documents.count {
+            on self.documents[index].modified() {
+                yes   => self.kill_document(index, yes)?
+                else  => index += 1
+            }
         }
     }
 
