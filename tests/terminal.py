@@ -439,6 +439,28 @@ def crash_and_signals(binary, folder):
         session.quit()
 
 
+def duplicate_selection(binary, folder):
+    path = folder / "duplicate.txt"
+    block = b"one\r\ntwo\n"
+    path.write_bytes(block + b"three")
+    with Session(binary, folder, "-r", "duplicate.txt") as session:
+        session.send("2l")
+        session.send(b"\x04")
+        session.send(b"\x04")
+        session.send(b"\x13")
+        assert path.read_bytes() == block * 3 + b"three", "Ctrl+D did not repeat the selected line block"
+        session.send(b"\x1a")
+        session.send(b"\x13")
+        assert path.read_bytes() == block * 2 + b"three", "block duplication was not one undo operation"
+        session.send(b"\x1b[A")
+        session.send(b"\x1b[1;2C")
+        session.send(b"\x04")
+        session.send("iX")
+        session.send(b"\x13")
+        assert path.read_bytes() == block * 2 + b"tXwo\nthree", "character selection was not cleared when duplicating the caret line"
+        session.quit()
+
+
 def gutter_highlight(binary, folder):
     (folder / "lines.txt").write_bytes(b"a\nb\nc")
     gold = rb"\x1b\[38;2;214;179;90m(?:\x1b\[[0-9;]*m)* *"
@@ -493,7 +515,7 @@ def main():
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
     checks = [recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
               search_replace_and_buffers, byte_paths_and_checkpoint_failures,
-              second_instance, crash_and_signals, gutter_highlight, graphemes_and_resize]
+              second_instance, crash_and_signals, duplicate_selection, gutter_highlight, graphemes_and_resize]
     for check in checks:
         if args.filter not in check.__name__:
             continue

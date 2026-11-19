@@ -389,21 +389,52 @@ impl Editor {
         entry := self.workspace.active_document()
         doc := ^entry.text
         view := ^self.workspace.active_view().interaction
+        selected := view.linewise && !view.selection.empty()
+        reversed := view.selection.active < view.selection.anchor
         line := doc.line_at(view.selection.active)
+        last := line
         column := display_column(doc.text(), doc.line_start(line), view.selection.active)
+        on selected => {
+            line = doc.line_at(view.selection.start())
+            last = doc.line_at(view.selection.end())
+            -- A line selection ending at the next line's start excludes that
+            -- line, including the virtual empty line after a final newline.
+            on last > line && view.selection.end() == doc.line_start(last) => last -= 1
+        }
         start := doc.line_start(line)
-        end := on line + 1 < doc.lines.count {
-            yes => doc.line_start(line + 1) else => doc.text().count
+        end := on last + 1 < doc.lines.count {
+            yes => doc.line_start(last + 1) else => doc.text().count
         }
         payload := scratch.pr(doc.text()[start .. end])
         insertion := end
-        on line + 1 == doc.lines.count => payload = scratch.pr($"{entry.line_ending(line)}{payload}")
+        copy_start := insertion
+        on last + 1 == doc.lines.count => {
+            ending := entry.line_ending(last)
+            payload = scratch.pr($"{ending}{payload}")
+            copy_start += ending.count
+        }
         _ := doc.edit({
             start: insertion end: insertion
         }
         , payload)?
-        view.preferred = column
-        view.place(doc, view.position_column(doc, line + 1), no, retain_column = yes)
+        on selected {
+            yes => {
+                copy_end := insertion + payload.count
+                view.place(doc, copy_start, no)
+                view.selection.anchor = on reversed {
+                    yes => copy_end else => copy_start
+                }
+                view.selection.active = on reversed {
+                    yes => copy_start else => copy_end
+                }
+                view.linewise = yes
+                view.reset_column(doc)
+            }
+            else => {
+                view.preferred = column
+                view.place(doc, view.position_column(doc, line + 1), no, retain_column = yes)
+            }
+        }
     }
     pub execute :: fn (self: ^Self, scratch: ^arena, command: Command) -> void\string {
         text_view := self.workspace.active_view()

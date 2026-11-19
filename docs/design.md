@@ -779,8 +779,11 @@ Do not reserve `v` for a separate selection state or `l` for Vim-style movement.
   `my_variable` is one word. Punctuation forms separate selectable runs;
   whitespace is skipped when extending to the next word, while remaining inside
   the contiguous selected range. Exact Unicode classification remains open.
-- Ctrl+D duplicates the current line below itself and moves the caret to the
-  duplicate at the same column. It enters Normal under the Ctrl-command policy.
+- Ctrl+D duplicates the whole line-selection block below itself, retaining the
+  copied block as a line selection so duplication can repeat. Without a non-empty
+  line selection, duplicate only the caret's current line, clear any character
+  selection and move to the copy at the same display column. Either form is one
+  undo operation and enters Normal under the Ctrl-command policy.
   The entire duplication is one undo operation. Selection clearing and
   unterminated-line handling still need exact definition.
 - Ctrl+command shortcuts apply in both Normal and Insert where appropriate.

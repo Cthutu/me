@@ -17,7 +17,8 @@ refreshes. See the [README](../README.md) for usage and explicit limitations.
   page/paragraph navigation, counts, scroll-away and semantic edit adjustment
   across shared-buffer views. Command-emitting keyboard state machine.
 - Normal/Insert editing, selection replacement, indentation heuristic, internal
-  characterwise/linewise clipboard, cut/change/paste and one-operation duplicate.
+  characterwise/linewise clipboard, cut/change/paste and one-operation duplicate
+  of selected lines or the caret line, clearing character-based selections.
 - Search preview, origin prefixes, cancellation/arrow restoration, wrap,
   remembered terms, next/previous match selections and passive highlighting.
   Literal one/all replacement; replace-all is one undo operation.
@@ -45,7 +46,7 @@ refreshes. See the [README](../README.md) for usage and explicit limitations.
 ### Headless
 
 `just check`, `just format`, Python tooling compilation and `just test` have
-passed. There are **18 project-authored named tests across 12 Nerd files**, with
+passed. There are **19 project-authored named tests across 13 Nerd files**, with
 many assertions and the 1,093 official Unicode vectors inside those tests.
 Nerd additionally discovers imported standard-library tests; its per-file totals
 must **not** be summed or described as the number of distinct ME tests.
@@ -53,7 +54,7 @@ must **not** be summed or described as the number of distinct ME tests.
 ### Real terminal integration
 
 `python3 tests/terminal.py --binary _bin/me` and the equivalent release command
-passed all **12 scenario groups**, including buffer lifecycle and gutter styling,
+passed all **13 scenario groups**, including buffer lifecycle, gutter styling and selected-line duplication,
 on both debug and release builds:
 
 1. Unsaved named continuation, individual undo, redo across saving/restart.
@@ -73,6 +74,8 @@ on both debug and release builds:
     no text-undo resurrection and removal from continuation.
 12. Current-line gutter emphasis, highlight movement, muted former-line numbers
     and preservation of emphasis in Insert.
+13. Repeated selected-line block duplication, one-operation undo, current-line
+    fallback with character-selection clearing and mixed-ending fidelity.
 
 Normal/signal exits compare the actual PTY attributes against startup and check
 alternate-screen restoration. Tests use isolated temporary HOME/folders and do

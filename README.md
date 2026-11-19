@@ -74,7 +74,7 @@ extends it in either state. Use cursor keys, not `hjkl`.
 | `w` / `l` | Select whole word / line; repeats extend |
 | `y` / `x` / `v` | Copy / cut / paste using the internal typed clipboard |
 | `c` | Delete selection and enter Insert; no selection just enters Insert |
-| Ctrl+D | Duplicate line below, same display column, one undo |
+| Ctrl+D | Duplicate selected lines below (keeping the copy selected), or the current line at the same display column; clear character selections; one undo |
 | Ctrl+Z / Ctrl+R | Undo / redo |
 | Ctrl+S | Save active document; unnamed opens `:w ` |
 
