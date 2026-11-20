@@ -97,7 +97,7 @@ line 120's first non-whitespace; out-of-range lines are clamped. Vertical motion
 retains a preferred display-cell column through shorter lines. Intentional
 scroll-away is preserved until caret motion or editing reveals it.
 
-Tab inserts four spaces by default, with a small existing-indentation heuristic.
+In document text, Tab inserts four spaces by default, with a small existing-indentation heuristic.
 At leading/trailing whitespace, Backspace removes a matching Tab-sized run of
 spaces; elsewhere it removes one grapheme. Existing tabs are never converted.
 Words are Unicode letters/decimal digits/underscore; punctuation forms separate
@@ -127,6 +127,7 @@ selection inserts below; with a selection, paste replaces precisely that range.
 
 | Command | Behaviour |
 | --- | --- |
+| `:e path` | Open/create a file-backed buffer, or focus its existing buffer without discarding other work |
 | `:w` | Save active document; unchanged existing files are not written |
 | `:ww` | Force a write, but do not bypass external conflicts |
 | `:w!` | Force writing including conflict overwrite |
@@ -138,6 +139,33 @@ selection inserts below; with a selection, paste replaces precisely that range.
 | `:buffer N` | Focus a retained document's view in the single pane |
 | `:kill` | Kill active buffer and all its views; refuse unsaved work |
 | `:kill!` | Kill active buffer and all its views, discarding unsaved work |
+
+### Filename completion
+
+In `:e`, `:w`, `:w!` and `:ww`, **Tab** completes the path at the end of the
+prompt. For example, type `:e src/ter` and press Tab. Relative paths use the
+startup folder; absolute paths also work. Unique matches complete immediately;
+directories append `/` so you can continue into them.
+
+Ambiguous matches expand their common prefix and open a list in the existing
+bottom message area. **Up/Down** or further **Tab** changes the selected match;
+**Enter** accepts it into the prompt **without executing the command**. Press
+Enter again to open/save. **Escape** dismisses only the list, retaining your
+path; another Escape cancels the prompt. Typing or moving the prompt caret
+closes the list. No-match/directory errors leave the prompt and files intact.
+
+Paths are literal bytes after the first separating space: spaces need no quotes,
+and trailing spaces are significant. There is no shell quoting, tilde or variable
+expansion. Matches are case-sensitive, ordered by filename bytes, and hidden
+entries appear only when the current component begins with `.`. Accessible
+symlink targets are followed for file/directory classification; non-regular
+objects and inaccessible/broken links are not suggested. Filenames selected by
+completion retain control/non-UTF-8 bytes internally, with safe single-line
+presentation. Discovery is synchronous on Tab, capped at 65,536 directory entries
+and 4,096 matches; an exceeded limit reports an error, not incomplete results.
+The future non-blocking file picker is separate work.
+
+### File fidelity
 
 UTF-8 is required for editable **content**. Invalid/unsupported encodings are
 refused without rewriting the file. A UTF-8 BOM is retained but hidden/protected

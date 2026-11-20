@@ -549,6 +549,111 @@ def duplicate_selection(binary, folder):
         session.quit()
 
 
+def file_completion(binary, folder):
+    first = folder / "first.txt"
+    first.write_bytes(b"first")
+    (folder / "alias.txt").symlink_to("first.txt")
+    files = folder / "files"
+    files.mkdir()
+    for name, data in [("alpha.txt", b"alpha"), ("alpine.txt", b"alpine"),
+                       ("unique name.txt", b"unique"), (".secret", b"hidden")]:
+        (files / name).write_bytes(data)
+    (files / "nested").mkdir()
+    deep = files / "nested/deep.txt"
+    deep.write_bytes(b"deep")
+    (files / "invalid.txt").write_bytes(b"\xff")
+    with Session(binary, folder, "-r", "first.txt") as session:
+        session.send("idirty")
+        session.normal()
+        changed = session.send(":e files/uni\t")
+        assert b"unique" in changed and b"name.txt" in changed
+        session.send("\r")
+        session.send("iU")
+        session.send(b"\x13")
+        assert (files / "unique name.txt").read_bytes() == b"Uunique"
+        session.normal()
+        changed = session.send(":e files/al\t")
+        assert b"alpha.txt" in changed and b"alpine.txt" in changed
+        session.send(b"\x1b[B")
+        session.send("\r")  # choose, without executing :e yet
+        session.send("\r")
+        session.send("iP")
+        session.send(b"\x13")
+        assert (files / "alpine.txt").read_bytes() == b"Palpine"
+        session.normal()
+        session.send(":e files/al\t")
+        session.send(b"\x1b", 0.15)  # dismiss only the list, retaining 'files/alp'
+        session.send("ha.txt\r")
+        session.send("iA")
+        session.send(b"\x13")
+        assert (files / "alpha.txt").read_bytes() == b"Aalpha"
+        session.normal()
+        changed = session.send(":e files/ne\t")
+        assert b"nested/" in changed
+        session.send("deep\t\r")
+        session.send("iD")
+        session.send(b"\x13")
+        assert deep.read_bytes() == b"Ddeep"
+        session.normal()
+        changed = session.send(":e files/nope\t")
+        assert all(word in changed for word in [b"No", b"filename", b"match"])
+        assert not (files / "nope").exists()
+        session.command("e created.txt")
+        session.send("new")  # new empty buffers start in Insert
+        session.send(b"\x13")
+        assert (folder / "created.txt").read_bytes() == b"new"
+        changed = session.command("e files/")
+        assert b"non-regular" in changed and b"file" in changed
+        changed = session.command("e files/invalid.txt")
+        assert b"UTF-8" in changed
+        session.send(b"\x13")
+        assert (folder / "created.txt").read_bytes() == b"new"
+        session.command("e alias.txt")  # inode reuse must retain first.txt's unsaved work
+        session.send(b"\x13")
+        assert first.read_bytes() == b"dirtyfirst"
+        assert (folder / "alias.txt").is_symlink()
+        session.quit()
+
+
+def completion_byte_paths(binary, folder):
+    odd = folder / "odd"
+    odd.mkdir()
+    raw = os.fsencode(odd) + b"/ \xff\t\n\x1b[2J "
+    with open(raw, "wb") as stream:
+        stream.write(b"odd")
+    (folder / "base.txt").write_bytes(b"base")
+    (folder / "output").mkdir()
+    real = folder / "real"
+    (real / "inner").mkdir(parents=True)
+    (real / "target.txt").write_bytes(b"right")
+    (folder / "target.txt").write_bytes(b"wrong")
+    (folder / "jump").symlink_to("real/inner")
+    with Session(binary, folder, "-r", "base.txt") as session:
+        session.send(":e odd/\t")
+        assert b"\xff" not in session.output, "raw invalid filename byte leaked to the terminal"
+        fcntl.ioctl(session.master, termios.TIOCSWINSZ, struct.pack("HHHH", 2, 8, 0, 0))
+        session.drain(0.15)
+        fcntl.ioctl(session.master, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+        session.drain(0.15)
+        session.send("\r")
+        session.send("iB")
+        session.send(b"\x13")
+        with open(raw, "rb") as stream:
+            assert stream.read() == b"Bodd"
+        session.normal()
+        session.send(":w out\t")
+        session.send("copy new \r")
+        assert (folder / "output/copy new ").read_bytes() == b"Bodd"
+        session.normal()
+        session.send(":e jump/../tar\t\r")
+        session.send("iR")
+        session.send(b"\x13")
+        assert (real / "target.txt").read_bytes() == b"Rright"
+        assert (folder / "target.txt").read_bytes() == b"wrong"
+        bytes(session.output).decode("utf-8")
+        session.quit()
+
+
 def mode_presentation(binary, folder):
     path = folder / "readable.txt"
     emoji = "👩‍💻".encode()
@@ -633,10 +738,11 @@ def main():
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
     checks = [recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
               search_replace_and_buffers, byte_paths_and_checkpoint_failures,
-              second_instance, crash_and_signals, undo_caret, word_delete, duplicate_selection, mode_presentation, gutter_highlight, graphemes_and_resize]
-    for check in checks:
-        if args.filter not in check.__name__:
-            continue
+              second_instance, crash_and_signals, undo_caret, word_delete, duplicate_selection, file_completion, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
+    selected = [check for check in checks if args.filter in check.__name__]
+    if not selected:
+        parser.error(f"No PTY checks match {args.filter!r}")
+    for check in selected:
         with tempfile.TemporaryDirectory(prefix=f"me-{check.__name__}-") as directory:
             check(binary, Path(directory))
         print(f"PASS {check.__name__}", flush=True)

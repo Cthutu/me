@@ -1,0 +1,202 @@
+use native
+use os.linux
+use std.text
+
+-- Linux ABI flags and linux_dirent64 layout absent from the high-level API.
+O_DIRECTORY  :: 0x10000
+DT_UNKNOWN   :: 0
+DT_DIRECTORY :: 4
+DT_REGULAR   :: 8
+DT_SYMLINK   :: 10
+
+-- Paths are literal bytes after the first separating space, not shell words.
+-- This also preserves leading/trailing whitespace in names chosen from a list.
+pub PathCommand :: plex {
+    verb           string
+    argument_start usize
+}
+
+pub path_command :: fn (text: string) -> ?PathCommand {
+    start : usize = 0
+    for start < text.count && text[start] == ' ' {
+        start += 1
+    }
+    end := start
+    for end < text.count && text[end] != ' ' {
+        end += 1
+    }
+    verb := text[start..end]
+    on verb != "e" && verb != "w" && verb != "w!" && verb != "ww" => return nil
+    return PathCommand { verb argument_start: on end < text.count { yes => end + 1 else => end } }
+}
+
+before :: fn (left: string, right: string) -> bool {
+    limit := on left.count < right.count {
+        yes   => left.count
+        else  => right.count
+    }
+    for i in [0.as(usize) .. limit] {
+        on left[i] != right[i] => return left[i] < right[i]
+    }
+    return left.count < right.count
+}
+
+pub FilenameCompletion :: plex {
+    storage        arena
+    items          [..]string
+    selected       usize
+    argument_start usize
+    active         bool
+}
+
+impl FilenameCompletion {
+
+    pub reset :: fn (self: ^Self) {
+        self.active = no
+        self.selected = 0
+        self.items.clear()
+        self.storage.reset()
+    }
+
+    pub release :: fn (self: ^Self) {
+        self.items.free()
+        self.storage.done()
+    }
+
+    pub common_prefix :: fn (self: ^Self) -> string {
+        on self.items.count == 0 => return ""
+        first := self.items[0]
+        count := first.count
+
+        for item in self.items {
+            on item.count < count => count = item.count
+            i : usize = 0
+            for i < count && first[i] == item^[i] {
+                i += 1
+            }
+            count = i
+        }
+        -- Do not introduce a partial UTF-8 character into an otherwise valid
+        -- filename. Invalid-byte Linux filenames remain byte strings.
+        on first.utf8_validate() {
+            _valid => {
+                for count > 0 &&
+                    count < first.count &&
+                    (first[count] & 0xc0) == 0x80 {
+                    count -= 1
+                }
+            }
+
+            _invalid! => {
+            }
+        }
+        return first[..count]
+    }
+
+    pub scan :: fn (self: ^Self, folder: string, path: string) -> void\string {
+        self.reset()
+        completed := no
+        defer on !completed => self.reset()
+        for byte in path {
+            on byte^ == 0 => return "A path cannot contain NUL"!
+        }
+        root : usize = 0
+        for index, byte in path {
+            on byte^ == '/' => root = index + 1
+        }
+        prefix := path[..root]
+        leaf   := path[root..]
+        base   := on folder.count > 0 { yes => folder else => "." }
+
+        directory := on prefix.count > 0 && prefix[0] == '/' {
+            yes   => prefix
+            else  => self.storage.pr($"{base}/{prefix}")
+        }
+        zero := self.storage.pr($"{directory}\0")
+        fd   := sys_open(zero.data.as(^i8), O_RDONLY | O_DIRECTORY | O_CLOEXEC, 0)
+
+        on fd < 0 => return "Cannot read completion directory"!
+        defer {
+            _ := sys_close(fd)
+        }
+        buffer  : [32768]u8
+        visited : usize     = 0
+
+        for {
+            count := syscall(SYS_GETDENTS64,
+                             fd.as(u64),
+                             buffer[..].data.as(usize).as(u64),
+                             buffer.count.as(u64),
+                             0,
+                             0,
+                             0)
+            on count < 0 => {
+                on last_error() == EINTR => again
+                return "Cannot enumerate completion directory"!
+            }
+            on count == 0 => break
+            offset : usize = 0
+            for offset < count.as(usize) {
+                on count.as(usize) - offset < 20 => return "Invalid directory "
+                    +"entry"!
+                -- d_reclen is a little-endian u16 at 16, d_type at 18,
+                -- followed by a NUL-terminated byte name at 19 (Linux x86-64).
+                length := buffer[offset + 16].as(usize) | (buffer[offset + 17].as(usize) << 8)
+                on length < 20 ||
+                    length > count.as(usize) - offset => return "Invalid "
+                    +"directory entry"!
+                end := offset + 19
+                for end < offset + length && buffer[end] != 0 {
+                    end += 1
+                }
+                on end == offset + length => return "Invalid directory name"!
+                name := buffer[offset + 19..end].as(string)
+                kind := buffer[offset + 18]
+
+                offset  += length
+                visited += 1
+                on visited > 65536 => return "Directory too large for "
+                    +"synchronous completion; type the path directly"!
+                on name.count == 0 || name == "." || name == ".." => again
+                on name[0] == '.' &&
+                    (leaf.count == 0 || leaf[0] != '.') => again
+                on name.count < leaf.count ||
+                    name[..leaf.count] != leaf => again
+                is_directory := kind == DT_DIRECTORY
+                on kind != DT_DIRECTORY &&
+                    kind != DT_REGULAR => {
+                    on kind != DT_UNKNOWN && kind != DT_SYMLINK => again
+                    on metadata(^self.storage, self.storage.pr($"{directory}/{name}")) {
+                        info => {
+                            mode := info.mode & 0xf000
+                            on mode != 0x4000 && mode != 0x8000 => again
+                            is_directory = mode == 0x4000
+                        }
+
+                        else => again
+                    }
+                }
+                on self.items.count >= 4096 => return "Too many completion "
+                    +"matches; type a longer prefix"!
+                suffix := on is_directory {
+                    yes   => "/"
+                    else  => ""
+                }
+                self.items.push(self.storage.pr($"{prefix}{name}{suffix}"))
+            }
+        }
+        -- Bounded insertion sort keeps ordering deterministic and byte-safe.
+        for i in [1.as(usize) .. self.items.count] {
+            item := self.items[i]
+            j    := i
+
+            for j > 0 && before(item, self.items[j - 1]) {
+                self.items[j] = self.items[j - 1]
+                j -= 1
+            }
+            self.items[j] = item
+        }
+        completed = yes
+    }
+
+}

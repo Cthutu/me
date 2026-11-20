@@ -32,6 +32,10 @@ refreshes. See the [README](../README.md) for usage and explicit limitations.
 - Single-pane `std.term` surface with absolute/relative gutter, current-line
   horizontal scroll, status, wrapped/growing/scrollable messages and resize.
   Local full-grapheme bridge and retained idle framebuffer output.
+- `:e <path>` opening/creation and inode-alias reuse without discarding unsaved
+  work; filename Tab completion for `:e` / `:w` / `:w!` / `:ww`, with common-prefix
+  expansion, directory slashes and a selectable message-area ambiguity list.
+  Raw filename bytes survive completion and safe prompt display.
 - CLI opening/reset, new named/unnamed documents, `:buffers` / `:buffer N`, all
   agreed save/quit commands, save-all filename sequencing and partial success.
 - Same-directory exclusive temporary/atomic replacement; symlink preservation,
@@ -53,7 +57,7 @@ refreshes. See the [README](../README.md) for usage and explicit limitations.
 ### Headless
 
 `just check`, `just format`, Python tooling compilation and `just test` have
-passed. There are **23 project-authored named tests across 16 Nerd files**, with
+passed. There are **25 project-authored named tests across 17 Nerd files**, with
 many assertions and the 1,093 official Unicode vectors inside those tests.
 Nerd additionally discovers imported standard-library tests; its per-file totals
 must **not** be summed or described as the number of distinct ME tests.
@@ -61,7 +65,8 @@ must **not** be summed or described as the number of distinct ME tests.
 ### Real terminal integration
 
 `python3 tests/terminal.py --binary _bin/me` and the equivalent release command
-passed all **16 scenario groups**, including buffer lifecycle, gutter styling, selected-line duplication and word deletion,
+passed all **18 scenario groups**, including buffer lifecycle, gutter styling,
+selected-line duplication, word deletion, file opening and filename completion,
 on both debug and release builds:
 
 1. Unsaved named continuation, individual undo, redo across saving/restart.
@@ -90,6 +95,11 @@ on both debug and release builds:
     after restart; legacy v1 snapshots retain history and upgrade to v2.
 16. Green Normal/red Insert cursors and status, UTF-8 mode/modified markers,
     correct composite-grapheme RGB, contrast, narrow layouts and resize.
+17. Real Tab completion, common-prefix and selectable ambiguity, directory suffixes,
+    list-only cancellation, create/open/reuse without discarding unsaved buffers,
+    and non-regular/invalid-content refusal.
+18. Completion and saving of control/non-UTF-8/whitespace filenames, safe prompt
+    presentation across resize, literal trailing spaces, and symlink/`..` resolution.
 
 Normal/signal exits compare the actual PTY attributes against startup and check
 alternate-screen restoration. Tests use isolated temporary HOME/folders and do

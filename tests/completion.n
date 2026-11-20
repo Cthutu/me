@@ -1,0 +1,165 @@
+use os.linux
+use src.completion
+use src.document
+use src.editor
+use src.native
+use src.view
+use src.workspace
+use std.text
+
+test "literal path command parsing and common prefixes preserve bytes and UTF-8 boundaries" {
+    raw := "  e  leading and trailing \t\n "
+    on path_command(raw) {
+        parsed => {
+            assert raw[parsed.argument_start..] == " leading and trailing \t\n "
+        }
+
+        else => {
+            assert no
+        }
+    }
+    assert path_command("replace /a/b/") == nil
+    state : FilenameCompletion
+    defer state.release()
+    state.items.push("é.txt")
+    state.items.push("è.txt")
+    assert state.common_prefix() == ""
+    state.reset()
+    state.items.push("alpha.txt")
+    state.items.push("alpine.txt")
+    assert state.common_prefix() == "alp"
+    state.reset()
+    left  : [2]u8 = [0xff, 'a']
+    right : [2]u8 = [0xff, 'b']
+
+    state.items.push(left[..].as(string))
+    state.items.push(right[..].as(string))
+    assert state.common_prefix().count == 1
+    assert state.common_prefix()[0] == 0xff
+}
+
+exercise_completion :: fn () -> void\string {
+    scratch : arena
+    defer scratch.done()
+    startup := cwd(^scratch)?
+    folder  := scratch.pr($"{startup}/_tmp/completion-{syscall(SYS_GETPID, 0, 0, 0, 0, 0, 0)}")
+
+    assert make_directory(^scratch, "_tmp")
+    assert make_directory(^scratch, folder)
+    names := ["alpha.txt", "alpine.txt", ".hidden", "space name ", "é.txt", "è.txt"]
+    defer {
+        for name in names {
+            path := scratch.pr($"{folder}/{name^}")
+            _    := syscall(SYS_UNLINK, path.c_string().as(usize).as(u64), 0, 0, 0, 0, 0)
+        }
+        _ := syscall(SYS_UNLINK, scratch.pr($"{folder}/linked").c_string().as(usize).as(u64), 0, 0, 0, 0, 0)
+        _ := syscall(SYS_RMDIR, scratch.pr($"{folder}/nested").c_string().as(usize).as(u64), 0, 0, 0, 0, 0)
+        _ := syscall(SYS_RMDIR, folder.c_string().as(usize).as(u64), 0, 0, 0, 0, 0)
+    }
+    for name in names {
+        atomic_write(^scratch, scratch.pr($"{folder}/{name^}"), "original", no)?
+    }
+    assert make_directory(^scratch, scratch.pr($"{folder}/nested"))
+    assert syscall(SYS_SYMLINK, "nested".c_string().as(usize).as(u64), scratch.pr($"{folder}/linked").c_string().as(usize).as(u64), 0, 0, 0, 0) == 0
+    state : FilenameCompletion
+    defer state.release()
+    state.scan(folder, "al")?
+    assert state.items.count == 2
+    assert state.items[0] == "alpha.txt" && state.items[1] == "alpine.txt"
+    assert state.common_prefix() == "alp"
+    state.scan(folder, "")?
+    assert state.items.count == 7
+    state.scan(folder, ".")?
+    assert state.items.count == 1 && state.items[0] == ".hidden"
+    state.scan(folder, "ne")?
+    assert state.items.count == 1 && state.items[0] == "nested/"
+    state.scan(folder, "li")?
+    assert state.items.count == 1 && state.items[0] == "linked/"
+    state.scan(folder, scratch.pr($"{folder}/al"))?
+    assert state.common_prefix() == scratch.pr($"{folder}/alp")
+    state.scan(folder, "none")?
+    assert state.items.count == 0
+    on state.scan(folder, "missing/") {
+        _success => {
+            assert no
+        }
+
+        _error! => {
+            assert !state.active && state.items.count == 0
+        }
+    }
+    editor : Editor
+    editor.workspace.lock_fd = -1
+    defer editor.release()
+    own(^editor.workspace.folder, folder)
+    editor.workspace.open_file(^scratch, "alpha.txt")?
+    editor.execute(^scratch, Command.EnterInsert('i'.as(u32)))?
+    editor.execute(^scratch, Command.InsertText("dirty"))?
+    editor.prompt_open(':'.as(u32), initial = "e al")
+    editor.execute(^scratch, Command.Tab)?
+    assert bytes_text(editor.prompt) == "e alp"
+    assert editor.completion.active
+    editor.execute(^scratch, Command.Move { direction: Direction.Up count: 1 extend: no })?
+    assert editor.completion.selected == 1
+    editor.execute(^scratch, Command.Move { direction: Direction.Up count: 1 extend: no })?
+    assert editor.completion.selected == 0
+    editor.execute(^scratch, Command.Move { direction: Direction.Down count: 1 extend: no })?
+    editor.execute(^scratch, Command.InsertText("\n"))?
+    assert bytes_text(editor.prompt) == "e alpine.txt" && !editor.completion.active
+    assert editor.workspace.documents.count == 1
+    editor.execute(^scratch, Command.InsertText("\n"))?
+    assert editor.workspace.documents.count == 2
+    editor.prompt_open(':'.as(u32), initial = "e alpha.txt")
+    editor.command_line(^scratch)?
+    assert editor.workspace.documents.count == 2
+    assert editor.workspace.active_document().text.text() == "dirtyoriginal"
+    editor.prompt_open(':'.as(u32), initial = "e al")
+    editor.execute(^scratch, Command.Tab)?
+    editor.execute(^scratch, Command.Escape)?
+    assert editor.prompt_kind == ':'.as(u32) && bytes_text(editor.prompt) == "e"
+        +" alp"
+
+    editor.prompt_insert("ha.txt")
+    editor.command_line(^scratch)?
+    assert editor.workspace.documents.count == 2
+    editor.prompt_open(':'.as(u32), initial = "e spa")
+    editor.execute(^scratch, Command.Tab)?
+    assert bytes_text(editor.prompt) == "e space name "
+    editor.command_line(^scratch)?
+    assert editor.workspace.documents.count == 3
+    assert bytes_text(editor.workspace.active_document().path) == scratch.pr($"{folder}/space name ")
+    editor.prompt_open(':'.as(u32), initial = "e nested/")
+    on editor.command_line(^scratch) {
+        _success => {
+            assert no
+        }
+
+        _error! => {
+        }
+    }
+    assert editor.workspace.documents.count == 3
+    editor.prompt_open(':'.as(u32), initial = "e none")
+    editor.execute(^scratch, Command.Tab)?
+    assert bytes_text(editor.prompt) == "e none"
+    assert bytes_text(editor.message) == "No filename match"
+    editor.prompt_open(':'.as(u32), initial = "e al")
+    editor.execute(^scratch, Command.Tab)?
+    editor.execute(^scratch, Command.Tab)?
+    assert editor.completion.selected == 1
+    editor.prompt_insert("h")
+    assert !editor.completion.active
+    editor.prompt_open(':'.as(u32), initial = "w spa")
+    editor.execute(^scratch, Command.Tab)?
+    assert bytes_text(editor.prompt) == "w space name "
+}
+
+test "filename completion scans, navigates, accepts and cancels without losing open buffers or filename whitespace" {
+    on exercise_completion() {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+}

@@ -249,8 +249,14 @@ impl Terminal {
         messages := message_rows(message, width)
         defer messages.free()
         message_lines := messages.count
-        message_height := on message.count > 0 {
-            yes => message_lines else => 1
+        message_height := on editor.completion.active {
+            yes => editor.completion.items.count + 1
+            else => on message.count > 0 {
+                yes => message_lines + on editor.prompt_kind != 0 {
+                    yes => 1 else => 0
+                }
+                else => 1
+            }
         }
         on message_height > height / 2 => message_height = height / 2
         on message_height == 0 => message_height = 1
@@ -258,7 +264,7 @@ impl Terminal {
             yes => height - message_height - 1 else => 0
         }
         previously_visible := caret_line >= view.top && caret_line < view.top + view.rows
-        on resized && previously_visible && (caret_line < view.top || caret_line >= view.top + rows) => {
+        on (resized || view.rows != rows) && previously_visible && (caret_line < view.top || caret_line >= view.top + rows) => {
             view.top = on caret_line > rows / 2 {
                 yes => caret_line - rows / 2 else => 0
             }
@@ -399,8 +405,10 @@ impl Terminal {
             yes => {
                 encoded: [4]u8
                 size := editor.prompt_kind.as(Rune).utf8_encode(encoded[..])
-                prompt := self.scratch.pr($"{encoded[..size].as(string)}{bytes_text(editor.prompt)}")
-                column := 1 + display_column(bytes_text(editor.prompt), 0, editor.prompt_caret)
+                shown := display_text(^self.scratch, bytes_text(editor.prompt), single_line = yes)
+                prefix := display_text(^self.scratch, bytes_text(editor.prompt)[.. editor.prompt_caret], single_line = yes)
+                prompt := self.scratch.pr($"{encoded[..size].as(string)}{shown}")
+                column := 1 + display_column(prefix, 0, prefix.count)
                 horizontal := on column >= width {
                     yes => column - width + 1 else => 0
                 }
@@ -420,6 +428,35 @@ impl Terminal {
                         on glyph.x == column - skipped && glyph.y == bottom => {
                             glyph.ink = PAPER
                             glyph.paper = caret_paper
+                        }
+                    }
+                }
+                available := message_height - 1
+                on editor.completion.active {
+                    yes => {
+                        first := on editor.completion.selected >= available {
+                            yes => editor.completion.selected - available + 1 else => 0
+                        }
+                        for row in [0.as(usize) .. available] {
+                            index := first + row
+                            on index >= editor.completion.items.count => break
+                            selected := index == editor.completion.selected
+                            paper := on selected {
+                                yes => SELECT else => PAPER
+                            }
+                            for x in [0.as(usize) .. width] {
+                                self.set(x, bottom + 1 + row, ' '.as(u32), INK, paper)
+                            }
+                            marker := on selected {
+                                yes => "› " else => "  "
+                            }
+                            label := display_text(^self.scratch, editor.completion.items[index], single_line = yes)
+                            self.text(0, bottom + 1 + row, self.scratch.pr($"{marker}{label}"), INK, paper, width)
+                        }
+                    }
+                    else => {
+                        for row in [0.as(usize) .. available] {
+                            on row < messages.count => self.text(0, bottom + 1 + row, messages[row], INK, PAPER, width)
                         }
                     }
                 }

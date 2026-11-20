@@ -1164,8 +1164,11 @@ recording, system clipboard, configuration, or language-service APIs.
 ## 25. Agreed follow-on task queue
 
 - Add `:e <path>` with filename Tab completion, preserving existing buffers and
-  reusing already-open files. A folder-candidate popup is still proposed;
-  its trigger and interaction require a decision.
+  reusing already-open files. The user accepted Tab-driven common-prefix/unique
+  completion and a selectable ambiguous-match list in the existing message area:
+  Up/Down or Tab selects, Enter accepts, Escape dismisses while retaining the
+  path. Enter from the ordinary prompt executes the command. Directory matches
+  append `/`. A live standalone folder popup is not part of this implementation.
 - The user also agreed the proposed MS2 sequence: shared popup/picker
   infrastructure first exercised by a buffer switcher; then a non-blocking,
   filterable, cancellable file picker; split panes with independent shared-buffer

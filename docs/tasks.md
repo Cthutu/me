@@ -21,7 +21,7 @@ tracker. Detailed design and verification evidence remain in repository document
   groups on both debug and release builds. Committed/pushed as `02b938d` and
   installed; installed-binary presentation smoke passed.
 
-## T2 — Open files with filename completion — agreed, not started
+## T2 — Open files with filename completion — completed
 
 - Add `:e <path>` to open an existing file or create a new file-backed buffer.
 - Reuse/focus an already-open file rather than duplicate its buffer.
@@ -29,12 +29,27 @@ tracker. Detailed design and verification evidence remain in repository document
 - Tab completes filenames using the folder prefix already typed.
 - Retain Linux filename fidelity, including spaces and non-UTF-8 names.
 
-### Choices to settle before T2 implementation
+### Agreed interaction and implementation
 
-- First Tab: common-prefix expansion, cycling or a candidate list?
-- Directory completion and navigation, hidden files, no-match and ambiguous cases.
-- **Proposed, not agreed:** a popup listing files in the folder prefix already
-  typed. If adopted, decide when it appears and how selection/accept/cancel work.
+- User accepted Tab-triggered common-prefix expansion and unique completion;
+  directory matches append `/`.
+- Ambiguity opens a selectable list in the existing message area, not a live popup.
+  Up/Down or further Tab selects, Enter accepts without executing the command,
+  and Escape dismisses only the list, retaining the typed path.
+- Further Enter executes the command; editing dismisses the list.
+- The same path completion works for `:w`, `:w!` and `:ww`.
+- Implementation choices: case-sensitive byte-prefix matches, deterministic
+  byte ordering, dotfiles only when the current component starts with a dot,
+  accessible symlink targets, and explicit no-match/directory errors.
+- Paths after the first separator are literal (including whitespace); no shell
+  quoting or expansion. Presentation sanitises controls/invalid UTF-8 without
+  changing the underlying filename bytes.
+- Synchronous discovery is capped at 65,536 entries and 4,096 matches; exceeding
+  either bound reports an error instead of pretending partial results are complete.
+
+Verification: 25 project native tests across 17 files and all 18 PTY scenario
+ groups on both debug and release builds passed, including actual Tab events,
+ list selection/cancellation, unsaved-buffer reuse, byte-safe paths and resize.
 
 No split panes, generic command palette or language services are bundled into T2.
 
@@ -42,8 +57,8 @@ No split panes, generic command palette or language services are bundled into T2
 
 The following tasks were explicitly accepted after T1/T2. This is the intended
 sequence, not a claim that interaction details are settled or code exists.
-If a filename popup is adopted for T2, its shared infrastructure may need to be
-pulled forward rather than creating a one-off implementation.
+T2 uses the existing message area, not a separate popup layer. The shared MS2
+popup foundation remains queued; no one-off popup infrastructure was introduced.
 
 ### T3 — Shared popup/picker infrastructure and buffer switcher
 

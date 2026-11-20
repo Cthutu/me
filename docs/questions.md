@@ -310,9 +310,9 @@ Agreed: `:e <path>` with filename Tab completion. The broader MS2 popup/buffer
 switcher, file picker, splits and explicit repeat tasks are also accepted; see
 `docs/tasks.md`. Their detailed interactions are not automatically settled.
 
-Before T2, choose whether Tab extends the common prefix, cycles matches or opens
-a list. The suggested folder-candidate popup remains optional: should it appear
-while typing a folder prefix, or only when Tab finds multiple matches? Settle
-directory navigation, accept/cancel, no-match, hidden files and byte-safe prompt
-presentation before implementation. If a popup is selected, reuse shared picker
-infrastructure rather than a disconnected one-off widget.
+T2 interaction settled: Tab completes unique matches/expands common prefixes,
+appends directory slashes, and displays ambiguous matches in the existing message
+area. Up/Down or Tab selects, Enter accepts without executing, Escape closes the
+list while retaining the path. Another Enter executes. No live folder popup.
+Current completion choices are documented in `docs/tasks.md`; the broader MS2
+picker's roots, matching, discovery and popup contracts remain separate decisions.
