@@ -140,19 +140,28 @@ selection inserts below; with a selection, paste replaces precisely that range.
 | `:kill` | Kill active buffer and all its views; refuse unsaved work |
 | `:kill!` | Kill active buffer and all its views, discarding unsaved work |
 
-### Filename completion
+### Command and filename completion
 
-In `:e`, `:w`, `:w!` and `:ww`, **Tab** completes the path at the end of the
-prompt. For example, type `:e src/ter` and press Tab. Relative paths use the
+Before a command's separating space, **Tab** completes command names. `:rep`
+completes to `:replace`; `:bu` offers `buffer` / `buffers`; Tab at an empty `:`
+prompt lists all supported names. Acceptance never executes the command.
+
+After the separating space in `:e`, `:w`, `:w!` and `:ww`, **Tab** completes
+the path at the end of the prompt. For example, type `:e src/ter` and press Tab. Relative paths use the
 startup folder; absolute paths also work. Unique matches complete immediately;
 directories append `/` so you can continue into them.
 
 Ambiguous matches expand their common prefix and open a list in the existing
-bottom message area. **Up/Down** or further **Tab** changes the selected match;
+bottom message area **above the command-entry line, which stays on the terminal's
+last row**. **Up/Down** or further **Tab** changes the selected match;
 **Enter** accepts it into the prompt **without executing the command**. Press
 Enter again to open/save. **Escape** dismisses only the list, retaining your
-path; another Escape cancels the prompt. Typing or moving the prompt caret
-closes the list. No-match/directory errors leave the prompt and files intact.
+path; another Escape cancels the prompt. While the list is open, typing and
+Backspace keep filtering it, even with one or zero matches. Filtering does not
+silently expand your typed query; Enter accepts a valid match, and with no matches
+it does nothing. Deletion can widen results again. Moving the prompt caret closes
+the list. Entering non-file arguments (such as the number in `:buffer N`) also
+ends command-name completion. No-match/directory errors leave files intact.
 
 Paths are literal bytes after the first separating space: spaces need no quotes,
 and trailing spaces are significant. There is no shell quoting, tilde or variable
@@ -161,8 +170,11 @@ entries appear only when the current component begins with `.`. Accessible
 symlink targets are followed for file/directory classification; non-regular
 objects and inaccessible/broken links are not suggested. Filenames selected by
 completion retain control/non-UTF-8 bytes internally, with safe single-line
-presentation. Discovery is synchronous on Tab, capped at 65,536 directory entries
-and 4,096 matches; an exceeded limit reports an error, not incomplete results.
+presentation. Opening filename completion or changing its directory builds a
+bounded synchronous snapshot; subsequent same-directory query filtering uses
+that snapshot without more filesystem reads. Close/reopen the list to refresh
+changed directory contents. Discovery is capped at 65,536 directory entries and
+4,096 matches; an exceeded limit reports an error, not incomplete results.
 The future non-blocking file picker is separate work.
 
 ### File fidelity

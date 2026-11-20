@@ -57,12 +57,18 @@ test "mode presentation uses contrasting green/red cursors and UTF-8 status badg
     terminal.editor.completion.items.push("another.txt")
     terminal.editor.completion.active = yes
     terminal.paint(40, 8)
-    assert terminal.cells[6 * 40].paper == 0x386a91.as(Colour)
-    assert terminal.cells[6 * 40].rune == 0x203a
-    assert terminal.cells[6 * 40 + 3].rune == 0xfffd
+    assert terminal.cells[5 * 40].paper == 0x386a91.as(Colour)
+    assert terminal.cells[5 * 40].rune == 0x203a
+    assert terminal.cells[5 * 40 + 3].rune == 0xfffd
+    assert terminal.cells[7 * 40].rune == ':'.as(u32)
     terminal.editor.completion.selected = 1
     terminal.paint(40, 8)
-    assert terminal.cells[7 * 40].paper == 0x386a91.as(Colour)
+    assert terminal.cells[6 * 40].paper == 0x386a91.as(Colour)
+    assert terminal.cells[7 * 40].rune == ':'.as(u32)
+    terminal.editor.completion.items.clear()
+    terminal.paint(40, 8)
+    assert terminal.cells[6 * 40].rune == 'N'.as(u32)
+    assert terminal.cells[7 * 40].rune == ':'.as(u32)
     terminal.paint(1, 1)
     assert terminal.cells.count == 1
     terminal.paint(0, 0)

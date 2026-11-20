@@ -1168,7 +1168,10 @@ recording, system clipboard, configuration, or language-service APIs.
   completion and a selectable ambiguous-match list in the existing message area:
   Up/Down or Tab selects, Enter accepts, Escape dismisses while retaining the
   path. Enter from the ordinary prompt executes the command. Directory matches
-  append `/`. A live standalone folder popup is not part of this implementation.
+  append `/`. The user additionally requested command-name completion, a command
+  input anchored at the terminal bottom with matches above, and persistent live
+  filtering when typing/deleting in an open list, including one/zero matches.
+  A standalone automatically opened folder popup is not part of this implementation.
 - The user also agreed the proposed MS2 sequence: shared popup/picker
   infrastructure first exercised by a buffer switcher; then a non-blocking,
   filterable, cancellable file picker; split panes with independent shared-buffer

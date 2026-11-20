@@ -313,6 +313,9 @@ switcher, file picker, splits and explicit repeat tasks are also accepted; see
 T2 interaction settled: Tab completes unique matches/expands common prefixes,
 appends directory slashes, and displays ambiguous matches in the existing message
 area. Up/Down or Tab selects, Enter accepts without executing, Escape closes the
-list while retaining the path. Another Enter executes. No live folder popup.
+list while retaining the path. Another Enter executes. No automatically opened
+folder popup. The user further agreed command-name completion, bottom-anchored
+command entry and keeping an open list filtering while typing/deleting; one or
+zero matches do not dismiss it. Same-directory filtering reuses a snapshot.
 Current completion choices are documented in `docs/tasks.md`; the broader MS2
 picker's roots, matching, discovery and popup contracts remain separate decisions.

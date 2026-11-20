@@ -16,18 +16,49 @@ pub PathCommand :: plex {
     argument_start usize
 }
 
-pub path_command :: fn (text: string) -> ?PathCommand {
+-- Keep this sorted and aligned with Editor.command_line's supported verbs.
+COMMAND_NAMES :: [
+    "buffer",
+    "buffers",
+    "e",
+    "kill",
+    "kill!",
+    "q",
+    "q!",
+    "replac"
+        +"e",
+    "w",
+    "w!",
+    "wq",
+    "ww",
+]
+
+pub command_start :: fn (text: string) -> usize {
     start : usize = 0
     for start < text.count && text[start] == ' ' {
         start += 1
     }
-    end := start
+    return start
+}
+
+pub path_command :: fn (text: string) -> ?PathCommand {
+    start := command_start(text)
+    end   := start
+
     for end < text.count && text[end] != ' ' {
         end += 1
     }
     verb := text[start..end]
     on verb != "e" && verb != "w" && verb != "w!" && verb != "ww" => return nil
     return PathCommand { verb argument_start: on end < text.count { yes => end + 1 else => end } }
+}
+
+path_root :: fn (path: string) -> usize {
+    root : usize = 0
+    for index, byte in path {
+        on byte^ == '/' => root = index + 1
+    }
+    return root
 }
 
 before :: fn (left: string, right: string) -> bool {
@@ -41,25 +72,33 @@ before :: fn (left: string, right: string) -> bool {
     return left.count < right.count
 }
 
-pub FilenameCompletion :: plex {
-    storage        arena
-    items          [..]string
-    selected       usize
-    argument_start usize
-    active         bool
+pub PromptCompletion :: plex {
+    storage           arena
+    items             [..]string
+    all_files         [..]string
+    cached_folder     string
+    cached_prefix     string
+    cache_valid       bool
+    selected          usize
+    replacement_start usize
+    command_mode      bool
+    active            bool
 }
 
-impl FilenameCompletion {
+impl PromptCompletion {
 
     pub reset :: fn (self: ^Self) {
         self.active = no
         self.selected = 0
         self.items.clear()
+        self.all_files.clear()
+        self.cache_valid = no
         self.storage.reset()
     }
 
     pub release :: fn (self: ^Self) {
         self.items.free()
+        self.all_files.free()
         self.storage.done()
     }
 
@@ -93,20 +132,75 @@ impl FilenameCompletion {
         return first[..count]
     }
 
+    pub commands :: fn (self: ^Self, prefix: string) {
+        self.reset()
+        self.command_mode = yes
+        for name in COMMAND_NAMES {
+            on name.count >= prefix.count &&
+                name^[..prefix.count] == prefix => self.items.push(name^)
+        }
+    }
+
+    pub filter_files :: fn (self   : ^Self,
+                            folder : string,
+                            path   : string) -> void\string {
+        root := path_root(path)
+        on self.cache_valid &&
+            self.cached_folder == folder &&
+            self.cached_prefix == path[..root] => {
+            self.filter_leaf(path[root..])?
+            return
+        }
+        self.scan(folder, path)?
+    }
+
+    filter_leaf :: fn (self: ^Self, leaf: string) -> void\string {
+        self.active = no
+        self.selected = 0
+        self.items.clear()
+        self.command_mode = no
+        for item in self.all_files {
+            name := item^[self.cached_prefix.count..]
+            on name[0] == '.' && (leaf.count == 0 || leaf[0] != '.') => again
+            on name.count < leaf.count || name[..leaf.count] != leaf => again
+            on self.items.count >= 4096 => {
+                self.items.clear()
+                return "Too many completion matches; type a longer prefix"!
+            }
+            self.items.push(item^)
+        }
+        self.sort_items()
+    }
+
+    sort_items :: fn (self: ^Self) {
+        -- Only the bounded match set is sorted, not the full directory snapshot.
+        for i in [1.as(usize) .. self.items.count] {
+            item := self.items[i]
+            j    := i
+
+            for j > 0 && before(item, self.items[j - 1]) {
+                self.items[j] = self.items[j - 1]
+                j -= 1
+            }
+            self.items[j] = item
+        }
+    }
+
     pub scan :: fn (self: ^Self, folder: string, path: string) -> void\string {
         self.reset()
+        self.command_mode = no
         completed := no
         defer on !completed => self.reset()
         for byte in path {
             on byte^ == 0 => return "A path cannot contain NUL"!
         }
-        root : usize = 0
-        for index, byte in path {
-            on byte^ == '/' => root = index + 1
-        }
+        root   := path_root(path)
         prefix := path[..root]
-        leaf   := path[root..]
-        base   := on folder.count > 0 { yes => folder else => "." }
+
+        self.cached_prefix = self.storage.pr(prefix)
+        self.cached_folder = self.storage.pr(folder)
+        leaf := path[root..]
+        base := on folder.count > 0 { yes => folder else => "." }
 
         directory := on prefix.count > 0 && prefix[0] == '/' {
             yes   => prefix
@@ -158,10 +252,6 @@ impl FilenameCompletion {
                 on visited > 65536 => return "Directory too large for "
                     +"synchronous completion; type the path directly"!
                 on name.count == 0 || name == "." || name == ".." => again
-                on name[0] == '.' &&
-                    (leaf.count == 0 || leaf[0] != '.') => again
-                on name.count < leaf.count ||
-                    name[..leaf.count] != leaf => again
                 is_directory := kind == DT_DIRECTORY
                 on kind != DT_DIRECTORY &&
                     kind != DT_REGULAR => {
@@ -176,27 +266,16 @@ impl FilenameCompletion {
                         else => again
                     }
                 }
-                on self.items.count >= 4096 => return "Too many completion "
-                    +"matches; type a longer prefix"!
                 suffix := on is_directory {
                     yes   => "/"
                     else  => ""
                 }
-                self.items.push(self.storage.pr($"{prefix}{name}{suffix}"))
+                self.all_files.push(self.storage.pr($"{prefix}{name}{suffix}"))
             }
         }
-        -- Bounded insertion sort keeps ordering deterministic and byte-safe.
-        for i in [1.as(usize) .. self.items.count] {
-            item := self.items[i]
-            j    := i
-
-            for j > 0 && before(item, self.items[j - 1]) {
-                self.items[j] = self.items[j - 1]
-                j -= 1
-            }
-            self.items[j] = item
-        }
+        self.cache_valid = yes
         completed = yes
+        self.filter_leaf(leaf)?
     }
 
 }

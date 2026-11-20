@@ -29,7 +29,7 @@ document_match :: fn (doc         : ^Document,
 
 pub Editor :: plex {
     workspace        Workspace
-    completion       FilenameCompletion
+    completion       PromptCompletion
     clipboard        Clipboard
     prompt           [..]u8
     prompt_kind      u32
@@ -76,39 +76,73 @@ impl Editor {
         self.active_match = nil
         self.message.clear()
     }
-    pub complete_path :: fn (self: ^Self, scratch: ^arena) -> void\string {
+    pub collect_completion :: fn (self: ^Self) -> bool\string {
+        raw := bytes_text(self.prompt)
+        start := command_start(raw)
+        end := start
+        for end < raw.count && raw[end] != ' ' {
+            end += 1
+        }
+        self.completion.command_mode = end == raw.count
+        on self.completion.command_mode => {
+            self.completion.commands(raw[start ..])
+            self.completion.replacement_start = start
+            return yes
+        }
+        parsed := on path_command(raw) {
+            value => value
+            else => {
+                self.completion.reset()
+                return no
+            }
+        }
+        self.completion.filter_files(bytes_text(self.workspace.folder), raw[parsed.argument_start ..])?
+        self.completion.replacement_start = parsed.argument_start
+        return yes
+    }
+    pub refilter_completion :: fn (self: ^Self) {
+        on self.collect_completion() {
+            supported => {
+                self.completion.active = supported
+                self.message.clear()
+            }
+            error! => {
+                self.completion.active = yes
+                self.tell(error)
+            }
+        }
+    }
+    pub complete_prompt :: fn (self: ^Self, scratch: ^arena) -> void\string {
         on self.completion.active => {
-            self.completion.selected = (self.completion.selected + 1) % self.completion.items.count
+            on self.completion.items.count > 0 => self.completion.selected = (self.completion.selected + 1) % self.completion.items.count
             return
         }
         raw := bytes_text(self.prompt)
         on self.prompt_caret != raw.count => return "Move to the end of the "
-            +"path before completing"!
-        parsed := on path_command(raw) {
-            value => value else => return "Filename completion is available "
-                +"for :e, :w, :w! and :ww"!
-        }
-        prefix := scratch.pr(raw[.. parsed.argument_start])
-        on parsed.argument_start == raw.count && raw.count > 0 && raw[raw.count - 1] != ' ' => prefix = scratch.pr($"{prefix} ")
-        path := raw[parsed.argument_start ..]
-        self.completion.scan(bytes_text(self.workspace.folder), path)?
+            +"prompt before completing"!
+        self.completion.reset()
+        on !self.collect_completion()? => return "Completion supports command "
+            +"names and :e/:w/:w!/:ww paths"!
         on self.completion.items.count == 0 => {
-            self.completion.reset()
-            self.tell("No filename match")
+            self.tell(on self.completion.command_mode {
+                yes => "No command match" else => "No filename match"
+            })
             return
         }
+        prefix := scratch.pr(raw[.. self.completion.replacement_start])
+        query := raw[self.completion.replacement_start ..]
         common := self.completion.common_prefix()
-        on common.count < path.count => common = path
+        on common.count < query.count => common = query
         own(^self.prompt, scratch.pr($"{prefix}{common}"))
         self.prompt_caret = self.prompt.count
-        self.completion.argument_start = prefix.count
         self.completion.active = self.completion.items.count > 1
         on !self.completion.active => self.completion.reset()
         self.message.clear()
         self.message_scroll = 0
     }
     pub accept_completion :: fn (self: ^Self, scratch: ^arena) {
-        prefix := bytes_text(self.prompt)[.. self.completion.argument_start]
+        on self.completion.items.count == 0 => return
+        prefix := bytes_text(self.prompt)[.. self.completion.replacement_start]
         item := self.completion.items[self.completion.selected]
         own(^self.prompt, scratch.pr($"{prefix}{item}"))
         self.prompt_caret = self.prompt.count
@@ -175,7 +209,7 @@ impl Editor {
         self.save_all_pending = no
     }
     pub prompt_insert :: fn (self: ^Self, text: string) {
-        self.completion.reset()
+        filtering := self.completion.active
         on self.prompt_kind == ':'.as(u32) => self.message.clear()
         old_count := self.prompt.count
         self.prompt.resize_undefined_to(old_count + text.count)
@@ -186,10 +220,11 @@ impl Editor {
         }
         self.prompt[self.prompt_caret .. self.prompt_caret + text.count] = text.as([]u8)
         self.prompt_caret += text.count
+        on filtering => self.refilter_completion()
         on self.prompt_kind != ':'.as(u32) => self.preview_search()
     }
     pub prompt_delete :: fn (self: ^Self, backwards: bool, word: bool = no) {
-        self.completion.reset()
+        filtering := self.completion.active
         on self.prompt_kind == ':'.as(u32) => self.message.clear()
         start := on backwards {
             yes => on word {
@@ -206,6 +241,7 @@ impl Editor {
         }
         self.prompt.resize_undefined_to(self.prompt.count - (end - start))
         self.prompt_caret = start
+        on filtering => self.refilter_completion()
         on self.prompt_kind != ':'.as(u32) => self.preview_search()
     }
     pub finish_search :: fn (self: ^Self) -> void\string {
@@ -521,7 +557,7 @@ impl Editor {
                         return
                     }
                     Tab => {
-                        self.complete_path(scratch)?
+                        self.complete_prompt(scratch)?
                         return
                     }
                     InsertText(text) => {
@@ -535,6 +571,7 @@ impl Editor {
                     }
                     => {
                         on direction == Direction.Up || direction == Direction.Down => {
+                            on self.completion.items.count == 0 => return
                             selected := self.completion.selected
                             self.completion.selected = on direction == Direction.Down {
                                 yes => (selected + 1) % self.completion.items.count
@@ -548,11 +585,18 @@ impl Editor {
                     else => {
                     }
                 }
-                self.completion.reset()
+                on command {
+                    InsertText(text) => {
+                        on text == "\n" => self.completion.reset()
+                    }
+                    Backspace, DeleteWordBack, Delete => {
+                    }
+                    else => self.completion.reset()
+                }
             }
             on command {
                 Tab => {
-                    on self.prompt_kind == ':'.as(u32) => self.complete_path(scratch)?
+                    on self.prompt_kind == ':'.as(u32) => self.complete_prompt(scratch)?
                     return
                 }
                 Escape => {

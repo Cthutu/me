@@ -549,6 +549,79 @@ def duplicate_selection(binary, folder):
         session.quit()
 
 
+def command_completion(binary, folder):
+    (folder / "base.txt").write_bytes(b"base")
+    (folder / "alpha.txt").write_bytes(b"alpha")
+    (folder / "alpine.txt").write_bytes(b"alpine")
+    with Session(binary, folder, "-r", "base.txt") as session:
+        changed = session.send(":rep\t")
+        assert b"replace" in changed and b"\x1b[24;" in changed
+        session.normal()
+        session.send(":\t")
+        changed = session.send("r")
+        assert b"\x1b[24;" in changed, "command-entry line moved away from the bottom"
+        session.send("z")  # zero matches must not execute or dismiss the list
+        session.send("\r")
+        assert session.process.poll() is None
+        session.send(b"\x7f")
+        session.send("\r")  # accept replace; Escape cancels the still-open prompt
+        session.send(b"\x1b", 0.15)
+        session.normal()
+        session.send(":bu\t")
+        session.send("s")
+        session.send("\r")
+        session.send("\r")  # execute buffers only after accepting its name
+        session.normal()
+        session.send(":e\t")  # exact command, not filename completion yet
+        session.send(" al\t")
+        changed = session.send("ha")  # 'alp' -> 'alpha', keeping the one-match list open
+        assert b"\x1b[24;" in changed
+        session.send("\r")
+        session.send("\r")
+        session.send("iC")
+        session.send(b"\x13")
+        assert (folder / "alpha.txt").read_bytes() == b"Calpha"
+        assert not (folder / "alpha").exists()
+        session.quit()
+
+
+def live_completion_filter(binary, folder):
+    for name in ["base", "alpha", "alpine", "another"]:
+        (folder / (name + ".txt")).write_text(name)
+    (folder / "nested").mkdir()
+    (folder / "nested/deep.txt").write_bytes(b"deep")
+    with Session(binary, folder, "-r", "base.txt") as session:
+        session.send(":e al\t")
+        session.send("z")
+        session.send("\r")
+        session.send(b"\x1b[B\t")  # navigation with no matches must be harmless
+        assert not (folder / "alpz").exists()
+        assert session.process.poll() is None
+        session.send(b"\x7f\x7f\x7f")  # widen all the way back to 'a'
+        session.send("lpi")
+        fcntl.ioctl(session.master, termios.TIOCSWINSZ, struct.pack("HHHH", 2, 8, 0, 0))
+        session.drain(0.15)
+        fcntl.ioctl(session.master, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+        changed = session.drain(0.15)
+        assert b"\x1b[24;" in changed
+        session.send("\r")
+        session.send("\r")
+        session.send("iL")
+        session.send(b"\x13")
+        assert (folder / "alpine.txt").read_bytes() == b"Lalpine"
+        assert not (folder / "alpi").exists()
+        session.normal()
+        session.send(":e \t")
+        session.send("nested/")  # entering a folder refreshes the candidate snapshot
+        session.send("dee")
+        session.send("\r")
+        session.send("\r")
+        session.send("iN")
+        session.send(b"\x13")
+        assert (folder / "nested/deep.txt").read_bytes() == b"Ndeep"
+        session.quit()
+
+
 def file_completion(binary, folder):
     first = folder / "first.txt"
     first.write_bytes(b"first")
@@ -738,7 +811,7 @@ def main():
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
     checks = [recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
               search_replace_and_buffers, byte_paths_and_checkpoint_failures,
-              second_instance, crash_and_signals, undo_caret, word_delete, duplicate_selection, file_completion, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
+              second_instance, crash_and_signals, undo_caret, word_delete, duplicate_selection, command_completion, live_completion_filter, file_completion, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
     selected = [check for check in checks if args.filter in check.__name__]
     if not selected:
         parser.error(f"No PTY checks match {args.filter!r}")

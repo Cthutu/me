@@ -250,7 +250,12 @@ impl Terminal {
         defer messages.free()
         message_lines := messages.count
         message_height := on editor.completion.active {
-            yes => editor.completion.items.count + 1
+            yes => on editor.completion.items.count > 0 {
+                yes => editor.completion.items.count + 1
+                else => on message.count > 0 {
+                    yes => message_lines + 1 else => 2
+                }
+            }
             else => on message.count > 0 {
                 yes => message_lines + on editor.prompt_kind != 0 {
                     yes => 1 else => 0
@@ -403,6 +408,7 @@ impl Terminal {
         bottom := height - message_height
         on editor.prompt_kind != 0 {
             yes => {
+                prompt_y := height - 1
                 encoded: [4]u8
                 size := editor.prompt_kind.as(Rune).utf8_encode(encoded[..])
                 shown := display_text(^self.scratch, bytes_text(editor.prompt), single_line = yes)
@@ -419,13 +425,13 @@ impl Terminal {
                     skipped += character_width(prompt, offset, skipped)
                     offset = next_character(prompt, offset)
                 }
-                self.text(0, bottom, prompt[offset ..], INK, PAPER, width)
+                self.text(0, prompt_y, prompt[offset ..], INK, PAPER, width)
                 on column >= skipped && column - skipped < width => {
-                    cell := ^self.cells[bottom * width + column - skipped]
+                    cell := ^self.cells[prompt_y * width + column - skipped]
                     cell.ink = PAPER
                     cell.paper = caret_paper
                     for glyph in self.glyphs {
-                        on glyph.x == column - skipped && glyph.y == bottom => {
+                        on glyph.x == column - skipped && glyph.y == prompt_y => {
                             glyph.ink = PAPER
                             glyph.paper = caret_paper
                         }
@@ -434,6 +440,20 @@ impl Terminal {
                 available := message_height - 1
                 on editor.completion.active {
                     yes => {
+                        on editor.completion.items.count == 0 => {
+                            on message.count > 0 {
+                                yes => {
+                                    for row in [0.as(usize) .. available] {
+                                        on row < messages.count => self.text(0, bottom + row, messages[row], INK, PAPER, width)
+                                    }
+                                }
+                                else => on available > 0 => self.text(0, bottom, on editor.completion.command_mode {
+                                    yes => "No matching commands" else => "No "
+                                        +"matching files"
+                                }
+                                , MUTED, PAPER, width)
+                            }
+                        }
                         first := on editor.completion.selected >= available {
                             yes => editor.completion.selected - available + 1 else => 0
                         }
@@ -445,18 +465,18 @@ impl Terminal {
                                 yes => SELECT else => PAPER
                             }
                             for x in [0.as(usize) .. width] {
-                                self.set(x, bottom + 1 + row, ' '.as(u32), INK, paper)
+                                self.set(x, bottom + row, ' '.as(u32), INK, paper)
                             }
                             marker := on selected {
                                 yes => "› " else => "  "
                             }
                             label := display_text(^self.scratch, editor.completion.items[index], single_line = yes)
-                            self.text(0, bottom + 1 + row, self.scratch.pr($"{marker}{label}"), INK, paper, width)
+                            self.text(0, bottom + row, self.scratch.pr($"{marker}{label}"), INK, paper, width)
                         }
                     }
                     else => {
                         for row in [0.as(usize) .. available] {
-                            on row < messages.count => self.text(0, bottom + 1 + row, messages[row], INK, PAPER, width)
+                            on row < messages.count => self.text(0, bottom + row, messages[row], INK, PAPER, width)
                         }
                     }
                 }

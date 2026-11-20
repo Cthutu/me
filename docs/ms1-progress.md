@@ -36,6 +36,10 @@ refreshes. See the [README](../README.md) for usage and explicit limitations.
   work; filename Tab completion for `:e` / `:w` / `:w!` / `:ww`, with common-prefix
   expansion, directory slashes and a selectable message-area ambiguity list.
   Raw filename bytes survive completion and safe prompt display.
+- Command-name Tab completion, with filename handoff after the separating space.
+  The prompt stays on the bottom row, candidate lists above it. Typing/deletion
+  filter an open list even with one/zero matches; same-folder filtering uses a
+  cached directory snapshot. Acceptance never executes a command.
 - CLI opening/reset, new named/unnamed documents, `:buffers` / `:buffer N`, all
   agreed save/quit commands, save-all filename sequencing and partial success.
 - Same-directory exclusive temporary/atomic replacement; symlink preservation,
@@ -57,7 +61,7 @@ refreshes. See the [README](../README.md) for usage and explicit limitations.
 ### Headless
 
 `just check`, `just format`, Python tooling compilation and `just test` have
-passed. There are **25 project-authored named tests across 17 Nerd files**, with
+passed. There are **26 project-authored named tests across 17 Nerd files**, with
 many assertions and the 1,093 official Unicode vectors inside those tests.
 Nerd additionally discovers imported standard-library tests; its per-file totals
 must **not** be summed or described as the number of distinct ME tests.
@@ -65,7 +69,7 @@ must **not** be summed or described as the number of distinct ME tests.
 ### Real terminal integration
 
 `python3 tests/terminal.py --binary _bin/me` and the equivalent release command
-passed all **18 scenario groups**, including buffer lifecycle, gutter styling,
+passed all **20 scenario groups**, including buffer lifecycle, gutter styling,
 selected-line duplication, word deletion, file opening and filename completion,
 on both debug and release builds:
 
@@ -100,6 +104,10 @@ on both debug and release builds:
     and non-regular/invalid-content refusal.
 18. Completion and saving of control/non-UTF-8/whitespace filenames, safe prompt
     presentation across resize, literal trailing spaces, and symlink/`..` resolution.
+19. Command-name completion, empty-prefix discovery, safe acceptance, filtering,
+    cancellation and handoff to filename completion.
+20. Persistent live filtering, zero-match navigation/acceptance, Backspace
+    widening, bottom-anchored input across resize, and directory transitions.
 
 Normal/signal exits compare the actual PTY attributes against startup and check
 alternate-screen restoration. Tests use isolated temporary HOME/folders and do

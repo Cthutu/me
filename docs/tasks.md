@@ -36,7 +36,8 @@ tracker. Detailed design and verification evidence remain in repository document
 - Ambiguity opens a selectable list in the existing message area, not a live popup.
   Up/Down or further Tab selects, Enter accepts without executing the command,
   and Escape dismisses only the list, retaining the typed path.
-- Further Enter executes the command; editing dismisses the list.
+- Further Enter executes the command. T2a below refines editing/filtering and
+  keeps the input anchored at the bottom.
 - The same path completion works for `:w`, `:w!` and `:ww`.
 - Implementation choices: case-sensitive byte-prefix matches, deterministic
   byte ordering, dotfiles only when the current component starts with a dot,
@@ -47,11 +48,33 @@ tracker. Detailed design and verification evidence remain in repository document
 - Synchronous discovery is capped at 65,536 entries and 4,096 matches; exceeding
   either bound reports an error instead of pretending partial results are complete.
 
-Verification: 25 project native tests across 17 files and all 18 PTY scenario
- groups on both debug and release builds passed, including actual Tab events,
- list selection/cancellation, unsaved-buffer reuse, byte-safe paths and resize.
+Delivery verification (`c153e0f`): 25 project native tests across 17 files and
+all 18 PTY scenario groups on both debug and release passed, including actual Tab
+events, list selection/cancellation, unsaved-buffer reuse, byte-safe paths and resize.
 
 No split panes, generic command palette or language services are bundled into T2.
+
+## T2a — Command completion and persistent bottom-anchored filtering — completed
+
+- Tab completes command names before their separating space, including an empty
+  command prompt. File commands switch to filename completion after that space.
+- Use the same common-prefix, ambiguity-list, selection and accept/cancel rules.
+  Completing/accepting a command must never execute it.
+- Keep the command-entry line on the terminal's bottom row; show matches above it.
+- Once open, keep filtering on typing and deletion, including one/zero matches.
+  Do not silently expand the typed query while filtering; Enter accepts a match.
+- Backspace can widen results beyond the original prefix. No-match navigation and
+  Enter are harmless; Escape still dismisses the list without losing the query.
+- Reuse a directory snapshot within the same folder prefix; changing folders
+  rebuilds it. Closing/reopening completion refreshes discovery.
+- Command-name completion ends when entering unsupported non-file arguments
+  (for example, the number in `:buffer N`); numeric argument completion is not
+  included. Cursor navigation still dismisses the list.
+
+Verification: 26 project native tests across 17 files and all 20 PTY scenario
+groups on both debug and release passed. Native checks also prove snapshot reuse,
+fresh discovery on reopening, safe acceptance and no-match handling.
+
 
 ## Agreed MS2 queue — not started
 

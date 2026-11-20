@@ -19,7 +19,7 @@ test "literal path command parsing and common prefixes preserve bytes and UTF-8 
         }
     }
     assert path_command("replace /a/b/") == nil
-    state : FilenameCompletion
+    state : PromptCompletion
     defer state.release()
     state.items.push("é.txt")
     state.items.push("è.txt")
@@ -61,7 +61,7 @@ exercise_completion :: fn () -> void\string {
     }
     assert make_directory(^scratch, scratch.pr($"{folder}/nested"))
     assert syscall(SYS_SYMLINK, "nested".c_string().as(usize).as(u64), scratch.pr($"{folder}/linked").c_string().as(usize).as(u64), 0, 0, 0, 0) == 0
-    state : FilenameCompletion
+    state : PromptCompletion
     defer state.release()
     state.scan(folder, "al")?
     assert state.items.count == 2
@@ -88,6 +88,16 @@ exercise_completion :: fn () -> void\string {
             assert !state.active && state.items.count == 0
         }
     }
+    cached := scratch.pr($"{folder}/cached-only.txt")
+    atomic_write(^scratch, cached, "cached", no)?
+    state.scan(folder, "cached")?
+    assert state.items.count == 1
+    assert syscall(SYS_UNLINK, cached.c_string().as(usize).as(u64), 0, 0, 0, 0, 0) == 0
+    state.filter_files(folder, "cache")?
+    assert state.items.count == 1
+    -- Filtering uses the directory snapshot, not more I/O.
+    state.scan(folder, "cache")?
+    assert state.items.count == 0
     editor : Editor
     editor.workspace.lock_fd = -1
     defer editor.release()
@@ -142,15 +152,108 @@ exercise_completion :: fn () -> void\string {
     editor.execute(^scratch, Command.Tab)?
     assert bytes_text(editor.prompt) == "e none"
     assert bytes_text(editor.message) == "No filename match"
+    appeared := scratch.pr($"{folder}/none")
+    atomic_write(^scratch, appeared, "appeared", no)?
+    editor.execute(^scratch, Command.Tab)?
+    assert editor.message.count == 0
+    -- A fresh Tab after no matches refreshes discovery.
+    assert syscall(SYS_UNLINK, appeared.c_string().as(usize).as(u64), 0, 0, 0, 0, 0) == 0
     editor.prompt_open(':'.as(u32), initial = "e al")
     editor.execute(^scratch, Command.Tab)?
     editor.execute(^scratch, Command.Tab)?
     assert editor.completion.selected == 1
     editor.prompt_insert("h")
-    assert !editor.completion.active
+    assert editor.completion.active && editor.completion.items.count == 1
+    assert bytes_text(editor.prompt) == "e alph"
+    editor.prompt_insert("z")
+    assert editor.completion.active && editor.completion.items.count == 0
+    editor.execute(^scratch, Command.Tab)?
+    editor.execute(^scratch, Command.Move { direction: Direction.Down count: 1 extend: no })?
+    editor.execute(^scratch, Command.InsertText("\n"))?
+    assert editor.prompt_kind == ':'.as(u32) && bytes_text(editor.prompt) == "e"
+        +" alphz"
+
+    editor.prompt_delete(yes)
+    assert editor.completion.active && editor.completion.items.count == 1
+    editor.prompt_delete(yes)
+    assert bytes_text(editor.prompt) == "e alp" && editor.completion.items.count == 2
+    editor.prompt_delete(yes)
+    editor.prompt_delete(yes)
+    editor.prompt_delete(yes)
+    assert bytes_text(editor.prompt) == "e " && editor.completion.items.count == 7
     editor.prompt_open(':'.as(u32), initial = "w spa")
     editor.execute(^scratch, Command.Tab)?
     assert bytes_text(editor.prompt) == "w space name "
+}
+
+exercise_commands :: fn () -> void\string {
+    editor : Editor
+    editor.workspace.lock_fd = -1
+    defer editor.release()
+    scratch : arena
+    defer scratch.done()
+    editor.workspace.add_empty()
+    own(^editor.workspace.folder, "/no-such-completion-folder")
+    editor.prompt_open(':'.as(u32))
+    editor.execute(^scratch, Command.Tab)?
+    assert editor.completion.active && editor.completion.items.count == 12
+    assert bytes_text(editor.prompt) == ""
+    editor.prompt_insert("r")
+    assert bytes_text(editor.prompt) == "r"
+    assert editor.completion.active && editor.completion.items.count == 1
+    editor.prompt_insert("z")
+    assert editor.completion.active && editor.completion.items.count == 0
+    editor.execute(^scratch, Command.Tab)?
+    editor.execute(^scratch, Command.Move { direction: Direction.Up count: 1 extend: no })?
+    editor.execute(^scratch, Command.InsertText("\n"))?
+    assert bytes_text(editor.prompt) == "rz" && editor.prompt_kind == ':'.as(u32)
+    editor.prompt_delete(yes)
+    assert editor.completion.active && editor.completion.items.count == 1
+    editor.execute(^scratch, Command.InsertText("\n"))?
+    assert bytes_text(editor.prompt) == "replace" && editor.prompt_kind == ':'.as(u32)
+    editor.prompt_open(':'.as(u32), initial = "  rep")
+    editor.execute(^scratch, Command.Tab)?
+    assert bytes_text(editor.prompt) == "  replace" && !editor.completion.active
+    editor.prompt_open(':'.as(u32), initial = "bu")
+    editor.execute(^scratch, Command.Tab)?
+    assert bytes_text(editor.prompt) == "buffer" && editor.completion.items.count == 2
+    editor.prompt_insert("s")
+    assert editor.completion.active && editor.completion.items.count == 1
+    editor.execute(^scratch, Command.InsertText("\n"))?
+    assert editor.prompt_kind == ':'.as(u32)
+    editor.execute(^scratch, Command.InsertText("\n"))?
+    assert editor.prompt_kind == 0 && editor.workspace.documents.count == 1
+    editor.prompt_open(':'.as(u32), initial = "q")
+    editor.execute(^scratch, Command.Tab)?
+    editor.execute(^scratch, Command.Move { direction: Direction.Down count: 1 extend: no })?
+    editor.execute(^scratch, Command.InsertText("\n"))?
+    assert bytes_text(editor.prompt) == "q!" && !editor.quit
+    editor.execute(^scratch, Command.Escape)?
+    assert !editor.quit && editor.workspace.documents.count == 1
+    editor.prompt_open(':'.as(u32), initial = "e")
+    editor.execute(^scratch, Command.Tab)?
+    assert bytes_text(editor.prompt) == "e" && !editor.completion.active
+    editor.prompt_open(':'.as(u32), initial = "zzz")
+    editor.execute(^scratch, Command.Tab)?
+    assert bytes_text(editor.message) == "No command match"
+    assert bytes_text(editor.prompt) == "zzz"
+    editor.prompt_open(':'.as(u32), initial = "bu")
+    editor.execute(^scratch, Command.Tab)?
+    editor.prompt_insert(" 1")
+    assert !editor.completion.active  -- Leave command-name completion for numeric arguments.
+    assert editor.workspace.active_document().text.text() == ""
+    assert editor.workspace.active_document().text.history.count == 0
+}
+
+test "command completion lists, filters, accepts and cancels without executing commands or touching files" {
+    on exercise_commands() {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
 }
 
 test "filename completion scans, navigates, accepts and cancels without losing open buffers or filename whitespace" {
