@@ -30,6 +30,8 @@ document_match :: fn (doc         : ^Document,
 pub Editor :: plex {
     workspace        Workspace
     completion       PromptCompletion
+    confirmation     ReplaceConfirmation
+    search_decoded   [..]u8
     clipboard        Clipboard
     prompt           [..]u8
     prompt_kind      u32
@@ -51,6 +53,8 @@ impl Editor {
     pub release :: fn (self: ^Self) {
         self.workspace.release()
         self.completion.release()
+        self.confirmation.release()
+        self.search_decoded.free()
         self.clipboard.bytes.free()
         self.prompt.free()
         self.last_search.free()
@@ -162,6 +166,19 @@ impl Editor {
     }
     pub search_query :: fn (self: ^Self) -> string {
         query := bytes_text(self.prompt)
+        on self.prompt_kind == '/'.as(u32) => {
+            replacing := slash_separator(query)
+            on replacing => [end] {
+                query = query[.. end]
+            }
+            on query.count == 0 => return on replacing != nil {
+                yes => "" else => bytes_text(self.last_search)
+            }
+            self.search_decoded.resize_undefined_to(query.count)
+            used := decode_slashes(query, self.search_decoded[..])
+            self.search_decoded.resize_undefined_to(used)
+            return bytes_text(self.search_decoded)
+        }
         on query.count > 0 && query[0].as(u32) == self.prompt_kind => query = query[1 ..]
         else on query.count > 1 && query[0] == '\\' && query[1].as(u32) == self.prompt_kind => query = query[1 ..]
         return on query.count > 0 {
@@ -174,8 +191,10 @@ impl Editor {
         doc := ^self.workspace.active_document().text
         view^ = self.search_saved
         view.selection.collapse(view.selection.active)
+        self.message.clear()
         origin := view.selection.active
-        on self.prompt.count > 0 && self.prompt[0].as(u32) == self.prompt_kind => {
+        on (self.prompt_kind == '/'.as(u32) && slash_separator(bytes_text(self.prompt)) != nil) => origin = doc.line_start(0)
+        on self.prompt_kind == '?'.as(u32) && self.prompt.count > 0 && self.prompt[0] == '?' => {
             origin = on self.prompt_kind == '/'.as(u32) {
                 yes => 0 else => doc.text().count
             }
@@ -243,6 +262,179 @@ impl Editor {
         self.prompt_caret = start
         on filtering => self.refilter_completion()
         on self.prompt_kind != ':'.as(u32) => self.preview_search()
+    }
+    pub finish_slash :: fn (self: ^Self, scratch: ^arena) -> void\string {
+        on self.prompt_kind != '/'.as(u32) || slash_separator(bytes_text(self.prompt)) == nil => {
+            self.finish_search()?
+            return
+        }
+        parsed := parse_replace(scratch, scratch.pr($"/{bytes_text(self.prompt)}"))?
+        doc := ^self.workspace.active_document().text
+        view := ^self.workspace.active_view().interaction
+        view^ = self.search_saved
+        view.repair(doc)
+        view.selection.collapse(view.selection.active)
+        before := view.selection.active
+        self.prompt_kind = 0
+        self.prompt.clear()
+        self.highlights = no
+        self.active_match = nil
+        own(^self.last_search, parsed.needle)
+        on parsed.needle == parsed.replacement => {
+            self.tell("No change")
+            return
+        }
+        on parsed.confirm => {
+            self.confirmation.reset()
+            own(^self.confirmation.needle, parsed.needle)
+            own(^self.confirmation.replacement, parsed.replacement)
+            replacement_matches(^self.confirmation.matches, doc.text(), parsed.needle, minimum = doc.line_start(0))
+            on self.confirmation.matches.count == 0 => {
+                self.tell("No match")
+                return
+            }
+            self.confirmation.document_id = self.workspace.active_view().document_id
+            self.confirmation.invoking_view = self.workspace.surface.view_id
+            self.confirmation.history_base = doc.applied
+            self.confirmation.expected_revision = doc.storage.revision()
+            self.confirmation.caret_before = before
+            self.confirmation.active = yes
+            self.workspace.active_view().keyboard.suppress_text = no
+            self.show_confirmation(scratch)
+            return
+        }
+        on plan_replacement(scratch, doc.text(), parsed, minimum = doc.line_start(0)) {
+            plan => {
+                applied := doc.applied
+                on doc.edit(plan.range, plan.text) {
+                    change => {
+                        on change.before_revision != change.after_revision => self.notify_others(self.workspace.active_view().document_id, self.workspace.surface.view_id, change)
+                    }
+                    _error! => return "Replacement is not valid UTF-8"!
+                }
+                view.place(doc, plan.range.start + plan.text.count, no)
+                on doc.applied > applied => {
+                    doc.history[doc.applied - 1].caret_before = before
+                    doc.history[doc.applied - 1].caret_after = view.selection.active
+                }
+                self.changed()
+                self.tell(scratch.pr($"Replaced {plan.count} match(es)"))
+            }
+            else => self.tell("No match")
+        }
+    }
+    pub show_confirmation :: fn (self: ^Self, scratch: ^arena) {
+        position := self.confirmation.position()
+        doc := ^self.workspace.active_document().text
+        view := ^self.workspace.active_view().interaction
+        view.place(doc, position, no)
+        view.selection.anchor = position + self.confirmation.needle.count
+        self.highlights = yes
+        self.active_match = position
+        self.tell(scratch.pr($"Replace {self.confirmation.index + 1}/{self.confirmation.matches.count}? Y replace · N skip · A rest · Esc stop"))
+    }
+    pub finish_confirmation :: fn (self: ^Self, scratch: ^arena, reason: string) {
+        count := self.confirmation.approved
+        on self.workspace.surface.view_id == self.confirmation.invoking_view && self.workspace.active_view().document_id == self.confirmation.document_id => {
+            doc := ^self.workspace.active_document().text
+            view := ^self.workspace.active_view().interaction
+            view.repair(doc)
+            view.selection.collapse(view.selection.active)
+            on self.confirmation.grouped && doc.applied == self.confirmation.history_base + 1 && doc.storage.revision() == self.confirmation.expected_revision => doc.history[doc.applied - 1].caret_after = view.selection.active
+        }
+        self.confirmation.reset()
+        self.highlights = no
+        self.active_match = nil
+        self.workspace.active_view().keyboard.suppress_text = no
+        self.tell(scratch.pr($"{reason} {count} match(es)"))
+    }
+    pub confirm_replace :: fn (self: ^Self, scratch: ^arena, answer: u32) -> void\string {
+        on !self.confirmation.active => return
+        on answer == 27 => {
+            self.finish_confirmation(scratch, "Stopped after")
+            return
+        }
+        on answer != 'y'.as(u32) && answer != 'Y'.as(u32) && answer != 'n'.as(u32) && answer != 'N'.as(u32) && answer != 'a'.as(u32) && answer != 'A'.as(u32) => return
+        on self.workspace.surface.view_id != self.confirmation.invoking_view || self.workspace.active_view().document_id != self.confirmation.document_id || self.workspace.active_document().text.storage.revision() != self.confirmation.expected_revision => {
+            self.finish_confirmation(scratch, "Document changed; stopped after")
+            return
+        }
+        all := answer == 'a'.as(u32) || answer == 'A'.as(u32)
+        skip := answer == 'n'.as(u32) || answer == 'N'.as(u32)
+        on all => {
+            doc := ^self.workspace.active_document().text
+            parsed := ReplaceCommand {
+                needle: bytes_text(self.confirmation.needle) replacement: bytes_text(self.confirmation.replacement) confirm: no
+            }
+            on plan_replacement(scratch, doc.text(), parsed, minimum = self.confirmation.position()) => [plan] {
+                change := on self.confirmation.grouped {
+                    yes => doc.extend_forward_edit(plan.range, plan.text)
+                    else => doc.edit(plan.range, plan.text)
+                }
+                on change {
+                    edited => {
+                        on edited.before_revision != edited.after_revision => {
+                            self.notify_others(self.confirmation.document_id, self.confirmation.invoking_view, edited)
+                            self.confirmation.grouped = yes
+                            doc.history[doc.applied - 1].caret_before = self.confirmation.caret_before
+                            doc.history[doc.applied - 1].caret_after = plan.range.start + plan.text.count
+                        }
+                    }
+                    _error! => {
+                        self.finish_confirmation(scratch, "Replacement failed "
+                            +"after")
+                        return "Replacement failed"!
+                    }
+                }
+                self.confirmation.approved += plan.count
+                self.workspace.active_view().interaction.place(doc, plan.range.start + plan.text.count, no)
+                self.confirmation.expected_revision = doc.storage.revision()
+                self.changed()
+            }
+            self.finish_confirmation(scratch, "Replaced")
+            return
+        }
+        for self.confirmation.index < self.confirmation.matches.count {
+            position := self.confirmation.position()
+            doc := ^self.workspace.active_document().text
+            view := ^self.workspace.active_view().interaction
+            on !skip => {
+                range := TextRange {
+                    start: position end: position + self.confirmation.needle.count
+                }
+                change := on self.confirmation.grouped {
+                    yes => doc.extend_forward_edit(range, bytes_text(self.confirmation.replacement))
+                    else => doc.edit(range, bytes_text(self.confirmation.replacement))
+                }
+                on change {
+                    edited => {
+                        on edited.before_revision != edited.after_revision => {
+                            self.notify_others(self.confirmation.document_id, self.confirmation.invoking_view, edited)
+                            self.confirmation.grouped = yes
+                            doc.history[doc.applied - 1].caret_before = self.confirmation.caret_before
+                            doc.history[doc.applied - 1].caret_after = position + self.confirmation.replacement.count
+                        }
+                    }
+                    _error! => {
+                        self.finish_confirmation(scratch, "Replacement failed "
+                            +"after")
+                        return "Replacement failed"!
+                    }
+                }
+                self.confirmation.approved += 1
+                self.confirmation.removed_total += self.confirmation.needle.count
+                self.confirmation.added_total += self.confirmation.replacement.count
+                view.place(doc, position + self.confirmation.replacement.count, no)
+                self.confirmation.expected_revision = doc.storage.revision()
+                self.changed()
+            }
+            self.confirmation.index += 1
+            on !all => break
+        }
+        on self.confirmation.index == self.confirmation.matches.count {
+            yes => self.finish_confirmation(scratch, "Replaced")
+            else => self.show_confirmation(scratch)
+        }
     }
     pub finish_search :: fn (self: ^Self) -> void\string {
         query := self.search_query()
@@ -391,26 +583,6 @@ impl Editor {
             self.message.clear()
             return
         }
-        on verb == "replace" => {
-            parsed := parse_replace(scratch, filename)?
-            entry := self.workspace.active_document()
-            doc := ^entry.text
-            view := ^self.workspace.active_view().interaction
-            on plan_replacement(scratch, doc.text(), parsed, view.selection.active, minimum = doc.line_start(0)) {
-                plan => {
-                    on doc.edit(plan.range, plan.text) {
-                        change => self.notify_others(self.workspace.active_view().document_id, self.workspace.surface.view_id, change)
-                        _error! => return "Replacement is not valid UTF-8"!
-                    }
-                    view.place(doc, plan.range.start + plan.text.count, no)
-                    own(^self.last_search, parsed.needle)
-                    self.changed()
-                    self.tell(scratch.pr($"Replaced {plan.count} match(es)"))
-                }
-                else => self.tell("No match")
-            }
-            return
-        }
         on verb == "buffers" => {
             listing := ""
             active := self.workspace.active_view().document_id
@@ -540,6 +712,17 @@ impl Editor {
         }
     }
     pub execute :: fn (self: ^Self, scratch: ^arena, command: Command) -> void\string {
+        on self.confirmation.active => {
+            on command {
+                Escape => self.confirm_replace(scratch, 27)?
+                InsertText(text) => {
+                    on text.count == 1 => self.confirm_replace(scratch, text[0].as(u32))?
+                }
+                else => {
+                }
+            }
+            return
+        }
         text_view := self.workspace.active_view()
         view := ^text_view.interaction
         entry := self.workspace.active_document()
@@ -607,7 +790,7 @@ impl Editor {
                     on text == "\n" {
                         yes => {
                             on self.prompt_kind == ':'.as(u32) {
-                                yes => self.command_line(scratch)? else => self.finish_search()?
+                                yes => self.command_line(scratch)? else => self.finish_slash(scratch)?
                             }
                         }
                         else => self.prompt_insert(text)
@@ -893,6 +1076,10 @@ impl Editor {
         }
     }
     pub key :: fn (self: ^Self, scratch: ^arena, key: TermKeyEvent) {
+        on self.confirmation.active => {
+            on key.scan_code == TermScanCode.Escape && key.action != TermKeyAction.Release => self.finish_confirmation(scratch, "Stopped after")
+            return
+        }
         on self.message.count > 0 && self.prompt_kind == 0 && (key.modifiers & TERM_MOD_ALT) != 0 => {
             on key.scan_code {
                 PageUp => {
@@ -915,6 +1102,14 @@ impl Editor {
         }
     }
     pub character :: fn (self: ^Self, scratch: ^arena, rune: u32) {
+        on self.confirmation.active => {
+            on self.confirm_replace(scratch, rune) {
+                _success => {
+                }
+                error! => self.tell(error)
+            }
+            return
+        }
         text_view := self.workspace.active_view()
         suppressed := text_view.keyboard.suppress_text
         state := text_view.interaction.state

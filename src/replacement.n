@@ -1,10 +1,9 @@
 use buffer
-use search
 
 pub ReplaceCommand :: plex {
     needle      string
     replacement string
-    all         bool
+    confirm     bool
 }
 
 pub Replacement :: plex {
@@ -13,74 +12,94 @@ pub Replacement :: plex {
     count usize
 }
 
--- Delimiters and backslashes can be escaped; all other bytes are literal. In
--- particular, a backslash-n is not a request to rewrite line endings.
-pub parse_replace :: fn (scratch: ^arena, spec: string) -> ReplaceCommand\string {
-    on spec.count < 3 => return "Use :replace /old/new/ or :replace /old/new/g"!
-    delimiter := spec[0]
-    on delimiter < 33 ||
-        delimiter > 126 ||
-        delimiter == '\\' ||
-        (delimiter >= '0' && delimiter <= '9') ||
-        (delimiter >= 'a' && delimiter <= 'z') ||
-        (delimiter >= 'A' && delimiter <= 'Z') => return "Replacement needs a "
-        +"punctuation delimiter"!
-    bytes              := scratch.alloc_bytes(spec.count)
-    parts  : [2]string
-    field  : usize     = 0
-    start  : usize     = 0
-    used   : usize     = 0
-    offset : usize     = 1
+-- The prompt omits its opening slash. Only an unescaped slash switches search
+-- to replacement; \/ and \\ retain their ordinary literal meanings.
+pub slash_separator :: fn (text: string) -> ?usize {
+    i : usize = 0
+    for i < text.count {
+        on text[i] == '\\' && i + 1 < text.count && (text[i + 1] == '/' || text[i + 1] == '\\') {
+            yes => i += 2
 
-    for offset < spec.count && field < 2 {
-        byte := spec[offset]
-
-        offset += 1
-        on byte == delimiter => {
-            parts[field] = bytes[start..used].as(string)
-            field += 1
-            start = used
-            again
+            else => {
+                on text[i] == '/' => return i
+                i += 1
+            }
         }
-        on byte == '\\' &&
-            offset < spec.count &&
-            (spec[offset] == delimiter || spec[offset] == '\\') => {
-            byte   = spec[offset]
-            offset += 1
-        }
-        bytes[used] = byte
-        used += 1
     }
-    on field != 2 ||
-        (spec[offset..] != "" && spec[offset..] != "g") => return "Use "
-        +":replace /old/new/ or :replace /old/new/g"!
-    on parts[0].count == 0 => return "Replacement needs a non-empty search term"!
-    return ReplaceCommand { needle: parts[0] replacement: parts[1] all: spec[offset..] == "g" }
+    return nil
 }
 
--- Plan a single contiguous operation spanning only the affected matches. All
--- matches are non-overlapping; replacement text is never recursively searched.
-pub plan_replacement :: fn (scratch: ^arena, text: string, command: ReplaceCommand, origin: usize, minimum: usize = 0) -> ?Replacement {
-    on command.needle.count == 0 || minimum > text.count => return nil
+pub decode_slashes :: fn (text: string, output: []u8) -> usize {
+    i    : usize = 0
+    used : usize = 0
+
+    for i < text.count {
+        on text[i] == '\\' &&
+            i + 1 < text.count &&
+            (text[i + 1] == '/' || text[i + 1] == '\\') => i += 1
+        output[used] = text[i]
+        used += 1
+        i    += 1
+    }
+    return used
+}
+
+part :: fn (scratch: ^arena, text: string) -> string {
+    bytes := scratch.alloc_bytes(text.count)
+    used  := decode_slashes(text, bytes)
+
+    return bytes[..used].as(string)
+}
+
+pub parse_replace :: fn (scratch: ^arena, spec: string) -> ReplaceCommand\string {
+    on spec.count < 2 || spec[0] != '/' => return "Use /old/new or /old/new/c"!
+    body := spec[1..]
+    split := on slash_separator(body) {
+        value  => value
+        else   => return "Use /old/new or /old/new/c"!
+    }
+    needle := part(scratch, body[..split])
+    on needle.count == 0 => return "Replacement needs a non-empty search term; "
+        +"escape a literal slash with \\/"!
+    tail    := body[split + 1..]
+    confirm := no
+
+    on slash_separator(tail) => [end] {
+        flag := tail[end + 1..]
+        on flag != "" &&
+            flag != "c" => return "Only c confirmation is supported; "
+            +"replace-all is already the default"!
+        confirm = flag == "c"
+        tail    = tail[..end]
+    }
+    return ReplaceCommand { needle replacement: part(scratch, tail) confirm }
+}
+
+pub replacement_matches :: fn (matches : ^[..]usize,
+                               text    : string,
+                               needle  : string,
+                               minimum : usize = 0) {
+    matches.clear()
+    on needle.count == 0 || minimum > text.count => return
+    cursor := minimum
+    for cursor <= text.count && needle.count <= text.count - cursor {
+        on text[cursor..cursor + needle.count] == needle {
+            yes => {
+                matches.push(cursor)
+                cursor += needle.count
+            }
+
+            else => cursor += 1
+        }
+    }
+}
+
+-- A single contiguous operation spans only the affected original matches.
+-- Replacement text is never recursively searched.
+pub plan_replacement :: fn (scratch: ^arena, text: string, command: ReplaceCommand, minimum: usize = 0) -> ?Replacement {
     matches: [..]usize
     defer matches.free()
-    cursor := on command.all {
-        yes => minimum else => on origin >= minimum {
-            yes => origin else => minimum
-        }
-    }
-    for cursor <= text.count {
-        on find_literal(text[minimum ..], command.needle, cursor - minimum, no) {
-            relative => {
-                position := relative + minimum
-                on command.all && position < cursor => break
-                matches.push(position)
-                on !command.all => break
-                cursor = position + command.needle.count
-            }
-            else => break
-        }
-    }
+    replacement_matches(^matches, text, command.needle, minimum = minimum)
     on matches.count == 0 => return nil
     start := matches[0]
     end := matches[matches.count - 1] + command.needle.count
@@ -102,4 +121,45 @@ pub plan_replacement :: fn (scratch: ^arena, text: string, command: ReplaceComma
         }
         text: payload.as(string) count: matches.count
     }
+}
+
+pub ReplaceConfirmation :: plex {
+    needle            [..]u8
+    replacement       [..]u8
+    matches           [..]usize
+    index             usize
+    approved          usize
+    removed_total     usize
+    added_total       usize
+    document_id       usize
+    invoking_view     usize
+    history_base      usize
+    expected_revision u64
+    caret_before      usize
+    grouped           bool
+    active            bool
+}
+
+impl ReplaceConfirmation {
+
+    pub reset :: fn (self: ^Self) {
+        self.active = no
+        self.index = 0
+        self.approved = 0
+        self.removed_total = 0
+        self.added_total = 0
+        self.grouped = no
+        self.matches.clear()
+        self.needle.clear()
+        self.replacement.clear()
+    }
+
+    pub release :: fn (self: ^Self) {
+        self.matches.free()
+        self.needle.free()
+        self.replacement.free()
+    }
+
+    pub position :: fn (self: ^Self) => self.matches[self.index] - self.removed_total + self.added_total
+
 }

@@ -306,6 +306,80 @@ def symlinks_and_save_as(binary, folder):
         session.quit()
 
 
+def slash_replacement(binary, folder):
+    path = folder / "confirm.txt"
+    original = b"one one one one\nsrc/old\n"
+    path.write_bytes(original)
+    with Session(binary, folder, "-r", path.name) as session:
+        changed = session.send("/one/XX/c\r")
+        assert b"Replace" in changed
+        session.send("i\r")  # unrelated keys cannot edit or accept an answer
+        session.send("n")
+        session.send("y")
+        session.send(b"\x13")  # saving is blocked until confirmation stops
+        assert path.read_bytes() == original
+        session.send("Y")
+        session.send(b"\x1b", 0.15)
+        session.send(b"\x13")
+        partial = b"one XX XX one\nsrc/old\n"
+        assert path.read_bytes() == partial
+        session.send(b"\x1a\x13")
+        assert path.read_bytes() == original, "partial confirmation was not one undo unit"
+        session.send(b"\x12\x13")
+        assert path.read_bytes() == partial
+        session.normal()
+        session.send("/one/Z/c\r")
+        session.send("A")
+        session.send(b"\x13")
+        changed_all = b"Z XX XX Z\nsrc/old\n"
+        assert path.read_bytes() == changed_all
+        session.normal()
+        session.send("/src\\/old\r")
+        session.send(b"\x13")
+        assert path.read_bytes() == changed_all, "escaped slash search became replacement"
+        session.normal()
+        session.send("/src\\/old/new\r")
+        session.send(b"\x13")
+        assert path.read_bytes() == b"Z XX XX Z\nnew\n"
+        session.normal()
+        session.send("/XX/wrong/g\r")
+        session.normal()
+        session.send(b"\x13")
+        assert path.read_bytes() == b"Z XX XX Z\nnew\n", "obsolete g flag was accepted"
+        session.quit()
+    unicode_path = folder / "unicode.txt"
+    original_unicode = "\ufeffé-é-é\r\n".encode()
+    unicode_path.write_bytes(original_unicode)
+    with Session(binary, folder, "-r", unicode_path.name) as session:
+        session.send("/é/長/c\r")
+        session.send("nYa")
+        session.send(b"\x13")
+        assert unicode_path.read_bytes() == "\ufeffé-長-長\r\n".encode()
+        session.send(b"\x1a\x13")
+        assert unicode_path.read_bytes() == original_unicode
+        session.quit()
+
+
+def confirmation_recovery(binary, folder):
+    path = folder / "recover-confirm.txt"
+    original = b"a a a a"
+    path.write_bytes(original)
+    with Session(binary, folder, "-r", path.name) as session:
+        session.send("/a/XX/c\r")
+        session.send("yy")
+        os.kill(session.process.pid, signal.SIGTERM)
+        session.wait()
+    assert path.read_bytes() == original
+    with Session(binary, folder) as session:
+        session.send(b"\x13")
+        assert path.read_bytes() == b"XX XX a a"
+        session.send(b"\x1a\x13")
+        assert path.read_bytes() == original, "partial grouped checkpoint did not undo as one operation"
+        session.send(b"\x12\x13")
+        assert path.read_bytes() == b"XX XX a a"
+        session.quit()
+
+
 def search_replace_and_buffers(binary, folder):
     path = folder / "words.txt"
     path.write_bytes(b"one two ONE\r\nthree one")
@@ -316,13 +390,15 @@ def search_replace_and_buffers(binary, folder):
         session.send(b"\x13")
         original = b"Xone two ONE\r\nthree one"
         assert path.read_bytes() == original, f"cancelled search failed to restore the caret: {path.read_bytes()!r}"
-        session.command("replace /one/word/g")
+        session.normal()
+        session.send("/one/word\r")
         session.send(b"\x13")
         assert path.read_bytes() == b"Xword two ONE\r\nthree word"
         session.send(b"\x1a")
         session.send(b"\x13")
         assert path.read_bytes() == original, "replace-all was not a single undo operation"
-        session.command("replace /one//g")
+        session.normal()
+        session.send("/one/\r")
         session.send(b"\x13")
         assert path.read_bytes() == b"X two ONE\r\nthree "
         session.quit()
@@ -554,17 +630,17 @@ def command_completion(binary, folder):
     (folder / "alpha.txt").write_bytes(b"alpha")
     (folder / "alpine.txt").write_bytes(b"alpine")
     with Session(binary, folder, "-r", "base.txt") as session:
-        changed = session.send(":rep\t")
-        assert b"replace" in changed and b"\x1b[24;" in changed
+        changed = session.send(":ww\t")
+        assert b"ww" in changed and b"\x1b[24;" in changed
         session.normal()
         session.send(":\t")
-        changed = session.send("r")
+        changed = session.send("e")
         assert b"\x1b[24;" in changed, "command-entry line moved away from the bottom"
         session.send("z")  # zero matches must not execute or dismiss the list
         session.send("\r")
         assert session.process.poll() is None
         session.send(b"\x7f")
-        session.send("\r")  # accept replace; Escape cancels the still-open prompt
+        session.send("\r")  # accept e; Escape cancels the still-open prompt
         session.send(b"\x1b", 0.15)
         session.normal()
         session.send(":bu\t")
@@ -810,7 +886,7 @@ def main():
     unexpected = {name for name in names if name not in allowed and not Path(name).name.startswith("ld-linux-")}
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
     checks = [recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
-              search_replace_and_buffers, byte_paths_and_checkpoint_failures,
+              search_replace_and_buffers, slash_replacement, confirmation_recovery, byte_paths_and_checkpoint_failures,
               second_instance, crash_and_signals, undo_caret, word_delete, duplicate_selection, command_completion, live_completion_filter, file_completion, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
     selected = [check for check in checks if args.filter in check.__name__]
     if not selected:

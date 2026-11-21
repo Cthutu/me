@@ -196,24 +196,24 @@ exercise_commands :: fn () -> void\string {
     own(^editor.workspace.folder, "/no-such-completion-folder")
     editor.prompt_open(':'.as(u32))
     editor.execute(^scratch, Command.Tab)?
-    assert editor.completion.active && editor.completion.items.count == 12
+    assert editor.completion.active && editor.completion.items.count == 11
     assert bytes_text(editor.prompt) == ""
-    editor.prompt_insert("r")
-    assert bytes_text(editor.prompt) == "r"
+    editor.prompt_insert("e")
+    assert bytes_text(editor.prompt) == "e"
     assert editor.completion.active && editor.completion.items.count == 1
     editor.prompt_insert("z")
     assert editor.completion.active && editor.completion.items.count == 0
     editor.execute(^scratch, Command.Tab)?
     editor.execute(^scratch, Command.Move { direction: Direction.Up count: 1 extend: no })?
     editor.execute(^scratch, Command.InsertText("\n"))?
-    assert bytes_text(editor.prompt) == "rz" && editor.prompt_kind == ':'.as(u32)
+    assert bytes_text(editor.prompt) == "ez" && editor.prompt_kind == ':'.as(u32)
     editor.prompt_delete(yes)
     assert editor.completion.active && editor.completion.items.count == 1
     editor.execute(^scratch, Command.InsertText("\n"))?
-    assert bytes_text(editor.prompt) == "replace" && editor.prompt_kind == ':'.as(u32)
-    editor.prompt_open(':'.as(u32), initial = "  rep")
+    assert bytes_text(editor.prompt) == "e" && editor.prompt_kind == ':'.as(u32)
+    editor.prompt_open(':'.as(u32), initial = "  wq")
     editor.execute(^scratch, Command.Tab)?
-    assert bytes_text(editor.prompt) == "  replace" && !editor.completion.active
+    assert bytes_text(editor.prompt) == "  wq" && !editor.completion.active
     editor.prompt_open(':'.as(u32), initial = "bu")
     editor.execute(^scratch, Command.Tab)?
     assert bytes_text(editor.prompt) == "buffer" && editor.completion.items.count == 2

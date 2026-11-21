@@ -48,7 +48,10 @@ impl Document {
     -- Rebuild after validated history restoration; ordinary edits use edit.
     pub refresh :: fn (self: ^Self) {
         self.content.resize_undefined_to(self.storage.length())
-        on self.storage.copy_range({ start: 0 end: self.storage.length() }, self.content[..]) {
+        on self.storage.copy_range({
+            start: 0 end: self.storage.length()
+        }
+        , self.content[..]) {
             _count => {
             }
 
@@ -58,10 +61,7 @@ impl Document {
         -- A UTF-8 BOM is preserved in storage/history but is not editable
         -- line content. All ordinary view commands begin after the preamble.
         preamble : usize = 0
-        on self.content.count >= 3 &&
-            self.content[0] == 0xef &&
-            self.content[1] == 0xbb &&
-            self.content[2] == 0xbf => preamble = 3
+        on self.content.count >= 3 && self.content[0] == 0xef && self.content[1] == 0xbb && self.content[2] == 0xbf => preamble = 3
         self.lines.push(preamble)
         for index, byte in self.content {
             on byte^ == '\n' => self.lines.push(index + 1)
@@ -69,7 +69,10 @@ impl Document {
     }
 
     pub load :: fn (self: ^Self, text: string) -> void\EditError {
-        _ := self.storage.replace({ start: 0 end: self.storage.length() }, text)?
+        _ := self.storage.replace({
+            start: 0 end: self.storage.length()
+        }
+        , text)?
         for record in self.history {
             record.removed.free()
             record.added.free()
@@ -81,13 +84,13 @@ impl Document {
 
     pub line_at :: fn (self: ^Self, position: usize) -> usize {
         lower : usize = 0
-        upper         := self.lines.count
+        upper := self.lines.count
 
         for lower + 1 < upper {
             middle := (lower + upper) / 2
             on self.lines[middle] <= position {
-                yes   => lower = middle
-                else  => upper = middle
+                yes => lower = middle
+                else => upper = middle
             }
         }
         return lower
@@ -99,24 +102,56 @@ impl Document {
 
     pub line_end :: fn (self: ^Self, line: usize) -> usize {
         end := on line + 1 < self.lines.count {
-            yes   => self.lines[line + 1] - 1
-            else  => self.content.count
+            yes => self.lines[line + 1] - 1
+            else => self.content.count
         }
-        on end > self.lines[line] &&
-            self.content[end - 1] == '\r' &&
-            end < self.content.count => end -= 1
+        on end > self.lines[line] && self.content[end - 1] == '\r' && end < self.content.count => end -= 1
         return end
     }
 
     pub first_text :: fn (self: ^Self, line: usize) -> usize {
         position := self.line_start(line)
-        end      := self.line_end(line)
+        end := self.line_end(line)
 
         for position < end &&
             is_whitespace_character(self.text(), position) {
             position = next_character(self.text(), position)
         }
         return position
+    }
+
+    -- Extend the last undo unit with a disjoint edit to its right. Each change
+    -- is still reported separately to views, while every checkpoint contains a
+    -- complete, replayable history record (no open transaction to lose on exit).
+    pub extend_forward_edit :: fn (self: ^Self, range: TextRange, text: string) -> TextChange\EditError {
+        on self.applied == 0 || self.applied != self.history.count => return InvalidRange!
+        record := ^self.history[self.applied - 1]
+        previous_end := record.start + record.added.count
+        on range.start < previous_end || range.start > range.end || range.end > self.content.count => return InvalidRange!
+        gap := range.start - previous_end
+        removed: [..]u8
+        added: [..]u8
+        transferred := no
+        defer on !transferred => {
+            removed.free()
+            added.free()
+        }
+        removed.resize_undefined_to(record.removed.count + gap + range.end - range.start)
+        removed[.. record.removed.count] = record.removed[..]
+        removed[record.removed.count ..] = self.content[previous_end .. range.end]
+        added.resize_undefined_to(record.added.count + gap + text.count)
+        added[.. record.added.count] = record.added[..]
+        added[record.added.count .. record.added.count + gap] = self.content[previous_end .. range.start]
+        added[record.added.count + gap ..] = text.as([]u8)
+        change := self.storage.replace(range, added[record.added.count + gap ..].as(string))?
+        on change.before_revision == change.after_revision => return change
+        record.removed.free()
+        record.added.free()
+        record.removed = removed
+        record.added = added
+        transferred = yes
+        self.refresh()
+        return change
     }
 
 }

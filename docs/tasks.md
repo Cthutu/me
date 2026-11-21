@@ -76,6 +76,26 @@ groups on both debug and release passed. Native checks also prove snapshot reuse
 fresh discovery on reopening, safe acceptance and no-match handling.
 
 
+## T2b — Second-slash replace-all and confirmation — completed
+
+- A second unescaped `/` switches forward search into replacement:
+  `/old/new` replaces all non-overlapping matches throughout the buffer.
+- Remove `:replace` and the `g` option; accept an optional closing slash.
+- `/old/new/c` confirms: Y replaces, N skips, A applies all remaining, Escape
+  stops while preserving approved edits. One complete/stopped operation is one undo.
+- Preserve literal/case-sensitive matching, escaping, BOM/endings and shared-view
+  semantic adjustment. Do not search newly inserted replacement text.
+- Ordinary `/term` remains search; literal slashes must be escaped. This
+  supersedes the old `//` forward-origin shortcut; `??` remains backward origin.
+- Preview/cancel/malformed input never edit the document. Checkpoints during
+  confirmation already contain a complete grouped history record.
+- Implementation safety: other commands are blocked during confirmation; abort
+  on unexpected document revision changes. Stop confirmation before saving.
+- Verified: 28 project native tests across 17 files and all 22 PTY scenario
+  groups on debug and release. Coverage includes partial-history codec/recovery,
+  shared views, original-match semantics, skips, stopping, deletion, UTF-8/BOM/
+  line endings and single undo/redo. Installed-binary checks run at completion.
+
 ## Agreed MS2 queue — not started
 
 The following tasks were explicitly accepted after T1/T2. This is the intended

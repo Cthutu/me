@@ -734,12 +734,14 @@ MS1; persist the layout actually supported by each milestone.
 
 - `/text`: forward from the current position.
 - `?text`: backward from the current position.
-- `//text`: forward from the start of the document.
+- Historical: `//text` meant forward from document start. Superseded by the
+  second-slash replacement decision below: use Ctrl+Home then `/text` instead.
 - `??text`: backward from the end of the document.
 - A backslash escape permits a literal leading delimiter in the query; exact
   escape parsing, including literal backslashes, still needs specification.
-- The first delimiter opens the prompt; a second leading delimiter selects the
-  alternate origin without requiring a key-sequence timeout (proposed mechanism).
+- The first delimiter opens the prompt. A second leading `?` selects the
+  alternate backward origin. An unescaped second `/` now selects replacement;
+  escape literal slashes in forward queries.
 - Later `n`/`p` operate from the current caret, rather than restarting at the
   explicit search origin.
 
@@ -1120,9 +1122,12 @@ and command reference, and [MS1 progress](ms1-progress.md) for verified gates.
   groups an exact Tab-sized space suffix at leading/trailing whitespace, without
   historical provenance tracking. No automatic indentation is performed.
 - **Search/replace:** literal, case-sensitive search and match selections follow
-  the agreed contract. `:replace /old/new/` adds one-occurrence replacement;
-  a trailing `g` replaces all non-overlapping matches as one history operation.
-  Delimiter/backslash escapes are lexical, not newline conversion syntax.
+  the agreed contract, as refined by the later second-slash decision: `/old/new`
+  replaces all non-overlapping matches in the whole buffer; `/old/new/c` confirms
+  using Y/N/A/Escape. Completed/partial approved replacements are one history
+  operation, valid at every checkpoint. `:replace`, `g`, and the old `//` forward
+  origin are removed. Slash/backslash escapes are lexical, not newline conversion
+  syntax; forward literal slash queries must escape them.
 - **External changes:** 250 ms polling, two stable metadata samples before a
   content read/reload. This is normally 0.5–0.75 seconds, not a hard latency
   guarantee. Ownership/mode/ACLs/xattrs are preserved on save or the save fails.

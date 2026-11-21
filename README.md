@@ -107,8 +107,11 @@ selection inserts below; with a selection, paste replaces precisely that range.
 ## Search and replacement
 
 - `/term` searches forwards; `?term` backwards, literally and case-sensitively.
-- `//term` starts at the document beginning; `??term` starts at its end.
-- Escape a leading delimiter with backslash, e.g. `/\/name` finds `/name`.
+- `??term` searches backwards from the document end. For forwards search from
+  the beginning, use Ctrl+Home before `/term`. The old `//term` prefix is removed:
+  a second unescaped `/` now means replacement.
+- Escape literal slashes in forward queries, e.g. `/src\/old` searches for
+  `src/old`, and `/\/name` finds `/name`. Use `\\` for a literal backslash.
 - Typing previews and highlights visible matches, wrapping at document edges.
 - Enter keeps the match-start caret without selection/highlights. Escape
   restores the pre-search caret/scroll and clears selection. Arrows cancel the
@@ -118,10 +121,21 @@ selection inserts below; with a selection, paste replaces precisely that range.
   skip the active occurrence. Ordinary movement/editing clears highlights.
 - Confirmed and cancelled terms are remembered; an empty prompt reuses the last
   term. `c`, then typing, can replace the selected occurrence.
-- `:replace /old/new/` replaces the next literal occurrence; append `g` to replace
-  all non-overlapping occurrences as **one undo operation**. Empty replacement
-  deletes. Delimiters and backslashes may be escaped; other escapes are literal,
-  not line-ending conversion requests. Replacement text is not searched again.
+- **`/old/new` replaces all non-overlapping occurrences in the whole buffer.**
+  The second unescaped slash switches the forward-search prompt to replacement.
+  Press Enter to apply; typing/preview never changes text, and Escape cancels.
+  An optional trailing slash is accepted: `/old/new/`. `/old/` deletes all matches.
+- **`/old/new/c` confirms each original match:** Y replaces, N skips, A replaces
+  all remaining matches, and Escape stops while keeping approved edits.
+  Answers are case-insensitive; other input (including save/undo) is ignored
+  until confirmation finishes or is stopped. Matches are highlighted/revealed.
+- A complete or stopped replacement is **one undo operation**, including approved
+  edits checkpointed during confirmation. Ctrl+Z restores the pre-replacement
+  caret; redo restores the final caret. Saving still requires Ctrl+S.
+- `\/` and `\\` escape slashes/backslashes in either field. Other escapes such as
+  `\n` are literal, not newline conversion requests. Empty search terms are
+  rejected; replacement text is not recursively searched. Identical old/new
+  text reports no change. The `replace` command and `g` flag have been removed.
 
 ## Files and continuation
 
@@ -142,8 +156,8 @@ selection inserts below; with a selection, paste replaces precisely that range.
 
 ### Command and filename completion
 
-Before a command's separating space, **Tab** completes command names. `:rep`
-completes to `:replace`; `:bu` offers `buffer` / `buffers`; Tab at an empty `:`
+Before a command's separating space, **Tab** completes command names. `:bu`
+offers `buffer` / `buffers`; Tab at an empty `:`
 prompt lists all supported names. Acceptance never executes the command.
 
 After the separating space in `:e`, `:w`, `:w!` and `:ww`, **Tab** completes

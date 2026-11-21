@@ -114,8 +114,10 @@ Remaining:
   scrolling; gutter line numbers, relative in Normal and `:` command states.
 - No mouse in MS1; further keyboard navigation is to be discussed.
 - `/` forward search, `?` backward search; `n`/`p` next/previous matches.
-- Adopt `//` from document start and `??` from document end; escape literal
-  leading delimiters with backslash.
+- Keep `??` from document end. The later second-slash replacement decision
+  supersedes `//`: `/old/new` replaces all, optional `/c` confirms with Y/N/A/Escape.
+  Escape literal forward-query slashes; use Ctrl+Home then `/term` to start at
+  document beginning. `:replace` and `g` are removed.
 
 1. Settled: `n` always forward, `p` always backward; literal case-sensitive
    search with wraparound and incremental preview of all visible matches.
