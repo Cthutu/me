@@ -82,8 +82,15 @@ this project. Its local mirror backup is `/home/matt/me-github-backup.git`.
 Use a standard Nerd environment with `just` recipes. Prefer underscore-prefixed
 generated directories such as `_bin`, `_obj`, and `_tmp`. Keep core editing tests
 headless and distinguish terminal integration checks. The runnable entry point
-is `main.n`; source lives in `src/`, native tests in `tests/*.n`, PTY checks in
-`tests/terminal.py`. Use `just check`, `just test`, `just test-terminal`, and
+is `main.n`; source and colocated native tests live in `src/*.n`, and PTY checks
+remain in `tests/terminal.py`. Put named `test "description" { ... }` sections
+beside the implementation and helpers/test-only imports in bare `test { ... }`
+sections. Do not recreate standalone native test programs. Keep cross-layer
+tests in the highest relevant module rather than introducing upward imports.
+`just test` runs `nerd test main.n`, including imported-module tests once. Unicode
+conformance vectors are generated into the marked test section of
+`src/characters.n`; preserve those markers and use `just unicode` to regenerate.
+Use `just check`, `just test`, `just test-terminal`, and
 `just release`. Consult `README.md` and `docs/ms1-progress.md` for current
 implementation/verification status; the design documents retain historical
 questions and label provisional implementation choices separately.

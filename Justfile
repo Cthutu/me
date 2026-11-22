@@ -33,7 +33,7 @@ check:
     {{nerd}} check main.n
 
 test:
-    {{nerd}} test tests
+    {{nerd}} test main.n
 
 test-terminal: build
     python3 tests/terminal.py --binary _bin/me
@@ -47,7 +47,7 @@ unicode:
     python3 build/fetch_unicode.py
     python3 build/generate_unicode.py
     {{nerd}} format src/unicode_data.n
-    {{nerd}} format tests/unicode.n
+    {{nerd}} format src/characters.n
 
 clean:
     rm -rf _bin _obj _tmp

@@ -188,3 +188,51 @@ impl Keyboard {
     }
 
 }
+
+test "keyboard counts emit commands rather than directly moving a view" {
+    keyboard : Keyboard
+    on keyboard.character('3'.as(u32), Interaction.Normal) {
+        _command => {
+            assert no
+        }
+
+        else => {
+        }
+    }
+    on keyboard.character('w'.as(u32), Interaction.Normal) {
+        command => {
+            on command {
+                SelectWord(count) => {
+                    assert count == 3
+                }
+
+                else => {
+                    assert no
+                }
+            }
+        }
+
+        else => {
+            assert no
+        }
+    }
+    assert keyboard.count == 0
+    keyboard.count = 3
+    on keyboard.key(TermKeyEvent { scan_code: TermScanCode.Home action: TermKeyAction.Press ... }) {
+        command => {
+            on command {
+                Error(_message) => {
+                }
+
+                else => {
+                    assert no
+                }
+            }
+        }
+
+        else => {
+            assert no
+        }
+    }
+    assert keyboard.count == 0
+}

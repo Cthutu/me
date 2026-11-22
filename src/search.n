@@ -22,3 +22,49 @@ pub find_literal :: fn (text        : string,
     }
     return nil
 }
+
+test "literal search wraps and skips the active occurrence" {
+    on find_literal("one two one", "one", 0, no) {
+        position => {
+            assert position == 0
+        }
+
+        else => {
+            assert no
+        }
+    }
+    on find_literal("one two one", "one", 0, no, skip_origin = yes) {
+        position => {
+            assert position == 8
+        }
+
+        else => {
+            assert no
+        }
+    }
+    on find_literal("one two one", "one", 0, yes, skip_origin = yes) {
+        position => {
+            assert position == 8
+        }
+
+        else => {
+            assert no
+        }
+    }
+    on find_literal("abc", "", 0, no) {
+        _position => {
+            assert no
+        }
+
+        else => {
+        }
+    }
+    on find_literal("abc", "long", 0, no) {
+        _position => {
+            assert no
+        }
+
+        else => {
+        }
+    }
+}

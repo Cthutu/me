@@ -18,7 +18,7 @@ just run [filename]
 just release                  # _bin/me-release
 just install                  # release build → ~/.local/bin/me
 just check
-just test                     # native Nerd headless tests
+just test                     # nerd test main.n: colocated native tests
 just test-terminal            # real PTY integration checks
 just test-all
 just format
@@ -32,10 +32,22 @@ Recipe aliases: `b` → build, `r` → run, `rel` → release, `c` → check,
 `t` → test, `tt` → test-terminal, `ta` → test-all, and `f` → format.
 Aliases accept the same arguments as their full names, e.g. `just r README.md`.
 
+Native tests live beside their implementations in `src/*.n` as named
+`test "description" { ... }` sections. Helpers and test-only imports live in
+bare `test { ... }` sections; normal editor builds exclude them. `just test`
+runs `nerd test main.n`, discovering imported-module tests once. A focused run,
+for example `nerd test main.n --filter src.editor`, selects the editor tests.
+The 1,093 generated Unicode conformance vectors occupy a marked test section in
+`src/characters.n`; `just unicode` regenerates it without changing handwritten
+code or tests. The separate `tests/terminal.py` runner exercises real processes
+and terminal input on debug/release executables.
+
 The default compiler is installed `nerd`. Override `NERD` and `NERD_LIB_PATH` to
 use an isolated compiler/modules pair. An ignored local `.env` currently selects
 `_tools/nerd` and `_tools/mods`, containing the tested Nerd fixes; the shared Nerd
-checkout and installation have not been changed. Generated outputs live in
+checkout remains on the other agent's branch; see
+[toolchain status](docs/ms1-progress.md#nerd-fixes--ten-completed) for the distinct
+user installation and validated private compiler. Generated outputs live in
 `_bin`, `_obj` and `_tmp`; `just clean` leaves compiler overrides alone.
 
 ```sh

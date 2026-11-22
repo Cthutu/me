@@ -169,3 +169,61 @@ impl ReplaceConfirmation {
     pub position :: fn (self: ^Self) => self.matches[self.index] - self.removed_total + self.added_total
 
 }
+
+test {
+
+    parser_plans :: fn () -> void\string {
+        scratch : arena
+        defer scratch.done()
+        command := parse_replace(^scratch, "/one/two")?
+        assert command.needle == "one" && command.replacement == "two" && !command.confirm
+        on plan_replacement(^scratch, "before one middle one after", command) {
+            plan => {
+                assert plan.range.start == 7 && plan.range.end == 21
+                assert plan.text == "two middle two" && plan.count == 2
+            }
+
+            else => {
+                assert no
+            }
+        }
+        escaped := parse_replace(^scratch, "/a\\/b/c\\\\d/c")?
+        assert escaped.needle == "a/b" && escaped.replacement == "c\\d" && escaped.confirm
+        literal := parse_replace(^scratch, "/one/\\n/")?
+        assert literal.replacement == "\\n"
+        deletion := parse_replace(^scratch, "/a/")?
+        on plan_replacement(^scratch, "a a", deletion) {
+            plan => {
+                assert plan.text == " " && plan.count == 2
+            }
+
+            else => {
+                assert no
+            }
+        }
+        assert slash_separator("src\\/old") == nil
+        assert slash_separator("src\\/old/new") == 8
+        for invalid in ["//new", "/old", "/old/new/g", "/old/new/c/x"] {
+            on parse_replace(^scratch, invalid^) {
+                _valid => {
+                    assert no
+                }
+
+                _invalid! => {
+                }
+            }
+        }
+    }
+
+}
+
+test "second-slash replacement parsing defaults to literal replace-all and supports only optional confirmation" {
+    on parser_plans() {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+}

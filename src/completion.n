@@ -277,3 +277,34 @@ impl PromptCompletion {
     }
 
 }
+
+test "literal path command parsing and common prefixes preserve bytes and UTF-8 boundaries" {
+    raw := "  e  leading and trailing \t\n "
+    on path_command(raw) {
+        parsed => {
+            assert raw[parsed.argument_start..] == " leading and trailing \t\n "
+        }
+
+        else => {
+            assert no
+        }
+    }
+    assert path_command("replace /a/b/") == nil
+    state : PromptCompletion
+    defer state.release()
+    state.items.push("é.txt")
+    state.items.push("è.txt")
+    assert state.common_prefix() == ""
+    state.reset()
+    state.items.push("alpha.txt")
+    state.items.push("alpine.txt")
+    assert state.common_prefix() == "alp"
+    state.reset()
+    left  : [2]u8 = [0xff, 'a']
+    right : [2]u8 = [0xff, 'b']
+
+    state.items.push(left[..].as(string))
+    state.items.push(right[..].as(string))
+    assert state.common_prefix().count == 1
+    assert state.common_prefix()[0] == 0xff
+}

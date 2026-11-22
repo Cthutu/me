@@ -65,10 +65,19 @@ refreshes. See the [README](../README.md) for usage and explicit limitations.
 ### Headless
 
 `just check`, `just format`, Python tooling compilation and `just test` have
-passed. There are **29 project-authored named tests across 17 Nerd files**, with
-many assertions and the 1,093 official Unicode vectors inside those tests.
-Nerd additionally discovers imported standard-library tests; its per-file totals
-must **not** be summed or described as the number of distinct ME tests.
+passed. All **29 project-authored named tests are colocated across 14 source
+modules**, with many assertions and all 1,093 official Unicode vectors in the
+marked test section of `src/characters.n`. All 24 test helper functions and
+additional test-only imports live in bare `test { ... }` sections. The 17 former
+standalone Nerd test files have been removed.
+
+`just test` uses the single `main.n` root: **138 tests passed**, comprising 29 ME
+tests and 109 imported library tests, discovered once rather than repeated per
+test program. Inventory comparison verified that all 29 original named tests
+remain discoverable exactly once, and all 53 moved test/helper bodies were
+preserved before formatting. Unicode regeneration and a second formatting pass
+are byte-idempotent. The release executable is byte-identical to the pre-migration
+build, confirming no production-code or test-only-code leakage.
 
 ### Real terminal integration
 

@@ -69,3 +69,15 @@ impl Selection {
     }
 
 }
+
+test "view positions adjust independently of buffer ownership" {
+    change := TextChange { range: { start: 4 end: 4 } inserted_bytes: 3 before_revision: 0 after_revision: 1 }
+    assert adjust_caret(4, change) == 4
+    assert adjust_caret(5, change) == 8
+    selection := Selection { anchor: 4 active: 9 }
+    selection.adjust(change)
+    assert selection.anchor == 7 && selection.active == 12
+    replacement := TextChange { range: { start: 7 end: 12 } inserted_bytes: 2 before_revision: 1 after_revision: 2 }
+    selection.adjust(replacement)
+    assert selection.anchor == 7 && selection.active == 9
+}

@@ -108,6 +108,23 @@ fresh discovery on reopening, safe acceptance and no-match handling.
   compiler local-table use-after-free was fixed separately in Nerd `98883071`
   before rerunning the complete native suite. Installed checks run at completion.
 
+## T2d — Colocate native tests — done
+
+- Move the maximum number of native tests into source `test` sections, with
+  helpers and test-only imports excluded from normal builds.
+- All 29 named tests and 24 helpers moved across 14 implementation modules;
+  remove all 17 standalone native test files. Cross-layer tests belong in the
+  highest relevant module, without reversing production dependencies.
+- `just test` runs `nerd test main.n`, discovering imported tests once. Keep real
+  terminal/process checks in `tests/terminal.py`.
+- Generate all 1,093 Unicode vectors into a marked `src/characters.n` test section,
+  preserving handwritten code and tests. Update formatting and contributor docs.
+- Verified: all 138 native tests pass (29 ME + 109 imported library tests);
+  original ME test inventory is preserved exactly once; generation/formatting
+  are idempotent; release binary is byte-identical to the pre-migration build.
+  All 23 PTY groups pass on debug and release. Installed help/origin smoke passed;
+  installation and smoke are repeated after pushing the completed change.
+
 ## Agreed MS2 queue — not started
 
 The following tasks were explicitly accepted after T1/T2. This is the intended

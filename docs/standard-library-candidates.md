@@ -7,7 +7,7 @@ library. Runtime code uses Nerd/Linux syscalls, without added external libraries
 | Facility | Investigated gap | Local implementation and verification |
 | --- | --- | --- |
 | Extended grapheme segmentation | `std.text` exposes UTF-8/scalar operations, not UAX #29 cluster traversal | `src/characters.n`, generated Unicode 16 tables; all 1,093 official vectors, reverse traversal tests |
-| Unicode display-cell measurement | `Rune.display_width()` has a small wide-range table and no complete combining/emoji treatment | Unicode 16 East Asian width, zero-width and emoji properties; cluster width, tab/flag/keycap/VS16 tests in `tests/characters.n` |
+| Unicode display-cell measurement | `Rune.display_width()` has a small wide-range table and no complete combining/emoji treatment | Unicode 16 East Asian width, zero-width and emoji properties; cluster width, tab/flag/keycap/VS16 tests colocated in `src/characters.n` and `src/view.n` |
 | Unicode word/whitespace classification | No general letter/digit/whitespace predicates found in `std.text` | Generated category/White_Space tables; local word runs and paragraph/indentation boundaries |
 | Full-grapheme framebuffer cells | `std.term` cells hold one scalar, and private scalar-width accounting is incomplete | `src/terminal.n` bridges only complex/mismatched-width glyphs after retained-cell presentation; PTY tests cover combining/ZWJ rendering, resize and idle output. Prefer a native glyph-cell contract upstream rather than retaining this bridge indefinitely |
 | Byte-safe display strings | Linux paths can be non-UTF-8 and contain terminal controls; document text has a different validation contract | `native.display_text`, live invalid-byte filename save/recovery test |

@@ -7,6 +7,6 @@ import subprocess
 parser = argparse.ArgumentParser()
 parser.add_argument("--nerd", default="nerd")
 args = parser.parse_args()
-paths = [Path("main.n"), *sorted(Path("src").glob("*.n")), *sorted(Path("tests").glob("*.n"))]
+paths = [Path("main.n"), *sorted(Path("src").glob("*.n"))]
 for path in paths:
     subprocess.run([args.nerd, "format", str(path)], check=True)

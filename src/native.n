@@ -296,3 +296,72 @@ pub atomic_write :: fn (scratch        : ^arena,
     on sys_fsync(parent_fd) != 0 => return "Saved, but cannot flush parent "
         +"directory"!
 }
+
+test {
+
+    exercise_atomic_write :: fn () -> void\string {
+        scratch : arena
+        defer scratch.done()
+        folder := scratch.pr($"_tmp/save-test-{syscall(SYS_GETPID, 0, 0, 0, 0, 0, 0)}")
+        assert make_directory(^scratch, "_tmp")
+        assert make_directory(^scratch, folder)
+        target := scratch.pr($"{folder}/target")
+        link   := scratch.pr($"{folder}/link")
+        bytes  := "﻿\tLF\nCRLF\r\nno final newline"
+
+        atomic_write(^scratch, target, bytes, no)?
+        assert read_file(^scratch, target)? == bytes
+        on atomic_write(^scratch, target, "must not overwrite", no) {
+            _success => {
+                assert no
+            }
+
+            _error! => {
+            }
+        }
+        assert read_file(^scratch, target)? == bytes
+        pid      := syscall(SYS_GETPID, 0, 0, 0, 0, 0, 0)
+        reserved := scratch.pr($"{folder}/.me-{pid}-0.tmp")
+
+        atomic_write(^scratch, reserved, "not a temporary", no)?
+        assert read_file(^scratch, reserved)? == "not a temporary"
+        _ := syscall(SYS_CHMOD,
+                     target.c_string().as(usize).as(u64),
+                     0x1a0,
+                     0,
+                     0,
+                     0,
+                     0)
+        assert syscall(SYS_SYMLINK, "target".c_string().as(usize).as(u64), link.c_string().as(usize).as(u64), 0, 0, 0, 0).as(i64) == 0
+        atomic_write(^scratch, link, "replacement\r\n", yes)?
+        assert read_file(^scratch, target)? == "replacement\r\n"
+        on metadata(^scratch, target) {
+            info => {
+                assert (info.mode & 0x1ff) == 0x1a0
+            }
+
+            else => {
+                assert no
+            }
+        }
+        info : Stat
+        assert sys_newfstatat(AT_FDCWD, link.c_string(), ^info, AT_SYMLINK_NOFOLLOW) == 0
+        assert (info.mode & 0xf000) == 0xa000
+        _ := syscall(SYS_UNLINK, reserved.c_string().as(usize).as(u64), 0, 0, 0, 0, 0)
+        _ := syscall(SYS_UNLINK, link.c_string().as(usize).as(u64), 0, 0, 0, 0, 0)
+        _ := syscall(SYS_UNLINK, target.c_string().as(usize).as(u64), 0, 0, 0, 0, 0)
+        _ := syscall(SYS_RMDIR, folder.c_string().as(usize).as(u64), 0, 0, 0, 0, 0)
+    }
+
+}
+
+test "atomic saves preserve bytes, permissions and symlinks and refuse unauthorised overwrite" {
+    on exercise_atomic_write() {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+}

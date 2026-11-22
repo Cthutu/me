@@ -326,13 +326,21 @@ behaviour.
 | `just run [args…]` | Build/run ME |
 | `just release` | Optimised executable |
 | `just check` | Compiler checking without linking |
-| `just test` | Headless core tests |
+| `just test` | `nerd test main.n`, discovering colocated headless tests |
 | `just format` | Nerd source formatting |
 | `just clean` | Remove this project's generated outputs |
 
 Use installed `nerd` by default and allow explicit compiler/library overrides for
 working against a checkout. Do not require a hard-coded `~/nerd` absolute path.
 Follow Nerd idioms and underscore-prefixed generated output directories.
+
+Native tests are colocated with their implementation modules in named `test`
+sections. Helpers and test-only imports belong in bare `test { ... }` sections,
+excluded from normal builds. Cross-layer integration tests live at the highest
+relevant layer; do not reverse production dependencies just to colocate a test.
+The generated Unicode conformance test occupies a marked section in
+`src/characters.n`, maintained by `build/generate_unicode.py`. Real process/PTY
+checks remain in Python under `tests/terminal.py`.
 
 `nerd init` offers a standard scaffold, including `main.n`, `Justfile`, VS Code
 configuration, `.gitignore`, and an initial Git commit. Decide how to use/adapt it

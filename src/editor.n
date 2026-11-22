@@ -1169,3 +1169,978 @@ impl Editor {
         }
     }
 }
+
+test {
+    use codec
+
+    use os.linux
+
+    exercise_completion :: fn () -> void\string {
+        scratch : arena
+        defer scratch.done()
+        startup := cwd(^scratch)?
+        folder := scratch.pr($"{startup}/_tmp/completion-{syscall(SYS_GETPID, 0, 0, 0, 0, 0, 0)}")
+
+        assert make_directory(^scratch, "_tmp")
+        assert make_directory(^scratch, folder)
+        names := ["alpha.txt", "alpine.txt", ".hidden", "space name ", "é.txt", "è.txt"]
+        defer {
+            for name in names {
+                path := scratch.pr($"{folder}/{name^}")
+                _ := syscall(SYS_UNLINK, path.c_string().as(usize).as(u64), 0, 0, 0, 0, 0)
+            }
+            _ := syscall(SYS_UNLINK, scratch.pr($"{folder}/linked").c_string().as(usize).as(u64), 0, 0, 0, 0, 0)
+            _ := syscall(SYS_RMDIR, scratch.pr($"{folder}/nested").c_string().as(usize).as(u64), 0, 0, 0, 0, 0)
+            _ := syscall(SYS_RMDIR, folder.c_string().as(usize).as(u64), 0, 0, 0, 0, 0)
+        }
+        for name in names {
+            atomic_write(^scratch, scratch.pr($"{folder}/{name^}"), "original", no)?
+        }
+        assert make_directory(^scratch, scratch.pr($"{folder}/nested"))
+        assert syscall(SYS_SYMLINK, "nested".c_string().as(usize).as(u64), scratch.pr($"{folder}/linked").c_string().as(usize).as(u64), 0, 0, 0, 0) == 0
+        state : PromptCompletion
+        defer state.release()
+        state.scan(folder, "al")?
+        assert state.items.count == 2
+        assert state.items[0] == "alpha.txt" && state.items[1] == "alpine.txt"
+        assert state.common_prefix() == "alp"
+        state.scan(folder, "")?
+        assert state.items.count == 7
+        state.scan(folder, ".")?
+        assert state.items.count == 1 && state.items[0] == ".hidden"
+        state.scan(folder, "ne")?
+        assert state.items.count == 1 && state.items[0] == "nested/"
+        state.scan(folder, "li")?
+        assert state.items.count == 1 && state.items[0] == "linked/"
+        state.scan(folder, scratch.pr($"{folder}/al"))?
+        assert state.common_prefix() == scratch.pr($"{folder}/alp")
+        state.scan(folder, "none")?
+        assert state.items.count == 0
+        on state.scan(folder, "missing/") {
+            _success => {
+                assert no
+            }
+
+            _error! => {
+                assert !state.active && state.items.count == 0
+            }
+        }
+        cached := scratch.pr($"{folder}/cached-only.txt")
+        atomic_write(^scratch, cached, "cached", no)?
+        state.scan(folder, "cached")?
+        assert state.items.count == 1
+        assert syscall(SYS_UNLINK, cached.c_string().as(usize).as(u64), 0, 0, 0, 0, 0) == 0
+        state.filter_files(folder, "cache")?
+        assert state.items.count == 1
+        -- Filtering uses the directory snapshot, not more I/O.
+        state.scan(folder, "cache")?
+        assert state.items.count == 0
+        editor : Editor
+        editor.workspace.lock_fd = - 1
+        defer editor.release()
+        own(^editor.workspace.folder, folder)
+        editor.workspace.open_file(^scratch, "alpha.txt")?
+        editor.execute(^scratch, Command.EnterInsert('i'.as(u32)))?
+        editor.execute(^scratch, Command.InsertText("dirty"))?
+        editor.prompt_open(':'.as(u32), initial = "e al")
+        editor.execute(^scratch, Command.Tab)?
+        assert bytes_text(editor.prompt) == "e alp"
+        assert editor.completion.active
+        editor.execute(^scratch, Command.Move {
+            direction: Direction.Up count: 1 extend: no
+        })?
+        assert editor.completion.selected == 1
+        editor.execute(^scratch, Command.Move {
+            direction: Direction.Up count: 1 extend: no
+        })?
+        assert editor.completion.selected == 0
+        editor.execute(^scratch, Command.Move {
+            direction: Direction.Down count: 1 extend: no
+        })?
+        editor.execute(^scratch, Command.InsertText("\n"))?
+        assert bytes_text(editor.prompt) == "e alpine.txt" && !editor.completion.active
+        assert editor.workspace.documents.count == 1
+        editor.execute(^scratch, Command.InsertText("\n"))?
+        assert editor.workspace.documents.count == 2
+        editor.prompt_open(':'.as(u32), initial = "e alpha.txt")
+        editor.command_line(^scratch)?
+        assert editor.workspace.documents.count == 2
+        assert editor.workspace.active_document().text.text() == "dirtyoriginal"
+        editor.prompt_open(':'.as(u32), initial = "e al")
+        editor.execute(^scratch, Command.Tab)?
+        editor.execute(^scratch, Command.Escape)?
+        assert editor.prompt_kind == ':'.as(u32) && bytes_text(editor.prompt) == "e"
+            +" alp"
+
+        editor.prompt_insert("ha.txt")
+        editor.command_line(^scratch)?
+        assert editor.workspace.documents.count == 2
+        editor.prompt_open(':'.as(u32), initial = "e spa")
+        editor.execute(^scratch, Command.Tab)?
+        assert bytes_text(editor.prompt) == "e space name "
+        editor.command_line(^scratch)?
+        assert editor.workspace.documents.count == 3
+        assert bytes_text(editor.workspace.active_document().path) == scratch.pr($"{folder}/space name ")
+        editor.prompt_open(':'.as(u32), initial = "e nested/")
+        on editor.command_line(^scratch) {
+            _success => {
+                assert no
+            }
+
+            _error! => {
+            }
+        }
+        assert editor.workspace.documents.count == 3
+        editor.prompt_open(':'.as(u32), initial = "e none")
+        editor.execute(^scratch, Command.Tab)?
+        assert bytes_text(editor.prompt) == "e none"
+        assert bytes_text(editor.message) == "No filename match"
+        appeared := scratch.pr($"{folder}/none")
+        atomic_write(^scratch, appeared, "appeared", no)?
+        editor.execute(^scratch, Command.Tab)?
+        assert editor.message.count == 0
+        -- A fresh Tab after no matches refreshes discovery.
+        assert syscall(SYS_UNLINK, appeared.c_string().as(usize).as(u64), 0, 0, 0, 0, 0) == 0
+        editor.prompt_open(':'.as(u32), initial = "e al")
+        editor.execute(^scratch, Command.Tab)?
+        editor.execute(^scratch, Command.Tab)?
+        assert editor.completion.selected == 1
+        editor.prompt_insert("h")
+        assert editor.completion.active && editor.completion.items.count == 1
+        assert bytes_text(editor.prompt) == "e alph"
+        editor.prompt_insert("z")
+        assert editor.completion.active && editor.completion.items.count == 0
+        editor.execute(^scratch, Command.Tab)?
+        editor.execute(^scratch, Command.Move {
+            direction: Direction.Down count: 1 extend: no
+        })?
+        editor.execute(^scratch, Command.InsertText("\n"))?
+        assert editor.prompt_kind == ':'.as(u32) && bytes_text(editor.prompt) == "e"
+            +" alphz"
+
+        editor.prompt_delete(yes)
+        assert editor.completion.active && editor.completion.items.count == 1
+        editor.prompt_delete(yes)
+        assert bytes_text(editor.prompt) == "e alp" && editor.completion.items.count == 2
+        editor.prompt_delete(yes)
+        editor.prompt_delete(yes)
+        editor.prompt_delete(yes)
+        assert bytes_text(editor.prompt) == "e " && editor.completion.items.count == 7
+        editor.prompt_open(':'.as(u32), initial = "w spa")
+        editor.execute(^scratch, Command.Tab)?
+        assert bytes_text(editor.prompt) == "w space name "
+    }
+
+    exercise_commands :: fn () -> void\string {
+        editor : Editor
+        editor.workspace.lock_fd = - 1
+        defer editor.release()
+        scratch : arena
+        defer scratch.done()
+        editor.workspace.add_empty()
+        own(^editor.workspace.folder, "/no-such-completion-folder")
+        editor.prompt_open(':'.as(u32))
+        editor.execute(^scratch, Command.Tab)?
+        assert editor.completion.active && editor.completion.items.count == 11
+        assert bytes_text(editor.prompt) == ""
+        editor.prompt_insert("e")
+        assert bytes_text(editor.prompt) == "e"
+        assert editor.completion.active && editor.completion.items.count == 1
+        editor.prompt_insert("z")
+        assert editor.completion.active && editor.completion.items.count == 0
+        editor.execute(^scratch, Command.Tab)?
+        editor.execute(^scratch, Command.Move {
+            direction: Direction.Up count: 1 extend: no
+        })?
+        editor.execute(^scratch, Command.InsertText("\n"))?
+        assert bytes_text(editor.prompt) == "ez" && editor.prompt_kind == ':'.as(u32)
+        editor.prompt_delete(yes)
+        assert editor.completion.active && editor.completion.items.count == 1
+        editor.execute(^scratch, Command.InsertText("\n"))?
+        assert bytes_text(editor.prompt) == "e" && editor.prompt_kind == ':'.as(u32)
+        editor.prompt_open(':'.as(u32), initial = "  wq")
+        editor.execute(^scratch, Command.Tab)?
+        assert bytes_text(editor.prompt) == "  wq" && !editor.completion.active
+        editor.prompt_open(':'.as(u32), initial = "bu")
+        editor.execute(^scratch, Command.Tab)?
+        assert bytes_text(editor.prompt) == "buffer" && editor.completion.items.count == 2
+        editor.prompt_insert("s")
+        assert editor.completion.active && editor.completion.items.count == 1
+        editor.execute(^scratch, Command.InsertText("\n"))?
+        assert editor.prompt_kind == ':'.as(u32)
+        editor.execute(^scratch, Command.InsertText("\n"))?
+        assert editor.prompt_kind == 0 && editor.workspace.documents.count == 1
+        editor.prompt_open(':'.as(u32), initial = "q")
+        editor.execute(^scratch, Command.Tab)?
+        editor.execute(^scratch, Command.Move {
+            direction: Direction.Down count: 1 extend: no
+        })?
+        editor.execute(^scratch, Command.InsertText("\n"))?
+        assert bytes_text(editor.prompt) == "q!" && !editor.quit
+        editor.execute(^scratch, Command.Escape)?
+        assert !editor.quit && editor.workspace.documents.count == 1
+        editor.prompt_open(':'.as(u32), initial = "e")
+        editor.execute(^scratch, Command.Tab)?
+        assert bytes_text(editor.prompt) == "e" && !editor.completion.active
+        editor.prompt_open(':'.as(u32), initial = "zzz")
+        editor.execute(^scratch, Command.Tab)?
+        assert bytes_text(editor.message) == "No command match"
+        assert bytes_text(editor.prompt) == "zzz"
+        editor.prompt_open(':'.as(u32), initial = "bu")
+        editor.execute(^scratch, Command.Tab)?
+        editor.prompt_insert(" 1")
+        assert !editor.completion.active  -- Leave command-name completion for numeric arguments.
+        assert editor.workspace.active_document().text.text() == ""
+        assert editor.workspace.active_document().text.history.count == 0
+    }
+
+    check_duplicate :: fn (text : string,
+    anchor : usize,
+    active : usize,
+    linewise : bool,
+    expected : string,
+    start : usize,
+    end : usize) -> void\string {
+        editor : Editor
+        editor.workspace.lock_fd = - 1
+        defer editor.release()
+        scratch : arena
+        defer scratch.done()
+        editor.workspace.add_empty()
+        doc := ^editor.workspace.active_document().text
+        on doc.load(text) {
+            _success => {
+            }
+
+            _error! => return "Duplicate fixture failed"!
+        }
+        view := ^editor.workspace.active_view().interaction
+        view.selection.anchor = anchor
+        view.selection.active = active
+        view.linewise = linewise
+        editor.execute(^scratch, Command.Duplicate)?
+        assert doc.text() == expected
+        assert doc.history.count == 1 && doc.applied == 1
+        assert view.state == Interaction.Normal
+        assert view.selection.start() == start && view.selection.end() == end
+        assert view.linewise == (linewise && anchor != active)
+        on linewise && anchor != active => {
+            assert (view.selection.active < view.selection.anchor) == (active < anchor)
+        }
+        editor.execute(^scratch, Command.Undo)?
+        assert doc.text() == text
+        editor.execute(^scratch, Command.Redo)?
+        assert doc.text() == expected
+    }
+
+    exercise_duplicate :: fn () -> void\string {
+        check_duplicate("a\nb\nc", 0, 4, yes, "a\nb\na\nb\nc", 4, 8)?
+        check_duplicate("a\nb\nc", 4, 0, yes, "a\nb\na\nb\nc", 4, 8)?
+        check_duplicate("a\nb", 0, 3, yes, "a\nb\na\nb", 4, 7)?
+        check_duplicate("""
+            a
+            b
+            """, 0, 4, yes, """
+            a
+            b
+            a
+            b
+            """, 4, 8)?
+        check_duplicate("a\r\nb\nc", 0, 5, yes, "a\r\nb\na\r\nb\nc", 5, 10)?
+        check_duplicate("﻿abc\nz", 3, 7, yes, "﻿abc\nabc\nz", 7, 11)?
+        check_duplicate("abc\nlong\nz", 0, 6, no, "abc\nlong\nlong\nz", 11, 11)?
+        check_duplicate("abc\nlong\nz", 6, 1, no, "abc\nabc\nlong\nz", 5, 5)?
+        check_duplicate("", 0, 0, no, "\n", 1, 1)?
+        check_duplicate("""
+            a
+            """, 2, 2, yes, """
+            a
+            
+            """, 3, 3)?
+    }
+
+    exercise_bom :: fn () -> void\string {
+        editor : Editor
+        editor.workspace.lock_fd = - 1
+        defer editor.release()
+        scratch : arena
+        defer scratch.done()
+        editor.workspace.add_empty()
+        doc := ^editor.workspace.active_document().text
+        on doc.load("﻿alpha\r\nbeta") {
+            _success => {
+            }
+
+            _error! => return "BOM fixture failed"!
+        }
+        view := ^editor.workspace.active_view().interaction
+        view.place(doc, 0, no)
+        assert view.selection.active == 3
+        assert doc.line_start(0) == 3
+        editor.execute(^scratch, Command.Backspace)?
+        assert doc.text() == "﻿alpha\r\nbeta"
+        editor.execute(^scratch, Command.InsertText("X"))?
+        assert doc.text() == "﻿Xalpha\r\nbeta"
+        editor.execute(^scratch, Command.Move {
+            direction: Direction.First count: 1 extend: no
+        })?
+        editor.execute(^scratch, Command.SelectLine(1))?
+        editor.execute(^scratch, Command.Copy)?
+        assert bytes_text(editor.clipboard.bytes) == "Xalpha\r\n"
+        editor.execute(^scratch, Command.Move {
+            direction: Direction.First count: 1 extend: no
+        })?
+        editor.execute(^scratch, Command.Duplicate)?
+        assert doc.text() == "﻿Xalpha\r\nXalpha\r\nbeta"
+        editor.execute(^scratch, Command.Prompt('/'.as(u32)))?
+        editor.character(^scratch, 0xfeff)
+        assert editor.active_match == nil
+    }
+
+    exercise_other_view :: fn () -> void\string {
+        editor : Editor
+        editor.workspace.lock_fd = - 1
+        defer editor.release()
+        scratch : arena
+        defer scratch.done()
+        editor.workspace.add_empty()
+        doc := ^editor.workspace.active_document().text
+        on doc.load("abc") {
+            _success => {
+            }
+
+            _error! => return "Shared view fixture failed"!
+        }
+        other : TextView
+        other.document_id = 0
+        other.interaction.selection.collapse(3)
+        editor.workspace.views.push(other)
+        editor.execute(^scratch, Command.InsertText("Z"))?
+        assert editor.workspace.views[1].interaction.selection.active == 4
+        editor.execute(^scratch, Command.Undo)?
+        assert editor.workspace.views[1].interaction.selection.active == 3
+        editor.execute(^scratch, Command.Redo)?
+        assert editor.workspace.views[1].interaction.selection.active == 4
+        editor.workspace.views[1].interaction.selection.collapse(0)
+        editor.execute(^scratch, Command.Move {
+            direction: Direction.First count: 1 extend: no
+        })?
+        editor.execute(^scratch, Command.EnterInsert('i'.as(u32)))?
+        editor.execute(^scratch, Command.InsertText("X"))?
+        assert editor.workspace.views[1].interaction.selection.active == 0
+        on doc.load("a\n b\n c") {
+            _success => {
+            }
+
+            _error! => return "Jump fixture failed"!
+        }
+        editor.prompt_open(':'.as(u32),
+        initial = "999999999999999999999999999999999")
+        editor.command_line(^scratch)?
+        assert editor.workspace.active_view().interaction.selection.active == 6
+    }
+
+    exercise_editor :: fn () -> void\string {
+        editor : Editor
+        editor.workspace.lock_fd = - 1
+        defer editor.release()
+        scratch : arena
+        defer scratch.done()
+        editor.workspace.add_empty()
+        editor.character(^scratch, 'a'.as(u32))
+        editor.character(^scratch, 'b'.as(u32))
+        assert editor.workspace.active_document().text.text() == "ab"
+        assert editor.workspace.active_document().text.history.count == 2
+        editor.execute(^scratch, Command.Undo)?
+        assert editor.workspace.active_document().text.text() == "a"
+        assert editor.workspace.active_view().interaction.state == Interaction.Normal
+        editor.execute(^scratch, Command.Redo)?
+        editor.execute(^scratch, Command.Move {
+            direction: Direction.First count: 1 extend: no
+        })?
+        editor.execute(^scratch, Command.SelectWord(1))?
+        editor.execute(^scratch, Command.EnterInsert('i'.as(u32)))?
+        editor.character(^scratch, 'x'.as(u32))
+        assert editor.workspace.active_document().text.text() == "x"
+        editor.execute(^scratch, Command.Escape)?
+        editor.execute(^scratch, Command.Duplicate)?
+        assert editor.workspace.active_document().text.text() == "x\nx"
+        assert editor.workspace.active_view().interaction.selection.active == 3
+        editor.execute(^scratch, Command.Undo)?
+        assert editor.workspace.active_document().text.text() == "x"
+        editor.execute(^scratch, Command.Move {
+            direction: Direction.First count: 1 extend: no
+        })?
+        editor.execute(^scratch, Command.SelectLine(1))?
+        editor.execute(^scratch, Command.Copy)?
+        editor.execute(^scratch, Command.Move {
+            direction: Direction.End count: 1 extend: no
+        })?
+        editor.execute(^scratch, Command.Paste)?
+        assert editor.workspace.active_document().text.text() == "x\nx"
+        editor.execute(^scratch, Command.Prompt('/'.as(u32)))?
+        editor.character(^scratch, 'x'.as(u32))
+        assert editor.highlights
+        editor.execute(^scratch, Command.InsertText("\n"))?
+        assert !editor.highlights
+        assert editor.last_search[..].as(string) == "x"
+        editor.execute(^scratch, Command.SearchNext(no))?
+        assert !editor.workspace.active_view().interaction.selection.empty()
+        editor.execute(^scratch, Command.Move {
+            direction: Direction.Right count: 1 extend: no
+        })?
+        assert editor.workspace.active_view().interaction.selection.empty()
+        assert !editor.highlights
+        -- Escape with no accompanying character event must not swallow the next
+        -- real character (traditional ESC and enhanced-keyboard Delete both do this).
+        editor.execute(^scratch, Command.EnterInsert('i'.as(u32)))?
+        editor.key(^scratch,
+        TermKeyEvent {
+            scan_code: TermScanCode.Escape action: TermKeyAction.Press ...
+        })
+        editor.character(^scratch, 'i'.as(u32))
+        assert editor.workspace.active_view().interaction.state == Interaction.Insert
+    }
+
+    origin_prefixes :: fn () -> void\string {
+        scratch : arena
+        defer scratch.done()
+        editor : Editor
+        editor.workspace.lock_fd = - 1
+        defer editor.release()
+        editor.workspace.add_empty()
+        doc := ^editor.workspace.active_document().text
+        on doc.load("term term") {
+            _success => {
+            }
+
+            _error! => {
+                assert no
+            }
+        }
+        editor.workspace.active_view().interaction.place(doc, 5, no)
+        editor.prompt_open('/'.as(u32), initial = "term")
+        assert editor.active_match == 5
+        editor.execute(^scratch, Command.Escape)?
+        assert editor.workspace.active_view().interaction.selection.active == 5
+        editor.prompt_open('/'.as(u32), initial = "/term")
+        assert editor.search_query() == "term" && editor.active_match == 0
+        editor.finish_slash(^scratch)?
+        assert doc.text() == "term term" && doc.history.count == 0
+        assert editor.workspace.active_view().interaction.selection.active == 0
+        editor.workspace.active_view().interaction.place(doc, 5, no)
+        editor.prompt_open('/'.as(u32), initial = "/")
+        assert editor.active_match == 0
+        -- Empty origin query reuses the remembered search.
+        editor.execute(^scratch, Command.Escape)?
+        assert editor.workspace.active_view().interaction.selection.active == 5
+        editor.prompt_open('?'.as(u32), initial = "?term")
+        assert editor.active_match == 5
+        editor.finish_slash(^scratch)?
+        editor.prompt_open('/'.as(u32), initial = "/term/X")
+        editor.finish_slash(^scratch)?
+        assert doc.text() == "X X" && doc.history.count == 1
+        editor.execute(^scratch, Command.Undo)?
+        assert doc.text() == "term term"
+        editor.prompt_open('/'.as(u32), initial = "/term/Y/c")
+        editor.finish_slash(^scratch)?
+        assert editor.confirmation.active && editor.active_match == 0
+        editor.confirm_replace(^scratch, 'n'.as(u32))?
+        editor.confirm_replace(^scratch, 'a'.as(u32))?
+        assert doc.text() == "term Y" && doc.history.count == 1
+        editor.execute(^scratch, Command.Undo)?
+        assert doc.text() == "term term"
+        on doc.load("src/old src/old") {
+            _success => {
+            }
+
+            _error! => {
+                assert no
+            }
+        }
+        editor.workspace.active_view().interaction.place(doc, 8, no)
+        editor.prompt_open('/'.as(u32), initial = "/src\\/old")
+        assert editor.search_query() == "src/old" && editor.active_match == 0
+        editor.execute(^scratch, Command.Escape)?
+        assert editor.workspace.active_view().interaction.selection.active == 8
+        assert doc.history.count == 0
+        editor.prompt_open('/'.as(u32), initial = "//new")
+        on editor.finish_slash(^scratch) {
+            _success => {
+                assert no
+            }
+
+            _error! => {
+            }
+        }
+        assert doc.text() == "src/old src/old" && doc.history.count == 0
+    }
+
+    confirmation_history :: fn () -> void\string {
+        scratch : arena
+        defer scratch.done()
+        editor : Editor
+        editor.workspace.lock_fd = - 1
+        defer editor.release()
+        editor.workspace.add_empty()
+        original := "one one one one"
+        doc := ^editor.workspace.active_document().text
+
+        on doc.load(original) {
+            _success => {
+            }
+
+            _error! => {
+                assert no
+            }
+        }
+        editor.workspace.active_view().interaction.place(doc, original.count, no)
+        editor.prompt_open('/'.as(u32), initial = "one/two")
+        assert doc.text() == original
+        editor.execute(^scratch, Command.Escape)?
+        assert editor.workspace.active_view().interaction.selection.active == original.count
+        editor.prompt_open('/'.as(u32), initial = "one/two")
+        editor.execute(^scratch, Command.InsertText("\n"))?
+        assert doc.text() == "two two two two" && doc.history.count == 1
+        editor.execute(^scratch, Command.Undo)?
+        assert doc.text() == original
+        assert editor.workspace.active_view().interaction.selection.active == original.count
+        editor.workspace.active_view().interaction.place(doc, 0, no)
+        editor.prompt_open('/'.as(u32), initial = "one/X/c")
+        editor.execute(^scratch, Command.InsertText("\n"))?
+        assert editor.confirmation.active && doc.text() == original
+        editor.execute(^scratch, Command.Save)?  -- Other editing commands cannot interrupt grouping.
+        editor.confirm_replace(^scratch, 'n'.as(u32))?
+        editor.confirm_replace(^scratch, 'y'.as(u32))?
+        assert doc.text() == "one X one one"
+        editor.confirm_replace(^scratch, 'y'.as(u32))?
+        assert doc.text() == "one X X one" && doc.applied == 1 && doc.history.count == 1
+        encoded : Encoder
+        defer encoded.bytes.free()
+        encoded.document(doc)
+        restored : Document
+        defer restored.release()
+        reader := Decoder {
+            bytes: bytes_text(encoded.bytes) ...
+        }
+        reader.document(^restored)?
+        assert restored.text() == doc.text()
+        on restored.undo_edit() {
+            _change => {
+            }
+
+            else => {
+                assert no
+            }
+        }
+        assert restored.text() == original
+        on restored.redo_edit() {
+            _change => {
+            }
+
+            else => {
+                assert no
+            }
+        }
+        assert restored.text() == "one X X one"
+        editor.execute(^scratch, Command.Escape)?
+        assert !editor.confirmation.active && doc.text() == "one X X one"
+        editor.execute(^scratch, Command.Undo)?
+        assert doc.text() == original && editor.workspace.active_view().interaction.selection.active == 0
+        editor.execute(^scratch, Command.Redo)?
+        assert doc.text() == "one X X one"
+        on doc.load("a a") {
+            _success => {
+            }
+
+            _error! => {
+                assert no
+            }
+        }
+        editor.workspace.active_view().interaction.place(doc, 0, no)
+        editor.prompt_open('/'.as(u32), initial = "a/a/c")
+        editor.finish_slash(^scratch)?
+        editor.confirm_replace(^scratch, 'a'.as(u32))?
+        assert !editor.confirmation.active && doc.history.count == 0
+        editor.prompt_open('/'.as(u32), initial = "a/b/c")
+        editor.finish_slash(^scratch)?
+        editor.confirm_replace(^scratch, 'n'.as(u32))?
+        editor.confirm_replace(^scratch, 'n'.as(u32))?
+        assert !editor.confirmation.active && doc.text() == "a a" && doc.history.count == 0
+    }
+
+    shared_and_search :: fn () -> void\string {
+        scratch : arena
+        defer scratch.done()
+        editor : Editor
+        editor.workspace.lock_fd = - 1
+        defer editor.release()
+        editor.workspace.add_empty()
+        doc := ^editor.workspace.active_document().text
+        on doc.load("a a a") {
+            _success => {
+            }
+
+            _error! => {
+                assert no
+            }
+        }
+        other : TextView
+        other.document_id = 0
+        other.interaction.place(doc, 5, no)
+        editor.workspace.views.push(other)
+        editor.prompt_open('/'.as(u32), initial = "a/XX/c")
+        editor.finish_slash(^scratch)?
+        editor.confirm_replace(^scratch, 'y'.as(u32))?
+        assert editor.workspace.views[1].interaction.selection.active == 6
+        editor.confirm_replace(^scratch, 'n'.as(u32))?
+        editor.confirm_replace(^scratch, 'a'.as(u32))?
+        assert doc.text() == "XX a XX" && doc.history.count == 1
+        assert editor.workspace.views[1].interaction.selection.active == 7
+        editor.execute(^scratch, Command.Undo)?
+        assert doc.text() == "a a a" && editor.workspace.views[1].interaction.selection.active == 5
+        editor.prompt_open('/'.as(u32), initial = "a/z/c")
+        editor.finish_slash(^scratch)?
+        on doc.edit({
+            start: doc.text().count end: doc.text().count
+        }
+        , "!") {
+            _change => {
+            }
+
+            _error! => {
+                assert no
+            }
+        }
+        editor.confirm_replace(^scratch, 'y'.as(u32))?
+        assert !editor.confirmation.active && doc.text() == "a a a!"
+        on doc.load("src/old other src/old") {
+            _success => {
+            }
+
+            _error! => {
+                assert no
+            }
+        }
+        editor.workspace.active_view().interaction.place(doc, 0, no)
+        editor.prompt_open('/'.as(u32), initial = "src\\/old")
+        assert editor.search_query() == "src/old"
+        editor.finish_slash(^scratch)?
+        assert doc.history.count == 0 && doc.text() == "src/old other src/old"
+        editor.prompt_open('/'.as(u32), initial = "src\\/old/new")
+        editor.finish_slash(^scratch)?
+        assert doc.text() == "new other new" && doc.history.count == 1
+        on doc.load("﻿one\r\none\t") {
+            _success => {
+            }
+
+            _error! => {
+                assert no
+            }
+        }
+        editor.workspace.active_view().interaction.place(doc, doc.line_start(0), no)
+        editor.prompt_open('/'.as(u32), initial = "one/long/c")
+        editor.finish_slash(^scratch)?
+        editor.confirm_replace(^scratch, 'Y'.as(u32))?
+        editor.confirm_replace(^scratch, 'A'.as(u32))?
+        assert doc.text() == "﻿long\r\nlong\t"
+        editor.execute(^scratch, Command.Undo)?
+        assert doc.text() == "﻿one\r\none\t"
+        for replacement in ["", "aa"] {
+            on doc.load("aaa") {
+                _success => {
+                }
+
+                _error! => {
+                    assert no
+                }
+            }
+            editor.workspace.active_view().interaction.place(doc, 0, no)
+            editor.prompt_open('/'.as(u32),
+            initial = scratch.pr($"a/{replacement^}/c"))
+            editor.finish_slash(^scratch)?
+            editor.confirm_replace(^scratch, 'y'.as(u32))?
+            editor.confirm_replace(^scratch, 'y'.as(u32))?
+            editor.confirm_replace(^scratch, 'a'.as(u32))?
+            expected := on replacement.count == 0 {
+                yes => ""
+                else => "aaaaaa"
+            }
+            assert doc.text() == expected && doc.history.count == 1
+            editor.execute(^scratch, Command.Undo)?
+            assert doc.text() == "aaa"
+        }
+    }
+
+    check_caret :: fn (text : string,
+    position : usize,
+    command : Command,
+    changed : string,
+    after : usize,
+    anchor : ?usize = nil) -> void\string {
+        editor : Editor
+        editor.workspace.lock_fd = - 1
+        defer editor.release()
+        scratch : arena
+        defer scratch.done()
+        editor.workspace.add_empty()
+        doc := ^editor.workspace.active_document().text
+        on doc.load(text) {
+            _success => {
+            }
+
+            _error! => return "Caret fixture failed"!
+        }
+        view := ^editor.workspace.active_view().interaction
+        view.place(doc, position, no)
+        on anchor => [value] {
+            view.selection.anchor = value
+        }
+        editor.execute(^scratch, command)?
+        assert doc.text() == changed
+        assert doc.history.count == 1
+        assert view.selection.active == after && view.selection.empty()
+        -- Navigation does not rewrite placement hints or add history entries.
+        view.place(doc, doc.line_start(0), no)
+        editor.execute(^scratch, Command.Undo)?
+        assert doc.text() == text
+        assert view.selection.active == position && view.selection.empty()
+        assert view.state == Interaction.Normal
+        view.place(doc, doc.text().count, no)
+        editor.execute(^scratch, Command.Redo)?
+        assert doc.text() == changed
+        assert view.selection.active == after && view.selection.empty()
+        editor.execute(^scratch, Command.Undo)?
+        assert view.selection.active == position
+    }
+
+    exercise_carets :: fn () -> void\string {
+        check_caret("abcd", 3, Command.Backspace, "abd", 2)?
+        check_caret("abcd", 1, Command.Delete, "acd", 1)?
+        check_caret("alpha beta", 10, Command.DeleteWordBack, "alpha ", 6)?
+        check_caret("a👩‍💻b", 12, Command.Backspace, "ab", 1)?
+        check_caret("    x", 4, Command.Backspace, "x", 0)?
+        check_caret("ab\r\ncd", 4, Command.Backspace, "abcd", 2)?
+        check_caret("﻿abc", 6, Command.Backspace, "﻿ab", 5)?
+        check_caret("abcd", 3, Command.Backspace, "ad", 1, anchor = 1)?
+        check_caret("abcd", 1, Command.Delete, "ad", 1, anchor = 3)?
+        check_caret("abcd", 1, Command.InsertText("X"), "aXbcd", 2)?
+        check_caret("abcd", 2, Command.Duplicate, "abcd\nabcd", 7)?
+    }
+
+    check_word_delete :: fn (text : string,
+    caret : usize,
+    expected : string,
+    destination : usize,
+    anchor : ?usize = nil,
+    linewise : bool = no,
+    control : bool = yes,
+    legacy : bool = no) -> void\string {
+        editor : Editor
+        editor.workspace.lock_fd = - 1
+        defer editor.release()
+        scratch : arena
+        defer scratch.done()
+        editor.workspace.add_empty()
+        doc := ^editor.workspace.active_document().text
+        on doc.load(text) {
+            _success => {
+            }
+
+            _error! => return "Word deletion fixture failed"!
+        }
+        view := ^editor.workspace.active_view().interaction
+        view.place(doc, caret, no)
+        on anchor => [position] {
+            view.selection.anchor = position
+        }
+        view.linewise = linewise
+        editor.key(^scratch, TermKeyEvent {
+            scan_code : TermScanCode.Backspace
+            action : TermKeyAction.Press
+            modifiers : on control && !legacy {
+                yes => TERM_MOD_CONTROL else => 0
+            }
+            character : on legacy {
+                yes => 8.as(u32) else => 127.as(u32)
+            }
+            ...
+        })
+        editor.character(^scratch,
+        on legacy {
+            yes => 8.as(u32) else => 127.as(u32)
+        })
+        assert doc.text() == expected
+        assert view.selection.empty() && !view.linewise
+        assert view.selection.active == destination
+        assert view.state == (on control {
+            yes => Interaction.Normal else => Interaction.Insert
+        })
+        assert doc.history.count == (on text == expected {
+            yes => 0 else => 1
+        })
+        editor.execute(^scratch, Command.Undo)?
+        assert doc.text() == text
+        editor.execute(^scratch, Command.Redo)?
+        assert doc.text() == expected
+    }
+
+    exercise_word_delete :: fn () -> void\string {
+        check_word_delete("alpha beta", 10, "alpha ", 6)?
+        check_word_delete("alpha beta", 10, "alpha ", 6, anchor = nil, linewise = no, control = yes, legacy = yes)?
+        check_word_delete("alpha, ", 7, "alpha", 5)?
+        check_word_delete("alpha  \r\n  beta", 11, "beta", 0)?
+        check_word_delete("alphabet soup", 5, "bet soup", 0)?
+        check_word_delete("a é", 5, "a ", 2)?
+        check_word_delete("a 👩‍💻", 13, "a ", 2)?
+        check_word_delete("a b", 3, "b", 0)?
+        check_word_delete("﻿word", 7, "﻿", 3)?
+        check_word_delete("﻿word", 3, "﻿word", 3)?
+        check_word_delete("", 0, "", 0)?
+        check_word_delete("word", 0, "word", 0)?
+        check_word_delete("one two three", 7, "one  three", 4, anchor = 4)?
+        check_word_delete("one two three", 4, "one  three", 4, anchor = 7)?
+        check_word_delete("one\ntwo\nthree", 8, "three", 0, anchor = 0, linewise = yes)?
+        check_word_delete("word", 4, "wor", 3, anchor = nil, linewise = no, control = no)?
+
+        editor : Editor
+        editor.workspace.lock_fd = - 1
+        defer editor.release()
+        scratch : arena
+        defer scratch.done()
+        editor.workspace.add_empty()
+        editor.prompt_open(':'.as(u32), initial = "buffer 123")
+        editor.execute(^scratch, Command.DeleteWordBack)?
+        assert editor.prompt[..].as(string) == "buffer "
+        editor.execute(^scratch, Command.DeleteWordBack)?
+        assert editor.prompt.count == 0
+        assert editor.workspace.active_document().text.history.count == 0
+        editor.prompt_cancel()
+        editor.prompt_open('/'.as(u32), initial = "alpha beta")
+        editor.execute(^scratch, Command.DeleteWordBack)?
+        assert editor.prompt[..].as(string) == "alpha "
+        assert editor.workspace.active_document().text.text() == ""
+        assert editor.workspace.active_document().text.history.count == 0
+    }
+}
+
+test "command completion lists, filters, accepts and cancels without executing commands or touching files" {
+    on exercise_commands() {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+}
+
+test "filename completion scans, navigates, accepts and cancels without losing open buffers or filename whitespace" {
+    on exercise_completion() {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+}
+
+test "duplicate uses selected lines or the caret line, preserving fidelity and one-operation history" {
+    on exercise_duplicate() {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+}
+
+test "ordinary editing preserves the hidden UTF-8 BOM, including copy and duplicate" {
+    on exercise_bom() {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+}
+
+test "shared-buffer views follow edit reports for insertion, undo and redo" {
+    on exercise_other_view() {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+}
+
+test "headless editor routes modal commands, individual undo, typed paste and search selections" {
+    on exercise_editor() {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+}
+
+test "leading double-slash search origins coexist with later replacement separators and escaped slashes" {
+    on origin_prefixes() {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+}
+
+test "confirmation keeps approved edits as one undo unit, including partial checkpoints, skips, stopping and no-ops" {
+    on confirmation_history() {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+}
+
+test "confirmation adjusts shared views, stops on unexpected changes, preserves BOM/endings and leaves escaped-slash searches literal" {
+    on shared_and_search() {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+}
+
+test "undo and redo restore the initiating caret without replaying navigation or selections" {
+    on exercise_carets() {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+}
+
+test "Ctrl+Backspace deletes previous Unicode words or selections as one Normal-state edit" {
+    on exercise_word_delete() {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+}
