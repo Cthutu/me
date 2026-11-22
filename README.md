@@ -107,9 +107,9 @@ selection inserts below; with a selection, paste replaces precisely that range.
 ## Search and replacement
 
 - `/term` searches forwards; `?term` backwards, literally and case-sensitively.
-- `??term` searches backwards from the document end. For forwards search from
-  the beginning, use Ctrl+Home before `/term`. The old `//term` prefix is removed:
-  a second unescaped `/` now means replacement.
+- `//term` searches forwards from the document beginning; `??term` searches
+  backwards from its end. These leading origin prefixes are not replacement
+  separators. A later slash can still introduce replacement: `//old/new`.
 - Escape literal slashes in forward queries, e.g. `/src\/old` searches for
   `src/old`, and `/\/name` finds `/name`. Use `\\` for a literal backslash.
 - Typing previews and highlights visible matches, wrapping at document edges.
@@ -122,7 +122,8 @@ selection inserts below; with a selection, paste replaces precisely that range.
 - Confirmed and cancelled terms are remembered; an empty prompt reuses the last
   term. `c`, then typing, can replace the selected occurrence.
 - **`/old/new` replaces all non-overlapping occurrences in the whole buffer.**
-  The second unescaped slash switches the forward-search prompt to replacement.
+  An unescaped slash after the search term switches the prompt to replacement,
+  after parsing the optional leading `//` origin prefix.
   Press Enter to apply; typing/preview never changes text, and Escape cancels.
   An optional trailing slash is accepted: `/old/new/`. `/old/` deletes all matches.
 - **`/old/new/c` confirms each original match:** Y replaces, N skips, A replaces

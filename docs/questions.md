@@ -114,10 +114,10 @@ Remaining:
   scrolling; gutter line numbers, relative in Normal and `:` command states.
 - No mouse in MS1; further keyboard navigation is to be discussed.
 - `/` forward search, `?` backward search; `n`/`p` next/previous matches.
-- Keep `??` from document end. The later second-slash replacement decision
-  supersedes `//`: `/old/new` replaces all, optional `/c` confirms with Y/N/A/Escape.
-  Escape literal forward-query slashes; use Ctrl+Home then `/term` to start at
-  document beginning. `:replace` and `g` are removed.
+- Keep `//` from document start and `??` from document end. The user clarified
+  that origin prefixes are not ambiguous: parse them before replacement fields.
+  `/old/new` and `//old/new` replace all; optional `/c` confirms with Y/N/A/Escape.
+  Escape literal forward-query slashes. `:replace` and `g` are removed.
 
 1. Settled: `n` always forward, `p` always backward; literal case-sensitive
    search with wraparound and incremental preview of all visible matches.
@@ -298,12 +298,21 @@ Remaining:
 - Standard Nerd scaffold, `just` recipes, tests, and first milestone.
 
 
-## Unconfirmed toolchain follow-up
+## Toolchain crash investigation
 
-During the undo-caret work, one full `just test` invocation terminated with
-SIGSEGV after the codec suite. The following editor-BOM test passed in isolation,
-and a complete rerun passed all 22 project tests. No minimal reproducer or cause
-is established; retain `_tmp/undo-core-initial.log` for investigation if it recurs.
+A later native-suite crash during the search-origin correction was reproduced
+under GDB and AddressSanitizer: generic-method inference reallocated the local
+binding table while inference retained a pointer into the old allocation. Nerd
+`98883071` retains indices and reacquires rows across recursive inference, with a
+local-table-growth regression. Its full gate passed (72 passed, 2 platform skips),
+and the complete ME suite passed with the fixed compiler. This explains the new
+crash; the earlier intermittent undo-caret crash may have shared this cause, but
+that historical run has no diagnostic proof. Logs remain under `_tmp/`.
+
+The fix is retained on local Nerd `main` and its pushed agent branch. Direct
+`~/nerd just install` succeeded from the unchanged `remove-linux-libc` checkout
+`174a4576`; integration of this fix into that other agent's branch still awaits
+coordination. ME's private compiler includes the validated fix.
 
 
 ## Next: file opening, completion and MS2

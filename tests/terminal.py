@@ -306,6 +306,49 @@ def symlinks_and_save_as(binary, folder):
         session.quit()
 
 
+def search_origins(binary, folder):
+    path = folder / "origins.txt"
+    original = b"term term"
+    path.write_bytes(original)
+    with Session(binary, folder, "-r", path.name) as session:
+        session.send(b"\x1b[C" * 5)
+        session.send("//term\r")
+        session.send("iX")
+        session.send(b"\x13")
+        assert path.read_bytes() == b"Xterm term", "//term did not search from the beginning"
+        session.send(b"\x1a\x13")
+        assert path.read_bytes() == original
+        session.normal()
+        session.send(b"\x1b[C" * 5)
+        session.send("/term\r")
+        session.send("iY")
+        session.send(b"\x13")
+        assert path.read_bytes() == b"term Yterm", "/term lost current-caret search origin"
+        session.send(b"\x1a\x13")
+        session.normal()
+        session.send("//term/X\r")
+        session.send(b"\x13")
+        assert path.read_bytes() == b"X X"
+        session.send(b"\x1a\x13")
+        session.normal()
+        session.send("//term/Y/c\r")
+        session.send("nA")
+        session.send(b"\x13")
+        assert path.read_bytes() == b"term Y"
+        session.send(b"\x1a\x13")
+        assert path.read_bytes() == original
+        session.quit()
+    path = folder / "escaped-origin.txt"
+    path.write_bytes(b"src/old src/old")
+    with Session(binary, folder, "-r", path.name) as session:
+        session.send(b"\x1b[C" * 8)
+        session.send("//src\\/old\r")
+        session.send("iP")
+        session.send(b"\x13")
+        assert path.read_bytes() == b"Psrc/old src/old"
+        session.quit()
+
+
 def slash_replacement(binary, folder):
     path = folder / "confirm.txt"
     original = b"one one one one\nsrc/old\n"
@@ -886,7 +929,7 @@ def main():
     unexpected = {name for name in names if name not in allowed and not Path(name).name.startswith("ld-linux-")}
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
     checks = [recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
-              search_replace_and_buffers, slash_replacement, confirmation_recovery, byte_paths_and_checkpoint_failures,
+              search_replace_and_buffers, search_origins, slash_replacement, confirmation_recovery, byte_paths_and_checkpoint_failures,
               second_instance, crash_and_signals, undo_caret, word_delete, duplicate_selection, command_completion, live_completion_filter, file_completion, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
     selected = [check for check in checks if args.filter in check.__name__]
     if not selected:

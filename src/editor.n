@@ -167,6 +167,7 @@ impl Editor {
     pub search_query :: fn (self: ^Self) -> string {
         query := bytes_text(self.prompt)
         on self.prompt_kind == '/'.as(u32) => {
+            query = forward_body(query)
             replacing := slash_separator(query)
             on replacing => [end] {
                 query = query[.. end]
@@ -193,12 +194,12 @@ impl Editor {
         view.selection.collapse(view.selection.active)
         self.message.clear()
         origin := view.selection.active
-        on (self.prompt_kind == '/'.as(u32) && slash_separator(bytes_text(self.prompt)) != nil) => origin = doc.line_start(0)
-        on self.prompt_kind == '?'.as(u32) && self.prompt.count > 0 && self.prompt[0] == '?' => {
-            origin = on self.prompt_kind == '/'.as(u32) {
-                yes => 0 else => doc.text().count
-            }
+        origin_prefix := self.prompt.count > 0 && self.prompt[0].as(u32) == self.prompt_kind
+        on self.prompt_kind == '/'.as(u32) => {
+            body := forward_body(bytes_text(self.prompt))
+            on origin_prefix || slash_separator(body) != nil => origin = doc.line_start(0)
         }
+        on self.prompt_kind == '?'.as(u32) && origin_prefix => origin = doc.text().count
         self.highlights = query.count > 0
         self.active_match = document_match(doc, query, origin, self.prompt_kind == '?'.as(u32))
         on self.active_match {
@@ -264,11 +265,12 @@ impl Editor {
         on self.prompt_kind != ':'.as(u32) => self.preview_search()
     }
     pub finish_slash :: fn (self: ^Self, scratch: ^arena) -> void\string {
-        on self.prompt_kind != '/'.as(u32) || slash_separator(bytes_text(self.prompt)) == nil => {
+        body := forward_body(bytes_text(self.prompt))
+        on self.prompt_kind != '/'.as(u32) || slash_separator(body) == nil => {
             self.finish_search()?
             return
         }
-        parsed := parse_replace(scratch, scratch.pr($"/{bytes_text(self.prompt)}"))?
+        parsed := parse_replace(scratch, scratch.pr($"/{body}"))?
         doc := ^self.workspace.active_document().text
         view := ^self.workspace.active_view().interaction
         view^ = self.search_saved

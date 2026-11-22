@@ -23,12 +23,13 @@ refreshes. See the [README](../README.md) for usage and explicit limitations.
   Undo/redo restores optional before/after caret hints without undoing navigation
   or restoring selections. Snapshot v2 preserves hints and imports v1 history;
   codec checks reject out-of-bounds or split-UTF-8 history carets.
-- Search preview, backward-origin prefix, cancellation/arrow restoration, wrap,
+- Search preview, forward/backward origin prefixes, cancellation/arrow restoration, wrap,
   remembered terms, next/previous match selections and passive highlighting.
   `/old/new` replaces all by default; `/old/new/c` confirms using Y/N/A/Escape.
   Completed or stopped approved edits form one undo unit, already valid in
-  partial checkpoints. `:replace`, `g` and the former `//` origin are removed;
-  escaped slashes remain searchable. A batches the remaining original matches.
+  partial checkpoints. `:replace` and `g` are removed; `//` and `??` origins
+  remain, parsed before replacement fields. Escaped slashes remain searchable.
+  A batches the remaining original matches.
 - Green Normal/red Insert caret and status presentation with contrasting UTF-8
   mode badges, separators and modified marker. Narrow mode badges preserve room
   for warnings. Composite overlays now use the same RGB ordering as native cells.
@@ -64,7 +65,7 @@ refreshes. See the [README](../README.md) for usage and explicit limitations.
 ### Headless
 
 `just check`, `just format`, Python tooling compilation and `just test` have
-passed. There are **28 project-authored named tests across 17 Nerd files**, with
+passed. There are **29 project-authored named tests across 17 Nerd files**, with
 many assertions and the 1,093 official Unicode vectors inside those tests.
 Nerd additionally discovers imported standard-library tests; its per-file totals
 must **not** be summed or described as the number of distinct ME tests.
@@ -72,7 +73,7 @@ must **not** be summed or described as the number of distinct ME tests.
 ### Real terminal integration
 
 `python3 tests/terminal.py --binary _bin/me` and the equivalent release command
-passed all **22 scenario groups**, including buffer lifecycle, gutter styling,
+passed all **23 scenario groups**, including buffer lifecycle, gutter styling,
 selected-line duplication, word deletion, file opening and filename completion,
 on both debug and release builds:
 
@@ -116,6 +117,8 @@ on both debug and release builds:
     refusal, Unicode, protected BOM and CRLF fidelity.
 22. SIGTERM during confirmation preserves partial unsaved edits and a valid single
     undo/redo unit on continuation recovery, without writing the backing file.
+23. Forward search from caret versus `//` document-start origin, prefixed
+    replacement/confirmation, undo and escaped literal-slash searches.
 
 Normal/signal exits compare the actual PTY attributes against startup and check
 alternate-screen restoration. Tests use isolated temporary HOME/folders and do
@@ -140,7 +143,7 @@ hard real-time guarantee. Complex-grapheme overlays add one simulation step.
 Document projection/index rebuilding remains correctness-first, not a claim
 about very large-file scalability.
 
-## Nerd fixes — nine completed
+## Nerd fixes — ten completed
 
 All compiler changes used dedicated worktrees. Each fix passed the unified full
 gate (**72 passed, 0 failed, 2 platform skips**), formatting and isolated installed
@@ -158,17 +161,19 @@ the latest record-field context/layout gate includes all earlier fixes.
 | `37a024a3` | Omit unused FFI libraries from executable links |
 | `2776f687` | Preserve unterminated string bytes and formatter idempotence |
 | `93c8a38a` | Wrap optional/result record fields and preserve enum payload storage layout |
+| `98883071` | Reacquire local bindings after generic inference grows semantic tables |
 
 Fixes are committed, pushed on their own `agent` branches, and integrated into
-**local Nerd `main` at `93c8a38a`**, not pushed directly to remote `main`. Their
+**local Nerd `main` at `98883071`**, not pushed directly to remote `main`. Their
 merged worktrees and local temporary branches have been removed. Other agents'
 worktrees/checkouts are untouched. `_tools/` contains the isolated compiler and
 modules. The validated `93c8a38a` compiler passed isolated and user-installed
 regression checks. The user subsequently clarified that normal installation must
 run directly in `~/nerd`, not an installation-only worktree. That recipe has now
-installed its current `remove-linux-libc` checkout at `21681187`, including matching
+installed its current `remove-linux-libc` checkout at `174a4576`, including matching
 modules and editor support. This is distinct from local `main`/ME's private
-`93c8a38a` toolchain; no branch switch or merge was performed. Installation from
+`98883071` toolchain; no branch switch or merge was performed. Integration of the
+latest fix into that other agent's branch awaits coordination. Installation from
 `~/nerd` is required after each fully validated compiler fix.
 
 The investigation initially described as “pointer slice assignment” was the

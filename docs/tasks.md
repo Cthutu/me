@@ -85,8 +85,8 @@ fresh discovery on reopening, safe acceptance and no-match handling.
   stops while preserving approved edits. One complete/stopped operation is one undo.
 - Preserve literal/case-sensitive matching, escaping, BOM/endings and shared-view
   semantic adjustment. Do not search newly inserted replacement text.
-- Ordinary `/term` remains search; literal slashes must be escaped. This
-  supersedes the old `//` forward-origin shortcut; `??` remains backward origin.
+- Ordinary `/term` remains search; literal slashes must be escaped. T2c corrects
+  the mistaken removal of the existing `//` origin; `??` also remains.
 - Preview/cancel/malformed input never edit the document. Checkpoints during
   confirmation already contain a complete grouped history record.
 - Implementation safety: other commands are blocked during confirmation; abort
@@ -95,6 +95,18 @@ fresh discovery on reopening, safe acceptance and no-match handling.
   groups on debug and release. Coverage includes partial-history codec/recovery,
   shared views, original-match semantics, skips, stopping, deletion, UTF-8/BOM/
   line endings and single undo/redo. Installed-binary checks run at completion.
+
+## T2c — Retain double-slash search origin — done
+
+- Restore `//term` as forward search from the document beginning; `/term`
+  continues from the caret and `??term` remains backward from document end.
+- Parse the optional leading origin before looking for replacement separators.
+  `//old/new` and `//old/new/c` remain valid replacement forms.
+- Preserve escaped literal slashes, remembered terms, preview cancellation and
+  undo/confirmation semantics. An origin prefix alone never triggers an edit.
+- Verified: 29 native tests and all 23 debug/release PTY groups. A confirmed
+  compiler local-table use-after-free was fixed separately in Nerd `98883071`
+  before rerunning the complete native suite. Installed checks run at completion.
 
 ## Agreed MS2 queue — not started
 

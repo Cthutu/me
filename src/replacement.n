@@ -12,8 +12,14 @@ pub Replacement :: plex {
     count usize
 }
 
--- The prompt omits its opening slash. Only an unescaped slash switches search
--- to replacement; \/ and \\ retain their ordinary literal meanings.
+-- Strip the optional forward-origin prefix before looking for a replacement
+-- separator. The prompt itself already omits the opening slash.
+pub forward_body :: fn (text: string) -> string {
+    return on text.count > 0 && text[0] == '/' { yes => text[1..] else => text }
+}
+
+-- Only an unescaped slash after the query starts switches search to
+-- replacement; \/ and \\ retain their ordinary literal meanings.
 pub slash_separator :: fn (text: string) -> ?usize {
     i : usize = 0
     for i < text.count {

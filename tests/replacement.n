@@ -50,6 +50,91 @@ parser_plans :: fn () -> void\string {
     }
 }
 
+origin_prefixes :: fn () -> void\string {
+    scratch : arena
+    defer scratch.done()
+    editor : Editor
+    editor.workspace.lock_fd = -1
+    defer editor.release()
+    editor.workspace.add_empty()
+    doc := ^editor.workspace.active_document().text
+    on doc.load("term term") {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    editor.workspace.active_view().interaction.place(doc, 5, no)
+    editor.prompt_open('/'.as(u32), initial = "term")
+    assert editor.active_match == 5
+    editor.execute(^scratch, Command.Escape)?
+    assert editor.workspace.active_view().interaction.selection.active == 5
+    editor.prompt_open('/'.as(u32), initial = "/term")
+    assert editor.search_query() == "term" && editor.active_match == 0
+    editor.finish_slash(^scratch)?
+    assert doc.text() == "term term" && doc.history.count == 0
+    assert editor.workspace.active_view().interaction.selection.active == 0
+    editor.workspace.active_view().interaction.place(doc, 5, no)
+    editor.prompt_open('/'.as(u32), initial = "/")
+    assert editor.active_match == 0
+    -- Empty origin query reuses the remembered search.
+    editor.execute(^scratch, Command.Escape)?
+    assert editor.workspace.active_view().interaction.selection.active == 5
+    editor.prompt_open('?'.as(u32), initial = "?term")
+    assert editor.active_match == 5
+    editor.finish_slash(^scratch)?
+    editor.prompt_open('/'.as(u32), initial = "/term/X")
+    editor.finish_slash(^scratch)?
+    assert doc.text() == "X X" && doc.history.count == 1
+    editor.execute(^scratch, Command.Undo)?
+    assert doc.text() == "term term"
+    editor.prompt_open('/'.as(u32), initial = "/term/Y/c")
+    editor.finish_slash(^scratch)?
+    assert editor.confirmation.active && editor.active_match == 0
+    editor.confirm_replace(^scratch, 'n'.as(u32))?
+    editor.confirm_replace(^scratch, 'a'.as(u32))?
+    assert doc.text() == "term Y" && doc.history.count == 1
+    editor.execute(^scratch, Command.Undo)?
+    assert doc.text() == "term term"
+    on doc.load("src/old src/old") {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    editor.workspace.active_view().interaction.place(doc, 8, no)
+    editor.prompt_open('/'.as(u32), initial = "/src\\/old")
+    assert editor.search_query() == "src/old" && editor.active_match == 0
+    editor.execute(^scratch, Command.Escape)?
+    assert editor.workspace.active_view().interaction.selection.active == 8
+    assert doc.history.count == 0
+    editor.prompt_open('/'.as(u32), initial = "//new")
+    on editor.finish_slash(^scratch) {
+        _success => {
+            assert no
+        }
+
+        _error! => {
+        }
+    }
+    assert doc.text() == "src/old src/old" && doc.history.count == 0
+}
+
+test "leading double-slash search origins coexist with later replacement separators and escaped slashes" {
+    on origin_prefixes() {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+}
+
 test "second-slash replacement parsing defaults to literal replace-all and supports only optional confirmation" {
     on parser_plans() {
         _success => {
