@@ -54,21 +54,35 @@ user installation and validated private compiler. Generated outputs live in
 NERD=/path/to/nerd NERD_LIB_PATH=/path/to/mods just build
 _bin/me --help
 _bin/me [-r] [filename ...]
+_bin/me [+filename ...]
 ```
 
-No filename restores this startup folder's workspace, or opens an empty buffer.
-Filenames restore first, then open in separate buffers: `me file1 file2`
-loads both and **displays `file1`**. Open the Normal `,` buffer picker to switch.
-Existing paths/aliases reuse their buffers and retain view/history; CLI arguments
-do not discard other recovered buffers. A nonexistent path is a new named buffer;
-it is not created until explicitly saved. `-r` starts fresh, without confirmation;
-bare `-r` opens an empty buffer.
+| Invocation | Startup behaviour |
+| --- | --- |
+| `me` | Restore this folder's snapshot, or open one empty buffer if none exists |
+| `me file1 file2` | Erase the old snapshot, load only those files, display `file1` |
+| `me +file1 +file2` | Restore the snapshot, add/reuse those files, display `file1` |
+| `me -r` | Erase the snapshot and open one fresh empty buffer |
+
+**Plain filenames and `-r` discard the previous continuation without confirmation,
+including unsaved recovered work.** The snapshot is erased after taking the
+folder's continuation lock, before opening any files, even if every open fails.
+A second instance that cannot take the lock never touches the owner's snapshot.
+Failure to erase an owned snapshot is fatal rather than silently resuming it.
+Normal quit/checkpointing records the new workspace as usual.
+
+`me file1 file2` creates exactly two buffers for distinct files, with no extra
+unnamed buffer. Open the Normal `,` picker to switch. Repeated paths/inode aliases
+reuse a buffer. `+filename` retains existing view/history and unrelated recovered
+buffers. A nonexistent path stays a named, unwritten buffer until explicit save.
 
 Failed paths report errors without stopping later arguments. The first successful
-path is displayed; if all fail, a restored workspace stays open, or startup exits
-with status 2 when no buffers remain. A failed reset/open does not overwrite the
-prior recovery snapshot. Unknown options are still rejected; prefix a filename
-starting with `-` with `./`.
+path is displayed; if all fail, `+filename` keeps recovered buffers open, whereas
+fresh startup exits with status 2 when no buffers remain. Do not mix plain and
+`+` filenames, or `-r` and `+` filenames: these combinations fail before changing
+continuation. Bare `+` is an error. Use `./+name` for a literal leading-plus fresh
+filename, or `++name` to add it to continuation. Prefix leading `-` paths with
+`./`; unknown options remain errors.
 
 ## Editing
 
@@ -158,6 +172,13 @@ writes or discards it implicitly. Success focuses the most recent surviving
 buffer; closing the last one leaves a fresh empty buffer. Ctrl+W enters Normal,
 including failure. `:kill`/`:kill!` remain available; `:kill!` is explicit discard.
 Comma remains literal in Insert and command/search prompts.
+
+A **read-only preview on the right** follows the highlighted buffer without
+switching it. It shows the buffer's current text, including unsaved edits, from
+the first line; long lines/extra rows are clipped, not wrapped. Tabs and Unicode
+use the editor's display widths. No-match queries clear the preview. Narrow or
+very short terminals fall back to the full-width list; widening restores preview.
+Previewing never changes carets, selections, history or MRU order and does no I/O.
 
 The owning fuzzy-list model, popup layout and renderer are reusable. This first
 consumer does not implement asynchronous file discovery, an overlay stack or

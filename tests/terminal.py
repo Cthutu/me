@@ -89,6 +89,68 @@ class Session:
         self.close()
 
 
+def startup_modes(binary, folder):
+    first = folder / "one.txt"
+    second = folder / "two.txt"
+    third = folder / "three.txt"
+    for path in [first, second, third]:
+        path.write_text(path.name)
+    with Session(binary, folder) as session:
+        session.send("old unnamed work")
+        session.quit()
+    snapshot = next((folder / "home/.config/me").glob("*/snapshot"))
+    assert b"old unnamed work" in snapshot.read_bytes()
+    with Session(binary, folder, first.name, second.name) as session:
+        session.send(",")
+        shown = screen(session)
+        assert b"2/2" in shown and b"[unnamed]" not in shown, shown
+        session.send(b"\x1b", 0.15)
+        session.quit()
+    assert b"old unnamed work" not in snapshot.read_bytes()
+    with Session(binary, folder) as session:
+        session.send(",")
+        assert b"2/2" in screen(session), "bare me did not restore continuation"
+        session.send(b"\x1b", 0.15)
+        session.quit()
+    with Session(binary, folder, "+" + third.name, "+" + first.name) as session:
+        session.send("iT")
+        session.send(b"\x13")
+        assert third.read_bytes() == b"Tthree.txt", "+files did not display the first added path"
+        session.send(",")
+        assert b"3/3" in screen(session), "+files dropped recovered buffers or duplicated paths"
+        session.send(b"\x1b", 0.15)
+        session.quit()
+    previous = snapshot.read_bytes()
+    for arguments in [[first.name, "+" + second.name], ["-r", "+" + first.name], ["+"]]:
+        result = subprocess.run([str(binary), *arguments], cwd=folder, capture_output=True)
+        assert result.returncode == 2, (arguments, result.stderr)
+        assert snapshot.read_bytes() == previous, "invalid CLI arguments erased continuation"
+    (folder / "+literal").write_bytes(b"LITERAL")
+    with Session(binary, folder, "++literal") as session:
+        session.send("iL")
+        session.send(b"\x13")
+        assert (folder / "+literal").read_bytes() == b"LLITERAL"
+        session.quit()
+    # Failed +opens retain the recovered workspace; plain failed opens erase it.
+    with Session(binary, folder, "+.", "+home") as session:
+        assert session.process.poll() is None
+        session.normal()
+        session.send(",")
+        assert b"4/4" in screen(session)
+        session.send(b"\x1b", 0.15)
+        session.quit()
+    with Session(binary, folder, ".", "home") as session:
+        assert session.process.poll() == 2
+    assert not snapshot.exists(), "plain filenames did not erase the old snapshot"
+    # Never continue silently when the owned snapshot cannot be erased.
+    snapshot.mkdir()
+    with Session(binary, folder, first.name, second.name) as session:
+        assert session.process.poll() == 2
+        assert b"Cannot erase" in session.output
+        assert termios.tcgetattr(session.master) == session.original_attributes
+    snapshot.rmdir()
+
+
 def cli_files(binary, folder):
     first = folder / "first.txt"
     second = folder / "second file.txt"
@@ -113,14 +175,7 @@ def cli_files(binary, folder):
         assert new.read_bytes() == b"N", "missing CLI file was not a named buffer"
         session.quit()
     snapshot = next((folder / "home/.config/me").glob("*/snapshot"))
-    previous = snapshot.read_bytes()
-    (folder / "invalid.bin").write_bytes(b"\xff")
-    with Session(binary, folder, "-r", "invalid.bin", ".") as session:
-        assert session.process.poll() == 2, bytes(session.output)
-        assert b"not valid UTF-8" in session.output and b"non-regular" in session.output
-        assert termios.tcgetattr(session.master) == session.original_attributes
-    assert snapshot.read_bytes() == previous, "failed multi-file reset overwrote recovery"
-    with Session(binary, folder, second.name, first.name) as session:
+    with Session(binary, folder, "+" + second.name, "+" + first.name) as session:
         session.send(b"\x1b[H")
         session.send("iR")
         session.send(b"\x13")
@@ -129,6 +184,12 @@ def cli_files(binary, folder):
         assert b"3/3" in screen(session), "CLI dropped recovered buffers or duplicated paths"
         session.send(b"\x1b", 0.15)
         session.quit()
+    (folder / "invalid.bin").write_bytes(b"\xff")
+    with Session(binary, folder, "-r", "invalid.bin", ".") as session:
+        assert session.process.poll() == 2, bytes(session.output)
+        assert b"not valid UTF-8" in session.output and b"non-regular" in session.output
+        assert termios.tcgetattr(session.master) == session.original_attributes
+    assert not snapshot.exists(), "explicit reset did not erase recovery"
     # Try every argument despite failures, including when the first one fails.
     with Session(binary, folder, "-r", ".", first.name, "invalid.bin", second.name) as session:
         assert b"non-regular" in session.output and b"not valid UTF-8" in session.output
@@ -173,7 +234,7 @@ def recovery(binary, folder):
         session.send(b"\x12")  # redo survives a successful save
         session.quit("q!")
     assert path.read_bytes() == b"on", "q! must never undo a disk write"
-    with Session(binary, folder, "note.txt") as session:
+    with Session(binary, folder, "+note.txt") as session:
         session.send(b"\x12")
         session.send(b"\x13")
         assert path.read_bytes() == b"on", "discarded buffer history reappeared"
@@ -259,9 +320,10 @@ def fidelity(binary, folder):
         assert session.process.wait(timeout=3) == 2
         assert b"UTF-8" in session.output
     assert invalid.read_bytes() == b"\xff\xfe\x00"
-    # A failed reset/open must not overwrite the earlier valid recovery state.
+    # Explicit reset erases old continuation even if opening the file fails.
     with Session(binary, folder) as session:
-        assert b"mixed.txt" in session.output
+        assert b"mixed.txt" not in screen(session)
+        assert b"[unnamed]" in screen(session)
         session.quit()
 
 
@@ -368,7 +430,7 @@ def symlinks_and_save_as(binary, folder):
         assert chosen.read_bytes() == b"Xright", "lexical dot removal ignored symlink resolution"
         assert wrong.read_bytes() == b"wrong"
         session.quit()
-    with Session(binary, folder, "outside/chosen.txt") as session:
+    with Session(binary, folder, "+outside/chosen.txt") as session:
         session.command("buffers")
         response = session.command("buffer 2")
         # Dirty-cell output can omit unchanged spaces between these words.
@@ -518,7 +580,7 @@ def search_replace_and_buffers(binary, folder):
     with Session(binary, folder, "-r") as session:
         session.send("alpha")
         session.quit()
-    with Session(binary, folder, "missing/beta.txt") as session:
+    with Session(binary, folder, "+missing/beta.txt") as session:
         session.send("beta")
         session.command("wq")
         assert session.process.poll() is None
@@ -530,7 +592,7 @@ def search_replace_and_buffers(binary, folder):
         session.command("w beta.txt")
         assert (folder / "beta.txt").read_bytes() == b"beta"
         session.quit("wq")
-    with Session(binary, folder, "alpha.txt") as session:
+    with Session(binary, folder, "+alpha.txt") as session:
         session.command("buffer 2")
         session.send("i!")
         session.send(b"\x13")
@@ -806,6 +868,42 @@ def buffer_picker(binary, folder):
         session.send(",\r")
         assert b"[unnamed]" in screen(session)
         session.quit()
+
+
+def buffer_picker_preview(binary, folder):
+    first = folder / "alpha.txt"
+    second = folder / "beta.txt"
+    first.write_bytes(b"ALPHA_ONLY\nfirst line two")
+    second.write_bytes(b"BETA_ONLY\nsecond line two")
+    with Session(binary, folder, first.name, second.name) as session:
+        def preview():
+            return "\n".join(line[34:74] for line in screen(session).decode().splitlines()[4:21])
+        session.send(",")
+        assert "Preview (read-only)" in preview() and "BETA_ONLY" in preview(), preview()
+        assert "ALPHA_ONLY" not in preview()
+        session.send(b"\x1b[A")
+        assert "ALPHA_ONLY" in preview() and "BETA_ONLY" not in preview(), preview()
+        session.send(b"\x1b", 0.15)
+        session.send("iX")
+        session.send(b"\x13")
+        assert first.read_bytes().startswith(b"XALPHA_ONLY"), "preview switched the active buffer"
+        session.send(",beta\r")
+        session.send("iUNSAVED_")
+        session.normal()
+        session.send(",beta")
+        assert "UNSAVED_BETA_ONLY" in preview(), "preview read disk instead of unsaved text"
+        assert second.read_bytes().startswith(b"BETA_ONLY")
+        fcntl.ioctl(session.master, termios.TIOCSWINSZ, struct.pack("HHHH", 8, 40, 0, 0))
+        session.drain(0.15)
+        assert b"Preview (read-only)" not in screen(session, 40, 8)
+        fcntl.ioctl(session.master, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+        session.drain(0.15)
+        assert "UNSAVED_BETA_ONLY" in preview()
+        session.send("zzzz")
+        assert "No selection" in preview() and "BETA_ONLY" not in preview(), preview()
+        session.send(b"\x1b", 0.15)
+        session.quit("q!")
+    assert second.read_bytes() == b"BETA_ONLY\nsecond line two"
 
 
 def buffer_picker_recovery(binary, folder):
@@ -1384,9 +1482,9 @@ def main():
     allowed = {"libc.so.6", "libm.so.6", "libgcc_s.so.1", "linux-vdso.so.1"}
     unexpected = {name for name in names if name not in allowed and not Path(name).name.startswith("ld-linux-")}
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
-    checks = [cli_files, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
+    checks = [cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
               search_replace_and_buffers, search_origins, slash_replacement, confirmation_recovery, byte_paths_and_checkpoint_failures,
-              second_instance, crash_and_signals, undo_caret, word_delete, buffer_picker, buffer_picker_recovery, buffer_picker_unicode_bytes, enhanced_key_actions, keyboard_diagnostics, hjkl_and_line_selection, duplicate_selection, command_completion, live_completion_filter, file_completion, home_paths, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
+              second_instance, crash_and_signals, undo_caret, word_delete, buffer_picker, buffer_picker_preview, buffer_picker_recovery, buffer_picker_unicode_bytes, enhanced_key_actions, keyboard_diagnostics, hjkl_and_line_selection, duplicate_selection, command_completion, live_completion_filter, file_completion, home_paths, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
     selected = [check for check in checks if args.filter in check.__name__]
     if not selected:
         parser.error(f"No PTY checks match {args.filter!r}")

@@ -289,6 +289,15 @@ impl Workspace {
         self.lock_fd = fd
         self.persistent = yes
         own(^self.session_path, scratch.pr($"{session}/snapshot"))
+        on reset => {
+            removed := syscall(SYS_UNLINK, scratch.pr($"{bytes_text(self.session_path)}\0").data.as(usize).as(u64), 0, 0, 0, 0, 0).as(i64)
+            on removed < 0 &&
+                last_error() != ENOENT => {
+                self.persistent = no
+                self.checkpoint_failed = yes
+                return "Cannot erase the previous continuation snapshot"!
+            }
+        }
         on !reset &&
             metadata(scratch, bytes_text(self.session_path)) != nil => {
             on self.restore(scratch) {

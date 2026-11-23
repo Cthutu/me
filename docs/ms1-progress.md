@@ -23,9 +23,13 @@ refreshes. See the [README](../README.md) for usage and explicit limitations.
   Undo/redo restores optional before/after caret hints without undoing navigation
   or restoring selections. Snapshot v3 preserves v2 hints, imports v1/v2 history and persists buffer MRU;
   codec checks reject out-of-bounds or split-UTF-8 history carets.
-- Multiple CLI filenames load into buffers, displaying the first successful
-  path; restored work/identity/history are retained unless `-r` starts fresh.
-  Failed arguments do not stop later files, and failed resets preserve recovery.
+- Plain CLI filenames start fresh with only those files, first successful path
+  displayed. They and `-r` erase the old snapshot before opens, including failures.
+  Bare `me` restores; `+filename` opts into restoration before adding files.
+  Mixed modes fail without touching recovery; second instances stay isolated.
+- The popup's right-hand preview shows highlighted buffers' live unsaved text,
+  safely clipped with Unicode/tab widths. It never switches/edits buffers or
+  changes caret/history/MRU; narrow/short screens fall back to a full-width list.
 - Normal comma opens the first reusable large fuzzy popup: Unicode full-case-folded
   subsequence matching, MRU buffer order, second-row initial selection and immediate
   Enter acceptance. Escape cancels; query/selection remain separate from text views.
@@ -87,13 +91,13 @@ refreshes. See the [README](../README.md) for usage and explicit limitations.
 ### Headless
 
 `just check`, `just format`, Python tooling compilation and `just test` have
-passed. All **42 project-authored named tests are colocated across 16 source
+passed. All **43 project-authored named tests are colocated across 16 source
 modules**, with many assertions and all 1,093 official Unicode vectors in the
 marked test section of `src/characters.n`. All 24 test helper functions and
 additional test-only imports live in bare `test { ... }` sections. The 17 former
 standalone Nerd test files have been removed.
 
-`just test` uses the single `main.n` root: **154 tests passed**, comprising 42 ME
+`just test` uses the single `main.n` root: **155 tests passed**, comprising 43 ME
 tests and 112 imported library tests, discovered once rather than repeated per
 test program. Inventory comparison verified that all 29 original named tests
 remain discoverable exactly once, and all 53 moved test/helper bodies were
@@ -104,7 +108,7 @@ build, confirming no production-code or test-only-code leakage.
 ### Real terminal integration
 
 `python3 tests/terminal.py --binary _bin/me` and the equivalent release command
-passed all **31 scenario groups**, including buffer lifecycle, gutter styling,
+passed all **33 scenario groups**, including buffer lifecycle, gutter styling,
 selected-line duplication, word deletion, file opening and filename completion,
 on both debug and release builds:
 
@@ -178,8 +182,16 @@ on both debug and release builds:
     Unicode query glyphs and tiny/zero terminal geometry.
 31. Multiple CLI files load into buffers while displaying the first successful
     argument. Existing aliases reuse buffers; missing paths remain unwritten.
-    Preserve recovered work; continue after open failures; failed all-path reset
-    preserves recovery. Cover spaces, home expansion, raw bytes and unknown flags.
+    Explicit +paths retain recovered work; plain paths reset. Continue after open
+    failures; cover spaces, home expansion, raw bytes and unknown flags.
+32. Plain CLI files replace an old unnamed snapshot with exactly the requested
+    buffers; bare startup restores; +files append/reuse and focus the first path.
+    Validate mixed modes, literal leading plus, all-failure erasure, owned-snapshot
+    removal failure and terminal restoration. Recovered all-failed +opens stay open.
+33. Right-hand preview follows highlighted buffers, not active/disk content.
+    Include unsaved text, cancellation/no switching, resize hiding/restoring,
+    no-match clearing and unchanged disk bytes. Native tests cover Unicode/tab
+    clipping and invariant view selections/MRU across preview paints.
 
 Normal/signal exits compare the actual PTY attributes against startup and check
 alternate-screen restoration. Tests use isolated temporary HOME/folders and do

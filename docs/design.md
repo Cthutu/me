@@ -317,16 +317,24 @@ behaviour.
 
 ### Multiple-file CLI — agreed and implemented
 
-`me [-r] [filename ...]` opens all filename arguments into buffers and displays
-its first successful path. Restore continuation first unless `-r` starts fresh;
-CLI paths reuse existing file identity/view/history without dropping unrelated
-recovered work. Open in argument order, then refocus the first successful view.
-The normal workspace access tracker records these real focus changes; the popup
-remains MRU-ordered, not an argument-order-only list. Missing files stay named,
-unwritten buffers until explicit save. Report failed paths and continue trying
-later ones; if all fail, keep restored buffers open or exit 2 with no buffers,
-without overwriting recovery. Unknown flags remain errors; no initial-position
-syntax or new file-picker policy is introduced.
+`me file1 file2` starts fresh, loading only those distinct files, without an
+extra unnamed buffer, and displaying the first successful path. Plain filenames
+and explicit `-r` erase the old snapshot after acquiring its exclusive lock,
+before attempting opens, even if all opens fail. Erasure failure is fatal; a
+second instance never deletes another process's snapshot. Fresh work checkpoints
+normally thereafter. This deliberately supersedes the old failed-reset retention.
+
+Bare `me` restores continuation. `me +file1 +file2` explicitly restores it before
+adding/focusing files, reusing identity/view/history and keeping unrelated work.
+Strip exactly one `+` before normal home/byte-safe path resolution; `./+name`
+is a literal fresh filename, `++name` an appended literal-plus filename. Reject
+bare `+`, mixed plain/+ paths and `-r`/+ paths before touching continuation.
+
+Open in argument order, then refocus the first successful view. Workspace access
+tracking records real focus changes; picker order is still MRU, not argument
+order. Missing paths remain unwritten until explicit save. Report failures and
+try later arguments; if all fail, keep explicitly restored buffers or exit 2 if
+none remain. Unknown flags remain errors; no initial-position syntax is added.
 
 ### First popup consumer: buffer switcher — agreed and implemented
 
@@ -347,7 +355,12 @@ not Normal commands. Query editing is grapheme-aware and bounded at 4,096 bytes.
 Workspace access tracking is separate from document/view array order. All focus
 paths update it. Continuation v3 adds validated unique document IDs in access
 order; v1/v2 imports preserve content/history and seed restored-active-first order.
-Popup/query state is transient. This first consumer does not yet implement the
+Popup/query state is transient. A read-only right-hand preview follows the
+highlighted document's current in-memory text, including unsaved edits, from the
+first line. It clips by grapheme/display width, expands tabs, and shares safe
+Unicode rendering without I/O or mutations of view/history/MRU. No selection
+clears it. Keep the top query full-width; hide preview on narrow/short terminals
+and give the list the full width. This first consumer does not yet implement the
 proposed overlay stack, asynchronous discovery or pane destinations.
 
 Ctrl+W closes the active buffer only when saved, dismissing any buffer picker.
@@ -525,15 +538,16 @@ experiments; they should be introduced incrementally on a solid editing base.
 
 Start in Insert state only when the initial buffer is empty; start in Normal
 state for a non-empty file. Empty means no content, not merely whitespace.
-The exact no-argument and nonexistent-path CLI policies remain to be agreed.
+No-argument, fresh-file and explicit-continuation CLI policies are now specified
+in “Multiple-file CLI” above; nonexistent paths stay unwritten until saved.
 
 ### MS1 entry and deferred features — agreed
 
 For MS1, deal with command-line support for opening files rather than building
 interactive file-navigation popups. Panes and global file pickers are not MS1
 requirements; retain the long-term design without implementing them now.
-Exact CLI arguments, save/save-as interaction, and no-file startup behaviour
-still need specification. This does not mean the editor itself is non-interactive.
+CLI/startup policy is now specified above; save/save-as interaction is specified
+below. This does not mean the editor itself is non-interactive.
 
 Explicit repeat recording (`[` / `]`) and playback (`.`) can wait for a later
 milestone. Their agreed semantics remain part of the long-term design.
@@ -1235,7 +1249,8 @@ and command reference, and [MS1 progress](ms1-progress.md) for verified gates.
   Positions/selection/scroll/preferred columns survive; startup normalises every
   view to Insert only for empty content, Normal otherwise. Prompts/messages,
   clipboard/search, counts and incomplete commands do not survive.
-- **Failure/discard:** failed reset/open leaves the existing snapshot intact.
+- **Failure/discard:** plain CLI filenames and `-r` now erase the old snapshot
+  before opens, including failures (superseding the original retention policy).
   A corrupt snapshot disables fallback-session persistence rather than
   overwriting evidence. `:wq` asks unnamed documents in document order, retains
   successful earlier saves, and focuses a later failed document. Killed/discarded

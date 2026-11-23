@@ -78,11 +78,15 @@ Also settled:
 
 - Persistence failures remain indicated; normal quit refuses unsafe loss.
 - External changes: flag conflict for edited buffers; reload unedited buffers.
-- Restore then open CLI paths in separate buffers and display the first successful
-  argument: `me file1 file2` displays `file1`. Existing identities reuse buffers;
-  other recovered work remains. Try later paths after failures; if all fail, retain
-  recovered buffers or exit 2 if none exist, without replacing recovery. `-r`
-  starts fresh, including with several filenames.
+- Plain CLI filenames now erase continuation and open only the requested files:
+  `me file1 file2` has two distinct buffers, no extra unnamed one, showing file1.
+  Erase after taking the lock and before opens, even if they all fail. `-r` also
+  erases; second instances cannot touch the owner's snapshot. Erase failure is fatal.
+- Bare `me` restores. Explicit `me +file1 +file2` restores then adds/reuses files,
+  preserving other buffers/history/view state and showing the first successful
+  path. Continue after open failures; keep restored buffers or exit 2 if none.
+  Reject mixed plain/+ and `-r`/+ modes before touching snapshots; bare `+` errors.
+  `./+name` is a literal fresh path; `++name` adds a literal leading-plus path.
 - Undo history survives restarts unless reset with `-r`.
 - Latest correction: `:q!` removes all unsaved buffers entirely, including
   recovered work. Saved unchanged buffers/layout survive. Disk files are untouched.
@@ -338,6 +342,11 @@ coordination. ME's private compiler includes the validated fix.
   Dismiss the picker and show an error on unsaved work. No implicit write/discard;
   success focuses the previous surviving buffer or creates a fresh empty one.
   Ctrl+W enters Normal, including failure; literal comma remains in Insert/prompts.
+- Right-hand preview follows the highlighted buffer's live unsaved text without
+  switching it or changing caret/selection/history/MRU. Display from the top,
+  clipped by visible rows/grapheme widths with expanded tabs and safe controls.
+  Empty selection clears preview; narrow/short screens hide it in favour of the
+  full-width list. Preview is read-only and performs no disk access.
 - Asynchronous file discovery, an overlay stack and split routing are later work.
 
 ## Enhanced key releases

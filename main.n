@@ -7,11 +7,13 @@ use std.term
 use std.time
 
 main :: fn (args: []string) -> i32 {
-    reset := no
+    reset           := no
+    plain_files     := no
+    continued_files := no
 
     for argument in args[1..] {
         on argument^ == "--help" => {
-            prn("ME — Matt's Editor\nUsage: me [-r] [filename ...]\nFiles open in separate buffers; the first successful path is displayed.\n-r starts a fresh workspace. Normal quit preserves unsaved work.\n:q quit  :q! remove unsaved buffers  :w[!] [filename] save\n:kill[!] kills the active buffer (force with !).\n:keys shows keyboard capabilities and decoded events.\nCursor keys and Normal hjkl navigate; i enters Insert; Escape returns to Normal.\nCtrl+S save  Ctrl+Z undo  Ctrl+R redo  Ctrl+D duplicate line\nNormal , opens the buffer picker; Ctrl+W closes the active saved buffer.\nw/q select words/lines; y/x/v copy/cut/paste; c changes selection.\n/ and ? search; n/p select next/previous matches.")
+            prn("ME — Matt's Editor\nUsage: me [-r] [filename ...] OR me [+filename ...]\nBare me restores continuation; plain filenames clear it and start fresh.\n+filename restores continuation and adds files; do not mix plain and + paths.\nThe first successful path is displayed. -r explicitly clears continuation.\n:q quit  :q! remove unsaved buffers  :w[!] [filename] save\n:kill[!] kills the active buffer (force with !).\n:keys shows keyboard capabilities and decoded events.\nCursor keys and Normal hjkl navigate; i enters Insert; Escape returns to Normal.\nCtrl+S save  Ctrl+Z undo  Ctrl+R redo  Ctrl+D duplicate line\nNormal , opens the buffer picker; Ctrl+W closes the active saved buffer.\nw/q select words/lines; y/x/v copy/cut/paste; c changes selection.\n/ and ? search; n/p select next/previous matches.")
             return 0
         }
         on argument^ == "-r" {
@@ -23,9 +25,28 @@ main :: fn (args: []string) -> i32 {
                     eprn("\x1b[31mME: expected me [-r] [filename ...]\x1b[0m")
                     return 2
                 }
+                on argument.count > 0 => {
+                    on argument^[0] == '+' {
+                        yes => {
+                            on argument.count == 1 => {
+                                eprn("\x1b[31mME: + requires a filename; use ./+ for a literal plus filename\x1b[0m")
+                                return 2
+                            }
+                            continued_files = yes
+                        }
+
+                        else => plain_files = yes
+                    }
+                }
             }
         }
     }
+    on continued_files &&
+        (plain_files || reset) => {
+        eprn("\x1b[31mME: cannot mix +filename with plain filenames or -r\x1b[0m")
+        return 2
+    }
+    reset = reset || plain_files
     attributes : Termios
     on sys_ioctl(STDIN_FILENO, TCGETS.as(u64), ^attributes) != 0 ||
         sys_ioctl(STDOUT_FILENO, TCGETS.as(u64), ^attributes) != 0 => {
@@ -40,20 +61,31 @@ main :: fn (args: []string) -> i32 {
         _success => {
         }
 
-        message! => terminal.editor.tell(message)
+        message! => {
+            on reset &&
+                terminal.editor.workspace.lock_fd >= 0 => {
+                eprn($"\x1b[31mME: {message}\x1b[0m")
+                return 2
+            }
+            terminal.editor.tell(message)
+        }
     }
     first_view  : ?usize = nil
     open_failed          := no
 
     for filename in args[1..] {
         on filename.count == 0 || filename^ == "-r" => again
-        on terminal.editor.workspace.open_file(^terminal.scratch, filename^) {
+        path := on continued_files {
+            yes   => filename^[1..]
+            else  => filename^
+        }
+        on terminal.editor.workspace.open_file(^terminal.scratch, path) {
             _success => {
                 on first_view == nil => first_view = terminal.editor.workspace.surface.view_id
             }
 
             error! => {
-                eprn($"\x1b[31mME: {display_text(^terminal.scratch, filename^, single_line = yes)}: {error}\x1b[0m")
+                eprn($"\x1b[31mME: {display_text(^terminal.scratch, path, single_line = yes)}: {error}\x1b[0m")
                 open_failed = yes
                 terminal.editor.tell(error)
             }

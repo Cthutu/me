@@ -220,6 +220,9 @@ completion still uses the existing message area, separate from the reusable popu
 
 ### T3a — Multiple CLI files — done
 
+Initial startup/failed-reset policy below is superseded by T3b; opening multiple
+buffers and displaying the first successful argument remains unchanged.
+
 - Accept `me [-r] [filename ...]`: load all paths into buffers and display the
   first successful filename. Keep restored work unless reset was requested.
 - Reuse existing buffers/inode aliases and retain history/view state. Keep missing
@@ -230,6 +233,34 @@ completion still uses the existing message area, separate from the reusable popu
   debug/release. New CLI checks cover first-file display, picker access, aliases,
   missing files, recovery, partial/all failures, spaces/home/raw bytes and options.
 - Installed multi-file CLI regression/help checks follow commit/push/install.
+
+### T3b — Fresh filename startup and opt-in continuation — done
+
+- Plain `me file1 file2` erases the prior snapshot and loads only those buffers,
+  no extra unnamed buffer. Display the first successful path.
+- Bare `me` restores. Explicit `+filename` restores then adds/reuses files without
+  losing other buffers/history/view state. Strip one plus before path expansion.
+- Reject plain/+ mixtures, `-r`/+ and bare `+` before touching continuation;
+  preserve literal leading-plus paths through `./+name` / `++name` respectively.
+- Erase the snapshot before any opens, even if every path fails; erasure failure
+  is fatal. `-r` also erases. Hold the continuation lock; second instances must
+  never delete the owner's snapshot. Normal checkpointing records new work.
+- Regression PTYs cover old unnamed work, exact buffer counts, bare restoration,
+  +path focus/reuse, mixed-mode safety, failed opens/erase and terminal restoration.
+  Existing recovery/alias tests now explicitly use +paths when restoration is intended.
+
+### T3c — Right-hand buffer preview — done
+
+- Read-only preview follows the highlighted picker entry without switching buffers.
+- Render live in-memory text (including unsaved changes) from the first line,
+  clipping rows/long lines with Unicode/grapheme/tab-safe rendering and no I/O.
+- Preserve all view selections, history and MRU. No matches clear preview.
+- Keep the query full-width; narrow/short screens show only the full-width list.
+- Native and PTY checks cover selection changes, unsaved data versus disk,
+  cancellation/no switching, empty results, Unicode/tabs/controls and resize.
+- T3b/T3c verification: 155 native tests (43 project + 112 imported), all 33 PTY
+  groups on debug/release, format/check/Python compilation/idempotence passed.
+  Installed startup, CLI, preview/picker and help regressions follow push/install.
 
 ### T4 — File picker
 

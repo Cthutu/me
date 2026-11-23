@@ -258,7 +258,49 @@ impl Terminal {
         }
     }
 
-    paint_picker :: fn (self: ^Self, picker: ^FuzzyPicker) {
+    paint_preview :: fn (self    : ^Self,
+                         preview : ?^Document,
+                         x       : usize,
+                         y       : usize,
+                         width   : usize,
+                         rows    : usize) {
+        on width == 0 || rows == 0 => return
+        self.text(x, y, "Preview (read-only)", MUTED, GUTTER_PAPER, width)
+        on rows < 2 => return
+        on preview => [document] {
+            on document.text().count == document.line_start(0) => {
+                self.text(x, y + 1, "[empty]", MUTED, GUTTER_PAPER, width)
+                return
+            }
+            for row in [0.as(usize) .. rows - 1] {
+                on row >= document.lines.count => break
+                offset         := document.line_start(row)
+                end            := document.line_end(row)
+                column : usize = 0
+                text           := document.text()
+
+                for offset < end && column < width {
+                    next  := next_character(text, offset)
+                    cells := character_width(text, offset, column)
+
+                    on cells == 0 => cells = 1
+                    on column + cells > width => break
+                    self.character(x + column,
+                                   y + 1 + row,
+                                   text[offset..next],
+                                   cells,
+                                   INK,
+                                   GUTTER_PAPER)
+                    column += cells
+                    offset = next
+                }
+            }
+        } else {
+            self.text(x, y + 1, "No selection", MUTED, GUTTER_PAPER, width)
+        }
+    }
+
+    paint_picker :: fn (self: ^Self, picker: ^FuzzyPicker, preview: ?^Document) {
         box := popup_bounds(self.width, self.height)
         -- Composite glyph overlays must not redraw through an opaque popup.
         kept : usize = 0
@@ -315,6 +357,10 @@ impl Terminal {
         rows := on bottom > list_y {
             yes   => bottom - list_y
             else  => 0
+        }
+        list_width := on inner >= 48 && rows >= 2 {
+            yes   => inner * 2 / 5
+            else  => inner
         }
         picker.reveal(rows)
         on border != 0 => {
@@ -406,15 +452,30 @@ impl Terminal {
                 yes   => SELECT
                 else  => GUTTER_PAPER
             }
-            for x in [left .. left + inner] {
+            for x in [left .. left + list_width] {
                 self.set(x, list_y + row, ' '.as(u32), INK, paper)
             }
             label := self.scratch.pr($" {item.annotation} {item.label}")
-            self.text(left, list_y + row, label, INK, paper, inner)
+            self.text(left, list_y + row, label, INK, paper, list_width)
         }
         on picker.matches.count == 0 &&
             rows > 0 => self.text(left, list_y, " "
-            +"No matches", MUTED, GUTTER_PAPER, inner)
+            +"No matches", MUTED, GUTTER_PAPER, list_width)
+        on list_width < inner => {
+            divider := left + list_width
+            for row in [0.as(usize) .. rows] {
+                self.set(divider,
+                         list_y + row,
+                         '│'.as(u32),
+                         NORMAL_CARET,
+                         GUTTER_PAPER)
+            }
+            self.paint_preview(preview,
+                               divider + 1,
+                               list_y,
+                               inner - list_width - 1,
+                               rows)
+        }
         on footer => self.text(left, bottom, "Enter choose · Esc cancel · "
             +"Ctrl+W close active", MUTED, GUTTER_PAPER, inner)
     }
@@ -779,7 +840,13 @@ impl Terminal {
                 }
             }
         }
-        on editor.picker.active => self.paint_picker(^editor.picker)
+        on editor.picker.active => {
+            preview : ?^Document = nil
+            on editor.picker.chosen() => [id] {
+                on id < editor.workspace.documents.count => preview = ^editor.workspace.documents[id].text
+            }
+            self.paint_picker(^editor.picker, preview)
+        }
         -- Invalidate an old composite only when its text/colour/position changes.
         -- Otherwise std.term must leave its base cell clean for the overlay.
         for previous in self.previous_glyphs {
@@ -861,6 +928,59 @@ pub simulation_hook :: fn (simulation: TermSimulate) {
 pub presentation_hook :: fn (presentation: TermPresent) {
     presentation.user_data.as(^Terminal).paint(presentation.width.as(usize),
                                                presentation.height.as(usize))
+}
+
+test "buffer preview follows selection without touching views or history" {
+    terminal : Terminal
+    terminal.signal_fd = -1
+    terminal.editor.workspace.lock_fd = -1
+    defer terminal.release()
+    terminal.editor.workspace.add_empty()
+    on terminal.editor.workspace.active_document().text.load("Alpha") {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    terminal.editor.workspace.active_view().interaction.selection.collapse(2)
+    terminal.editor.workspace.add_empty()
+    on terminal.editor.workspace.active_document().text.load("Bravo\n\t界👩‍💻\x1b") {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    terminal.editor.character(^terminal.scratch, 'U'.as(u32))
+    assert terminal.editor.workspace.active_document().modified()
+    assert terminal.editor.workspace.focus_document(0)
+    terminal.editor.open_buffer_picker(^terminal.scratch)
+    terminal.paint(80, 24)
+    box := popup_bounds(80, 24)
+    x   := box.x + 1 + (box.width - 2) * 2 / 5 + 1
+    y   := box.y + 3
+
+    assert terminal.cells[y * 80 + x].rune == 'U'.as(u32)
+    assert terminal.cells[(y + 1) * 80 + x + 4].rune == '界'.as(u32)
+    assert terminal.glyphs.count > 0
+    assert terminal.editor.workspace.active_view().document_id == 0
+    assert terminal.editor.workspace.views[0].interaction.selection.active == 2
+    assert terminal.editor.workspace.views[1].interaction.selection.active == 1
+    assert terminal.editor.workspace.access_order[0] == 0
+    terminal.editor.picker.move_selection(yes)
+    terminal.paint(80, 24)
+    assert terminal.cells[y * 80 + x].rune == 'A'.as(u32)
+    terminal.editor.picker.insert("no matches")
+    terminal.paint(80, 24)
+    assert terminal.cells[y * 80 + x].rune == 'N'.as(u32)
+    assert terminal.editor.workspace.documents[1].text.text() == "UBravo\n\t界👩‍💻\x1b"
+    for width in [1.as(usize), 20, 40, 58, 80] {
+        terminal.paint(width^, 8)
+        assert terminal.cells.count == width^ * 8
+    }
 }
 
 test "buffer popup is opaque, selected and safe across Unicode and tiny resizes" {
