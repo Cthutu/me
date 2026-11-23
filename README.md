@@ -217,9 +217,16 @@ it does nothing. Deletion can widen results again. Moving the prompt caret close
 the list. Entering non-file arguments (such as the number in `:buffer N`) also
 ends command-name completion. No-match/directory errors leave files intact.
 
-Paths are literal bytes after the first separating space: spaces need no quotes,
-and trailing spaces are significant. There is no shell quoting, tilde or variable
-expansion. Matches are case-sensitive, ordered by filename bytes, and hidden
+Paths preserve bytes after the first separating space: spaces need no quotes,
+and trailing spaces are significant. A complete leading `~` or `~/` expands from
+`HOME` for opening, saving and completion: `:e ~/.we<Tab>` can complete
+`~/.wezterm.lua`. Tab after bare `~` adds `/` first. The prompt retains `~/` rather
+than substituting the absolute home path. An unset/non-absolute `HOME` produces an
+error without creating or saving a file. There is no shell quoting, variable
+expansion or `~user` lookup; other tildes are literal. Use `./~` or `./~/file` for
+a literal leading tilde filename/directory (completion supplies that prefix when
+necessary). Symlinks and `..` remain resolved by Linux, not lexically collapsed.
+Matches are case-sensitive, ordered by filename bytes, and hidden
 entries appear only when the current component begins with `.`. Accessible
 symlink targets are followed for file/directory classification; non-regular
 objects and inaccessible/broken links are not suggested. Filenames selected by

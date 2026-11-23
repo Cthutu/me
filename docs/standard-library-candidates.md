@@ -19,6 +19,16 @@ library. Runtime code uses Nerd/Linux syscalls, without added external libraries
 | Safe process termination events | Terminal loop cleanup does not itself cover process termination signals | Linux `signalfd`/signal-mask integration in `src/terminal.n`; SIGTERM checkpoint and raw/alternate-screen restoration tested. No libc signal handlers or unsafe restorer stubs |
 | Validating persistent history codec | No editor-specific history format is expected in the library; generic bounded codec helpers may be reusable | `src/codec.n`, workspace envelope/checksum, native malformed/replay tests and PTY corrupted-snapshot retention |
 
+## Home-relative path expansion — local candidate
+
+`src/native.n` provides `expand_home_path` over the existing environment reader:
+only a complete leading `~`/`~/` uses HOME, with an explicit error for unset or
+non-absolute HOME. Workspace opening/saving and completion discovery share it;
+non-home bytes, whitespace and OS symlink/`..` resolution are preserved. There is
+no shell parser, variable expansion or passwd/user lookup. This small, tested
+path-policy helper may suit a future standard path module; it remains local
+first rather than extending Nerd as part of this editor fix.
+
 ## Keyboard protocol audit — implemented in Nerd
 
 The user explicitly requested completing relevant `std.term` facilities rather

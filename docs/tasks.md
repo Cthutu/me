@@ -42,8 +42,9 @@ tracker. Detailed design and verification evidence remain in repository document
 - Implementation choices: case-sensitive byte-prefix matches, deterministic
   byte ordering, dotfiles only when the current component starts with a dot,
   accessible symlink targets, and explicit no-match/directory errors.
-- Paths after the first separator are literal (including whitespace); no shell
-  quoting or expansion. Presentation sanitises controls/invalid UTF-8 without
+- Paths after the first separator preserve bytes (including whitespace); no shell
+  quoting or variable expansion. T2g adds leading `~`/`~/` home expansion.
+  Presentation sanitises controls/invalid UTF-8 without
   changing the underlying filename bytes.
 - Synchronous discovery is capped at 65,536 entries and 4,096 matches; exceeding
   either bound reports an error instead of pretending partial results are complete.
@@ -153,6 +154,23 @@ fresh discovery on reopening, safe acceptance and no-match handling.
 - ME verification: 144 native tests (33 project + 111 imported), all 25 PTY groups
   on debug/release, and focused status/DA/key/resize/scroll checks. Installed checks
   run after push/install. No local protocol implementation was introduced.
+
+## T2g — Home-relative opening, saving and completion — done
+
+- Fix the reported `:e ~/.wezterm.lua` / `:e ~/.we<Tab>` failure: expand a complete
+  leading `~`/`~/` from `HOME` consistently in file opening, saving and discovery.
+- Keep `~/` in completed prompt paths; bare `~` completes to `~/` first. Preserve
+  dotfile rules, live filtering, spaces/non-UTF-8 bytes and Linux symlink/`..`
+  semantics. Do not add shell quoting, variables or `~user` lookup.
+- Reject missing/non-absolute HOME without changing files/buffers. Keep literal
+  leading tilde entries accessible with `./~`; completion adds `./` where needed
+  rather than accidentally redirecting a literal cwd entry into the home folder.
+- Colocated native regressions cover expansion edge cases and escaped literal
+  completion; actual-key PTYs cover the reported dotfile case, buffer reuse,
+  filtering, nested directories, all save forms, literal paths and symlink `..`.
+- Verification: 146 native tests (35 project + 111 imported) and all 26 terminal
+  scenarios pass on debug/release. Formatting/checks and Python compilation pass;
+  final installed home-path/completion checks run after commit/push/install.
 
 ## Agreed MS2 queue — not started
 

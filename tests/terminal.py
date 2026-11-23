@@ -903,6 +903,92 @@ def file_completion(binary, folder):
         session.quit()
 
 
+def home_paths(binary, folder):
+    work = folder / "working directory"
+    work.mkdir()
+    home = work / "home"
+    home.mkdir()
+    config = home / ".wezterm.lua"
+    config.write_bytes(b"config")
+    (work / "first.txt").write_bytes(b"first")
+    literal = work / "~"
+    literal.mkdir()
+    (literal / "literal.txt").write_bytes(b"literal")
+    (work / "~someone").write_bytes(b"named")
+    nested = home / "config dir"
+    nested.mkdir()
+    (nested / "deep.txt").write_bytes(b"deep")
+    real = folder / "real"
+    real.mkdir()
+    (real / "sub").mkdir()
+    (real / "dot.txt").write_bytes(b"right")
+    (home / "jump").symlink_to(real / "sub")
+    (home / "dot.txt").write_bytes(b"wrong")
+    with Session(binary, work, "-r", "first.txt") as session:
+        session.normal()
+        session.command("e ~/.wezterm.lua")
+        session.send("iD")
+        session.send(b"\x13")
+        assert config.read_bytes() == b"Dconfig"
+        session.normal()
+        session.send(":e ~/.we\t\r")
+        session.send(b"\x1a")  # same expanded document: opening again retains history
+        session.send(b"\x13")
+        assert config.read_bytes() == b"config"
+
+        (home / ".well.txt").write_bytes(b"well")
+        session.normal()
+        session.send(":e ~/.w\t")
+        session.send("z")  # common .we prefix -> .wez, with live-filtered list retained
+        session.send("\r\r")
+        session.send("iF")
+        session.send(b"\x13")
+        assert config.read_bytes() == b"Fconfig"
+
+        session.normal()
+        session.send(":e ~/conf\t")
+        session.send("dee\t\r")
+        session.send("iN")
+        session.send(b"\x13")
+        assert (nested / "deep.txt").read_bytes() == b"Ndeep"
+        session.normal()
+        session.command("w ~/saved name.txt")
+        assert (home / "saved name.txt").read_bytes() == b"Ndeep"
+        (home / "existing.txt").write_bytes(b"old")
+        session.command("w! ~/existing.txt")
+        assert (home / "existing.txt").read_bytes() == b"Ndeep"
+        session.command("ww ~/ '$HOME' ")
+        assert (home / " '$HOME' ").read_bytes() == b"Ndeep"
+        session.send("iT")
+        session.send(b"\x13")
+        session.send(":w! ~/saved n\t\r")
+        assert (home / "saved name.txt").read_bytes() == b"NTdeep"
+
+        session.send(":e ~\t")  # bare ~ completes to ~/ before listing children
+        session.send("conf\tdee\t\r")
+        session.send("iB")
+        session.send(b"\x13")
+        assert (nested / "deep.txt").read_bytes() == b"BNdeep"
+        session.normal()
+        session.send(":e ./~/lit\t\r")
+        session.send("iL")
+        session.send(b"\x13")
+        assert (literal / "literal.txt").read_bytes() == b"Lliteral"
+        session.normal()
+        session.command("e ~someone")
+        session.send("iU")
+        session.send(b"\x13")
+        assert (work / "~someone").read_bytes() == b"Unamed"
+        session.normal()
+        session.command("e ~/jump/../dot.txt")
+        session.send("iR")
+        session.send(b"\x13")
+        assert (real / "dot.txt").read_bytes() == b"Rright"
+        assert (home / "dot.txt").read_bytes() == b"wrong"
+        assert not (literal / ".wezterm.lua").exists()
+        session.quit()
+
+
 def completion_byte_paths(binary, folder):
     odd = folder / "odd"
     odd.mkdir()
@@ -1026,7 +1112,7 @@ def main():
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
     checks = [recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
               search_replace_and_buffers, search_origins, slash_replacement, confirmation_recovery, byte_paths_and_checkpoint_failures,
-              second_instance, crash_and_signals, undo_caret, word_delete, keyboard_diagnostics, hjkl_and_line_selection, duplicate_selection, command_completion, live_completion_filter, file_completion, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
+              second_instance, crash_and_signals, undo_caret, word_delete, keyboard_diagnostics, hjkl_and_line_selection, duplicate_selection, command_completion, live_completion_filter, file_completion, home_paths, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
     selected = [check for check in checks if args.filter in check.__name__]
     if not selected:
         parser.error(f"No PTY checks match {args.filter!r}")

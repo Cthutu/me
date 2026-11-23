@@ -317,6 +317,15 @@ The fix is retained on local Nerd `main` and its pushed agent branch. Direct
 coordination. ME's private compiler includes the validated fix.
 
 
+## Home-relative paths
+
+The reported `:e ~/.wezterm.lua` and `:e ~/.we<Tab>` failures supersede the original
+no-tilde-expansion policy. Leading `~`/`~/` now uses HOME for open/save/completion;
+completed paths retain `~/`, with bare `~` Tab adding `/` first. The rest stays
+literal: no shell quoting, variables or named-user lookup. `./~` addresses a
+literal cwd tilde entry. Missing/non-absolute HOME errors safely; Linux retains
+responsibility for symlink and dot-segment resolution.
+
 ## Keyboard diagnostics and protocol detection
 
 `:keys` was accepted for inspecting decoded keys and actual terminal capabilities.

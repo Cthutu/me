@@ -76,6 +76,28 @@ pub cwd :: fn (scratch: ^arena) -> string\string {
     return bytes[..count.as(usize) - 1].as(string)
 }
 
+home_relative :: fn (path: string) => path == "~" || (path.count >= 2 && path[..2] == "~/")
+
+home_path :: fn (scratch: ^arena, path: string, home: string) -> string\string {
+    on !home_relative(path) => return path
+    on home.count == 0 ||
+        home[0] != '/' => return "Cannot expand ~: HOME is unset or not "
+        +"absolute"!
+    on path == "~" => return home
+    suffix := on home[home.count - 1] == '/' {
+        yes   => path[2..]
+        else  => path[1..]
+    }
+    return scratch.pr($"{home}{suffix}")
+}
+
+-- Expand only a complete leading home component. Preserve all other bytes and
+-- leave symlink/dot-segment resolution to Linux, just like ordinary paths.
+pub expand_home_path :: fn (scratch: ^arena, path: string) -> string\string {
+    on !home_relative(path) => return path
+    return home_path(scratch, path, environment(scratch, "HOME"))
+}
+
 pub environment :: fn (scratch: ^arena, name: string) -> string {
     on read_file(scratch, "/proc/self/environ") {
         text => {
@@ -299,6 +321,54 @@ pub atomic_write :: fn (scratch        : ^arena,
 
 test {
 
+    exercise_home_paths :: fn () -> void\string {
+        scratch : arena
+        defer scratch.done()
+        assert home_path(^scratch, "~", "/home/name")? == "/home/name"
+        assert home_path(^scratch, "~/", "/home/name")? == "/home/name/"
+        assert home_path(^scratch, "~/.wezterm.lua", "/home/name")? == "/home/n"
+            +"ame/.wezterm.lua"
+
+        assert home_path(^scratch, "~/x", "/")? == "/x"
+        assert home_path(^scratch, "~/x", "/home/name/")? == "/home/name/x"
+        assert home_path(^scratch, "~/link/../ name ", "/home/a b")? == "/home/"
+            +"a b/link/../ name "
+
+        raw      : [4]u8 = ['/', 0xff, '/', ' ']
+        home             := raw[..].as(string)
+        expected         := scratch.pr($"{home}/file")
+
+        assert home_path(^scratch, "~/file", home)? == expected
+        raw_path     : [4]u8 = ['~', '/', 0xff, ' ']
+        suffix               := raw_path[2..].as(string)
+        raw_expected         := scratch.pr($"/home/name/{suffix}")
+
+        assert home_path(^scratch, raw_path[..].as(string), "/home/name")? == raw_expected
+        literal_paths := [
+            "",
+            "~someone",
+            "./~",
+            "./~/file",
+            "x/~/file",
+            "/tmp/~/file",
+            "$HOME/file",
+            " ~/file",
+        ]
+        for path in literal_paths {
+            assert home_path(^scratch, path^, "")? == path^
+        }
+        for home in ["", "relative/home"] {
+            on home_path(^scratch, "~/file", home^) {
+                _value => {
+                    assert no, "Invalid HOME accepted"
+                }
+
+                _error! => {
+                }
+            }
+        }
+    }
+
     exercise_atomic_write :: fn () -> void\string {
         scratch : arena
         defer scratch.done()
@@ -353,6 +423,17 @@ test {
         _ := syscall(SYS_RMDIR, folder.c_string().as(usize).as(u64), 0, 0, 0, 0, 0)
     }
 
+}
+
+test "home expansion preserves bytes, literal components and OS path resolution" {
+    on exercise_home_paths() {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
 }
 
 test "atomic saves preserve bytes, permissions and symlinks and refuse unauthorised overwrite" {

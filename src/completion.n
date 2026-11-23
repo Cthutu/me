@@ -144,6 +144,7 @@ impl PromptCompletion {
                             folder : string,
                             path   : string) -> void\string {
         root := path_root(path)
+
         on self.cache_valid &&
             self.cached_folder == folder &&
             self.cached_prefix == path[..root] => {
@@ -160,6 +161,9 @@ impl PromptCompletion {
         self.command_mode = no
         for item in self.all_files {
             name := item^[self.cached_prefix.count..]
+            on self.cached_prefix.count == 0 &&
+                name.count >= 2 &&
+                name[..2] == "./" => name = name[2..]
             on name[0] == '.' && (leaf.count == 0 || leaf[0] != '.') => again
             on name.count < leaf.count || name[..leaf.count] != leaf => again
             on self.items.count >= 4096 => {
@@ -193,17 +197,19 @@ impl PromptCompletion {
         for byte in path {
             on byte^ == 0 => return "A path cannot contain NUL"!
         }
-        root   := path_root(path)
-        prefix := path[..root]
+        query  := on path == "~" { yes => "~/" else => path }
+        root   := path_root(query)
+        prefix := query[..root]
 
         self.cached_prefix = self.storage.pr(prefix)
         self.cached_folder = self.storage.pr(folder)
-        leaf := path[root..]
+        leaf := query[root..]
         base := on folder.count > 0 { yes => folder else => "." }
 
-        directory := on prefix.count > 0 && prefix[0] == '/' {
-            yes   => prefix
-            else  => self.storage.pr($"{base}/{prefix}")
+        expanded := expand_home_path(^self.storage, prefix)?
+        directory := on expanded.count > 0 && expanded[0] == '/' {
+            yes   => expanded
+            else  => self.storage.pr($"{base}/{expanded}")
         }
         zero := self.storage.pr($"{directory}\0")
         fd   := sys_open(zero.data.as(^i8), O_RDONLY | O_DIRECTORY | O_CLOEXEC, 0)
@@ -211,6 +217,13 @@ impl PromptCompletion {
         on fd < 0 => return "Cannot read completion directory"!
         defer {
             _ := sys_close(fd)
+        }
+        -- A bare home component completes like a directory name: add the
+        -- slash first, even if its directory contains only hidden files.
+        on path == "~" => {
+            self.items.push("~/")
+            completed = yes
+            return
         }
         buffer  : [32768]u8
         visited : usize     = 0
@@ -269,7 +282,11 @@ impl PromptCompletion {
                     yes   => "/"
                     else  => ""
                 }
-                self.all_files.push(self.storage.pr($"{prefix}{name}{suffix}"))
+                literal := on prefix.count == 0 && name == "~" {
+                    yes   => "./"
+                    else  => ""
+                }
+                self.all_files.push(self.storage.pr($"{literal}{prefix}{name}{suffix}"))
             }
         }
         self.cache_valid = yes
@@ -277,6 +294,67 @@ impl PromptCompletion {
         self.filter_leaf(leaf)?
     }
 
+}
+
+test {
+
+    exercise_literal_tilde_completion :: fn () -> void\string {
+        scratch : arena
+        defer scratch.done()
+        folder := scratch.pr($"_tmp/tilde-completion-{syscall(SYS_GETPID, 0, 0, 0, 0, 0, 0)}")
+        assert make_directory(^scratch, "_tmp")
+        assert make_directory(^scratch, folder)
+        directory := scratch.pr($"{folder}/~")
+        assert make_directory(^scratch, directory)
+        file := scratch.pr($"{directory}/inside")
+        atomic_write(^scratch, file, "literal", no)?
+        defer {
+            _ := syscall(SYS_UNLINK,
+                         file.c_string().as(usize).as(u64),
+                         0,
+                         0,
+                         0,
+                         0,
+                         0)
+            _ := syscall(SYS_RMDIR,
+                         directory.c_string().as(usize).as(u64),
+                         0,
+                         0,
+                         0,
+                         0,
+                         0)
+            _ := syscall(SYS_RMDIR,
+                         folder.c_string().as(usize).as(u64),
+                         0,
+                         0,
+                         0,
+                         0,
+                         0)
+        }
+        state : PromptCompletion
+        defer state.release()
+        state.scan(folder, "")?
+        assert state.items.count == 1
+        assert state.items[0] == "./~/"
+        state.filter_files(folder, "")?
+        assert state.items.count == 1
+        assert state.items[0] == "./~/"
+        state.scan(folder, "./~/")?
+        assert state.items.count == 1
+        assert state.items[0] == "./~/inside"
+    }
+
+}
+
+test "completion escapes literal leading tilde entries without hiding them" {
+    on exercise_literal_tilde_completion() {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
 }
 
 test "literal path command parsing and common prefixes preserve bytes and UTF-8 boundaries" {

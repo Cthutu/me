@@ -315,6 +315,20 @@ Still investigate paste boundaries, clipboard support, Unicode/grapheme editing,
 subprocess communication, resizing, and failure recovery before promising exact
 behaviour.
 
+### Home-relative file paths — agreed
+
+File opening, saving and filename completion expand a complete leading `~` or
+`~/` using the process `HOME`. The remainder stays byte-literal, including spaces
+and non-UTF-8 bytes. Missing/non-absolute HOME is an error, not a fallback into a
+cwd `~` directory. Other tildes, `$HOME` and quotes remain literal; no `~user`
+lookup or general shell expansion is introduced. Keep OS symlink/`..` semantics.
+
+Completion resolves the home directory only for discovery; candidates retain
+`~/`. Bare `~` completes to `~/` first. Literal cwd entries named `~` are completed
+with `./~` to avoid semantic redirection; callers can type this explicitly too.
+Shared local path expansion belongs beside the Linux environment/path helpers,
+not separately in the prompt, workspace and directory enumerator.
+
 ### Keyboard protocol diagnostics — agreed
 
 `:keys` captures keyboard input without editing or saving, showing actual

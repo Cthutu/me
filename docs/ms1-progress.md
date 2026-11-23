@@ -23,6 +23,9 @@ refreshes. See the [README](../README.md) for usage and explicit limitations.
   Undo/redo restores optional before/after caret hints without undoing navigation
   or restoring selections. Snapshot v2 preserves hints and imports v1 history;
   codec checks reject out-of-bounds or split-UTF-8 history carets.
+- Leading `~`/`~/` paths expand HOME consistently for opening, saving and filename
+  completion. The prompt retains `~/`; bare `~` Tab adds `/` first. Preserve literal
+  bytes, symlink/`..` semantics and explicit `./~` access. Invalid HOME errors safely.
 - `:keys` keyboard diagnostics show actual Kitty flags/query completion, reliable
   capabilities and a bounded six-event decoded trace. Keys do not edit/save;
   Escape closes and Alt+Page Up/Down scroll. Private CSI replies are consumed by
@@ -72,13 +75,13 @@ refreshes. See the [README](../README.md) for usage and explicit limitations.
 ### Headless
 
 `just check`, `just format`, Python tooling compilation and `just test` have
-passed. All **33 project-authored named tests are colocated across 15 source
+passed. All **35 project-authored named tests are colocated across 15 source
 modules**, with many assertions and all 1,093 official Unicode vectors in the
 marked test section of `src/characters.n`. All 24 test helper functions and
 additional test-only imports live in bare `test { ... }` sections. The 17 former
 standalone Nerd test files have been removed.
 
-`just test` uses the single `main.n` root: **144 tests passed**, comprising 33 ME
+`just test` uses the single `main.n` root: **146 tests passed**, comprising 35 ME
 tests and 111 imported library tests, discovered once rather than repeated per
 test program. Inventory comparison verified that all 29 original named tests
 remain discoverable exactly once, and all 53 moved test/helper bodies were
@@ -89,7 +92,7 @@ build, confirming no production-code or test-only-code leakage.
 ### Real terminal integration
 
 `python3 tests/terminal.py --binary _bin/me` and the equivalent release command
-passed all **25 scenario groups**, including buffer lifecycle, gutter styling,
+passed all **26 scenario groups**, including buffer lifecycle, gutter styling,
 selected-line duplication, word deletion, file opening and filename completion,
 on both debug and release builds:
 
@@ -142,6 +145,12 @@ on both debug and release builds:
     distinct enhanced Ctrl+H and Ctrl+Backspace, release events, legacy ambiguity,
     diagnostic input capture without edits/saves, scrolling/resize, clean Escape
     exit and keyboard-mode restoration.
+26. Home-relative dotfile opening/Tab completion and retained buffer history;
+    ambiguous live filtering, bare-home/nested directory completion and all save
+    forms including completion; spaces/quotes/variables kept literal, explicit
+    cwd tilde paths, named-user-like literal filenames and symlink/`..` resolution.
+    Native tests cover missing/relative HOME, root/trailing separators and raw
+    non-UTF-8 home/suffix bytes, plus safe completion of literal tilde entries.
 
 Normal/signal exits compare the actual PTY attributes against startup and check
 alternate-screen restoration. Tests use isolated temporary HOME/folders and do

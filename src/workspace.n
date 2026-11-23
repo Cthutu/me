@@ -135,7 +135,7 @@ impl Workspace {
     pub open_file :: fn (self    : ^Self,
                          scratch : ^arena,
                          path    : string) -> void\string {
-        absolute   := absolute_path(scratch, bytes_text(self.folder), path)
+        absolute   := absolute_path(scratch, bytes_text(self.folder), expand_home_path(scratch, path)?)
         info       := metadata(scratch, absolute)
         info_error := last_error()
 
@@ -386,7 +386,7 @@ impl Workspace {
                     force_conflict : bool) -> void\string {
         entry := ^self.documents[document_id]
         path := on filename.count > 0 {
-            yes   => absolute_path(scratch, bytes_text(self.folder), filename)
+            yes   => absolute_path(scratch, bytes_text(self.folder), expand_home_path(scratch, filename)?)
             else  => bytes_text(entry.path)
         }
         on path.count == 0 => return "A filename is required"!
