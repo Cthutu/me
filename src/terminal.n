@@ -2,6 +2,7 @@ use characters
 use document
 use editor
 use key_diagnostics
+use leader_menu
 use native
 use os.linux
 use picker
@@ -64,6 +65,10 @@ NORMAL_CARET :: 0x7bd88f.as(Colour)
 INSERT_CARET :: 0xf07178.as(Colour)
 SELECT       :: 0x386a91.as(Colour)
 MATCH        :: 0x5b5030.as(Colour)
+MENU_PAPER   :: 0x202e42.as(Colour)
+MENU_EDGE    :: 0x597a9c.as(Colour)
+MENU_KEY     :: 0xa8dbef.as(Colour)
+MENU_CAP     :: 0x344d69.as(Colour)
 GUTTER_INK   :: 0xd6b35a.as(Colour)
 
 message_rows :: fn (text: string, width: usize) -> [..]string {
@@ -162,6 +167,7 @@ impl Terminal {
         }
         self.editor.poll_file_picker()
         current := now()
+        self.editor.poll_leader(current)
         on elapsed(self.last_poll, current) >= from_ms(250) => {
             self.editor.tick(^self.scratch)
             self.last_poll = current
@@ -482,6 +488,82 @@ impl Terminal {
             else  => "Enter choose · Esc cancel · Ctrl+W close selected"
         }
         on footer => self.text(left, bottom, hint, MUTED, GUTTER_PAPER, inner)
+    }
+
+    paint_leader :: fn (self: ^Self, current: Instant) {
+        prefix          := self.editor.leader_prefix
+        choices : usize = 0
+
+        for entry in LEADER_ENTRIES {
+            on leader_child(entry^, prefix) => choices += 1
+        }
+        columns := on self.width >= 64 { yes => 2.as(usize) else => 1 }
+        rows    := (choices + columns - 1) / columns
+        full    := rows + 6
+
+        on full > self.height => full = self.height
+        visible := leader_slide_rows(full, elapsed(self.editor.leader_revealed, current).to_ms())
+        top     := self.height - visible
+        -- This full-width surface is opaque to both native cells and the
+        -- deferred composite-grapheme overlay, without changing view geometry.
+        kept : usize = 0
+        for glyph in self.glyphs {
+            on glyph.y < top => {
+                self.glyphs[kept] = glyph^
+                kept += 1
+            }
+        }
+        self.glyphs.resize_undefined_to(kept)
+        for y in [top .. self.height] {
+            for x in [0.as(usize) .. self.width] {
+                self.set(x, y, ' '.as(u32), INK, MENU_PAPER)
+            }
+        }
+        compact := self.height < rows + 6
+        padding := on self.width >= 8 { yes => 2.as(usize) else => 0 }
+        inner   := self.width - padding * 2
+        title_y := top
+        entry_y := top + 1
+
+        on !compact => {
+            for x in [0.as(usize) .. self.width] {
+                self.set(x, top, 0x2500, MENU_EDGE, MENU_PAPER)
+            }
+            title_y += 1
+            entry_y += 2
+        }
+        heading := "Space menu"
+        for entry in LEADER_ENTRIES {
+            on entry.sequence == prefix => heading = self.scratch.pr($"Space menu / {entry.label}")
+        }
+        self.text(padding, title_y, heading, MENU_KEY, MENU_PAPER, inner)
+        index : usize = 0
+        for entry in LEADER_ENTRIES {
+            on !leader_child(entry^, prefix) => again
+            column     := index % columns
+            row        := entry_y + index / columns
+            x          := padding + column * (inner / columns)
+            cell_width := inner / columns
+            key        := entry.sequence[prefix.count..]
+            cap        := on key == " " { yes => "[ SPC ]" else => self.scratch.pr($"[  {key}  ]") }
+
+            self.text(x, row, cap, MENU_KEY, MENU_CAP, cell_width)
+            on cell_width > 9 => {
+                label := on entry.operation == LeaderOperation.Group {
+                    yes   => self.scratch.pr($"{entry.label}  ›")
+                    else  => entry.label
+                }
+                self.text(x + 9, row, label, INK, MENU_PAPER, cell_width - 9)
+            }
+            index += 1
+        }
+        on !compact => {
+            hint := on prefix.count == 0 {
+                yes   => "Esc cancel"
+                else  => "Esc cancel   ·   Backspace back"
+            }
+            self.text(padding, top + full - 2, hint, MUTED, MENU_PAPER, inner)
+        }
     }
 
     pub paint :: fn (self: ^Self, width: usize, height: usize) {
@@ -853,6 +935,7 @@ impl Terminal {
             }
             self.paint_picker(^editor.picker, preview)
         }
+        on editor.leader && editor.leader_shown => self.paint_leader(now())
         -- Invalidate an old composite only when its text/colour/position changes.
         -- Otherwise std.term must leave its base cell clean for the overlay.
         for previous in self.previous_glyphs {
@@ -1104,4 +1187,57 @@ test "mode presentation uses contrasting green/red cursors and UTF-8 status badg
         assert terminal.cells.count == 20 * rows^
     }
     terminal.paint(0, 0)
+}
+
+test "leader overlay is opaque and clipped without changing view geometry or messages" {
+    terminal : Terminal
+    terminal.signal_fd = -1
+    terminal.editor.workspace.lock_fd = -1
+    defer terminal.release()
+    terminal.editor.workspace.add_empty()
+    storage : arena
+    defer storage.done()
+    text := ""
+    for _index in [0 .. 40] {
+        text = storage.pr($"{text}界👩‍💻menu background\n")
+    }
+    on terminal.editor.workspace.active_document().text.load(text) {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    terminal.editor.tell("Existing message")
+    terminal.paint(80, 24)
+    view  := ^terminal.editor.workspace.active_view().interaction
+    rows  := view.rows
+    top   := view.top
+    caret := view.selection.active
+
+    terminal.editor.leader = yes
+    terminal.editor.leader_shown = yes
+    terminal.editor.leader_revealed = 0
+    terminal.paint(80, 24)
+    assert view.rows == rows && view.top == top && view.selection.active == caret
+    assert bytes_text(terminal.editor.message) == "Existing message"
+    for glyph in terminal.glyphs {
+        assert glyph.y < 17
+    }
+    assert terminal.cells[18 * 80 + 2].rune == 'S'.as(u32)
+    terminal.editor.cancel_leader()
+    terminal.paint(80, 24)
+    assert view.rows == rows && bytes_text(terminal.editor.message) == "Existin"
+        +"g message"
+
+    terminal.editor.leader = yes
+    terminal.editor.leader_shown = yes
+    for size in [1.as(usize), 2, 4, 8, 24] {
+        terminal.paint(size^, size^)
+        assert terminal.cells.count == size^ * size^
+        for glyph in terminal.glyphs {
+            assert glyph.x < size^ && glyph.y < size^
+        }
+    }
 }

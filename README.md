@@ -209,12 +209,16 @@ originating buffer, caret, selection, scroll and editing mode. Query edits clear
 old matches immediately; Enter with no current match does nothing. Ctrl+W has no
 action in the file picker. File contents are not previewed during discovery.
 
-Space starts a leader sequence in Normal. After two seconds, the message area
-shows its known keys: Space opens files and Escape cancels. The second Space
-works immediately, without waiting for the menu. Unknown keys cancel the
-sequence without executing an editing command. Spaces remain ordinary text in
-Insert and prompts. Enhanced key releases and held-Space repeats do not invoke
-commands.
+Space starts a leader sequence in Normal. After two seconds, a bordered menu
+slides up over the bottom of the editor, with coloured key labels and action
+names. The slide takes 180 ms. It overlays the text without resizing the view or
+replacing messages. Escape closes it and reveals the editor underneath.
+The second Space works immediately, without waiting for the menu. Unknown keys
+cancel the sequence without executing an editing command. Spaces remain ordinary
+text in Insert and prompts. Enhanced key releases and held-key repeats do not
+invoke menu commands. Menu definitions support future nested groups, with path
+headings and Backspace to return to the parent; no additional sequences are
+assigned yet.
 
 Discovery includes hidden names and files excluded by `.gitignore`; no ignore
 rules are applied. Symlinks to files and directories are followed. Each opened

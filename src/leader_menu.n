@@ -1,0 +1,64 @@
+-- One declaration drives both sequence dispatch and the visible menu hints.
+-- Sequences contain printable ASCII keys after the initial Space; labels may
+-- contain Unicode. Prefix slices therefore always end on a character boundary.
+pub LeaderOperation :: enum {
+    Group
+    FilePicker
+}
+
+pub LeaderEntry :: plex {
+    sequence  string
+    label     string
+    operation LeaderOperation
+}
+
+pub LEADER_ENTRIES :: [
+    LeaderEntry { sequence: " " label: "Open file" operation: FilePicker },
+]
+
+pub leader_child :: fn (entry: LeaderEntry, prefix: string) -> bool {
+    return entry.sequence.count == prefix.count + 1 && entry.sequence[..prefix.count] == prefix
+}
+
+pub leader_choice :: fn (entries : []LeaderEntry,
+                         prefix  : string,
+                         rune    : u32) -> ?LeaderEntry {
+    for entry in entries {
+        on leader_child(entry^, prefix) &&
+            entry.sequence[prefix.count].as(u32) == rune => return entry^
+    }
+    return nil
+}
+
+-- Row-based ease-out keeps terminal animation independent of frame rate.
+pub leader_slide_rows :: fn (rows: usize, milliseconds: u64) -> usize {
+    on rows == 0           => return 0
+    on milliseconds >= 180 => return rows
+    remaining := 180 - milliseconds
+    progress  := 180 * 180 - remaining * remaining
+
+    return 1 + ((rows - 1).as(u64) * progress / (180 * 180)).as(usize)
+}
+
+test "leader sequences expose only immediate children and animation reaches its bounds" {
+    entries := [
+        LeaderEntry { sequence : " "  label : "Open file"     operation : FilePicker },
+        LeaderEntry { sequence : "g"  label : "Example group" operation : Group },
+        LeaderEntry { sequence : "gf" label : "Open file"     operation : FilePicker },
+    ]
+    assert leader_child(entries[1], "") && !leader_child(entries[2], "")
+    assert leader_child(entries[2], "g") && !leader_child(entries[0], "g")
+    assert leader_choice(entries[..], "g", 'x'.as(u32)) == nil
+    on leader_choice(entries[..], "g", 'f'.as(u32)) {
+        entry => {
+            assert entry.operation == LeaderOperation.FilePicker && entry.sequence == "gf"
+        }
+
+        else => {
+            assert no
+        }
+    }
+    assert leader_slide_rows(0, 0) == 0 && leader_slide_rows(7, 0) == 1
+    assert leader_slide_rows(7, 90) > 1 && leader_slide_rows(7, 90) < 7
+    assert leader_slide_rows(7, 180) == 7 && leader_slide_rows(7, 1000) == 7
+}

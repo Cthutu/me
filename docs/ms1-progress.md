@@ -154,6 +154,33 @@ imported), all **37 debug PTY groups**, `just release`, the focused release
 Ctrl+HJKL PTY group, Python compilation and diff checks passed. Installation uses
 `just install` after commit/push, followed by the installed Ctrl+HJKL smoke.
 
+## Sliding Space menu (T4b)
+
+The leader's delayed hint now uses a full-width bottom overlay with a border,
+coloured key labels, action names and cancellation hint. It slides upwards over
+180 ms after the existing two-second delay. Rendering leaves document view
+geometry and the message area intact, masks composite graphemes underneath and
+restores the underlying editor on cancellation. Resizes and very small surfaces
+remain clipped.
+
+`src/leader_menu.n` supplies one declarative sequence table to both the dispatcher
+and renderer. Group prefixes, path headings and parent navigation prepare future
+submenus. Space Space is the only current action; Space b d was explicitly only
+an example. Modal input consumes Enter and other non-menu keys, ignores releases
+and repeats, and supports enhanced labels with or without paired text.
+
+Native regressions cover nested fixture lookup, animation bounds, opacity,
+unchanged geometry/messages, tiny sizes and modal Enter/Backspace handling.
+The new PTY group checks delayed display, overlay opacity, unchanged upper text,
+repeat/release handling, resize, complete restoration and immediate file opening.
+A rendered PTY preview was inspected for layout and colours. Nerd remains the
+installed `c80d7775` compiler from `remove-linux-libc`; no compiler change is needed.
+
+Verification: formatting/type checking, **162 native tests** (50 ME across 18
+modules + 112 imported), all **38 debug and 38 release PTY groups**, Python
+compilation and diff checks passed. Release installation uses `just install`
+after commit/push, followed by the focused installed overlay smoke.
+
 ## Verification
 
 This section records the original MS1 baseline; the latest T3d/T4 evidence is

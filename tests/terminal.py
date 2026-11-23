@@ -1324,6 +1324,43 @@ def hjkl_and_line_selection(binary, folder):
         session.quit()
 
 
+def leader_overlay(binary, folder):
+    path = folder / "leader-overlay.txt"
+    original = b"".join(f"visible-row-{index:02}\n".encode() for index in range(70))
+    path.write_bytes(original)
+    with Session(binary, folder, "-r", path.name) as session:
+        before = screen(session)
+        session.send(" ")
+        session.drain(0.15)
+        assert b"Space menu" not in screen(session)
+        session.drain(2.1)
+        shown = screen(session)
+        assert b"Space menu" in shown and b"[ SPC ]" in shown and b"Open file" in shown, shown
+        assert shown.splitlines()[:16] == before.splitlines()[:16], "menu resized or scrolled the document"
+        assert all(b"visible-row-" not in row for row in shown.splitlines()[17:]), "document leaked through menu"
+        # Both press repeats and releases must leave the delayed menu open.
+        session.send(b"\x1b[32;1:2;32u\x1b[32;1:3u")
+        assert b"Space menu" in screen(session) and b"Files" not in screen(session)
+        fcntl.ioctl(session.master, termios.TIOCSWINSZ, struct.pack("HHHH", 4, 12, 0, 0))
+        session.drain(0.15)
+        assert session.process.poll() is None
+        fcntl.ioctl(session.master, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+        session.drain(0.15)
+        assert b"Space menu" in screen(session)
+        session.send(b"\x1b", 0.15)
+        assert screen(session) == before, "cancelling the overlay did not restore the editor"
+        session.send("  ")
+        await_file_picker(session)
+        session.send(b"\x1b", 0.15)
+        session.send(" b")  # illustrative submenu remains unassigned
+        assert b"Unknown Space sequence" in screen(session)
+        session.normal()
+        session.send("iX")
+        session.send(b"\x13")
+        assert path.read_bytes() == b"X" + original
+        session.quit()
+
+
 def control_hjkl(binary, folder):
     path = folder / "control-hjkl.txt"
     tail = b"".join(f"line-{index:03}\n".encode() for index in range(1, 71))
@@ -1739,7 +1776,7 @@ def main():
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
     checks = [file_picker, file_picker_stale_and_cancel, cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
               search_replace_and_buffers, search_origins, slash_replacement, confirmation_recovery, byte_paths_and_checkpoint_failures,
-              second_instance, crash_and_signals, undo_caret, word_delete, buffer_picker, buffer_picker_close_selected, buffer_picker_preview, buffer_picker_recovery, buffer_picker_unicode_bytes, enhanced_key_actions, keyboard_diagnostics, hjkl_and_line_selection, control_hjkl, duplicate_selection, command_completion, live_completion_filter, file_completion, home_paths, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
+              second_instance, crash_and_signals, undo_caret, word_delete, buffer_picker, buffer_picker_close_selected, buffer_picker_preview, buffer_picker_recovery, buffer_picker_unicode_bytes, enhanced_key_actions, keyboard_diagnostics, hjkl_and_line_selection, leader_overlay, control_hjkl, duplicate_selection, command_completion, live_completion_filter, file_completion, home_paths, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
     selected = [check for check in checks if args.filter in check.__name__]
     if not selected:
         parser.error(f"No PTY checks match {args.filter!r}")

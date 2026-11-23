@@ -5,6 +5,7 @@ use document
 use file_picker
 use key_diagnostics
 use keyboard
+use leader_menu
 use native
 use os.linux
 use picker
@@ -41,6 +42,8 @@ pub Editor :: plex {
     leader             bool
     leader_shown       bool
     leader_started     Instant
+    leader_revealed    Instant
+    leader_prefix      string
     picking_files      bool
     suppress_character bool
     search_decoded     [..]u8
@@ -1292,13 +1295,39 @@ impl Editor {
     }
     pub cancel_leader :: fn (self: ^Self) {
         self.leader = no
-        on self.leader_shown => self.message.clear()
         self.leader_shown = no
+        self.leader_prefix = ""
     }
     pub poll_leader :: fn (self: ^Self, current: Instant) {
         on self.leader && !self.leader_shown && elapsed(self.leader_started, current) >= from_ms(2000) => {
-            self.tell("Space menu\nSpace  Open file\nEsc    Cancel")
             self.leader_shown = yes
+            self.leader_revealed = current
+        }
+    }
+    pub leader_character :: fn (self: ^Self, rune: u32) {
+        on leader_choice(LEADER_ENTRIES[..], self.leader_prefix, rune) {
+            entry => on entry.operation {
+                Group => {
+                    self.leader_prefix = entry.sequence
+                    on !self.leader_shown => {
+                        self.leader_shown = yes
+                        self.leader_revealed = now()
+                    }
+                }
+                FilePicker => {
+                    self.cancel_leader()
+                    on self.open_file_picker() {
+                        _success => {
+                        }
+                        error! => self.tell(error)
+                    }
+                }
+
+            }
+            else => {
+                self.cancel_leader()
+                on rune != 27 => self.tell("Unknown Space sequence")
+            }
         }
     }
     pub key :: fn (self: ^Self, scratch: ^arena, key: TermKeyEvent) {
@@ -1342,7 +1371,30 @@ impl Editor {
                 return
             }
         }
-        on self.leader && (key.character == nil || key.modifiers != 0 || key.scan_code == TermScanCode.Escape) => {
+        on self.leader => {
+            on key.action == TermKeyAction.Repeat => {
+                self.suppress_character = key.character != nil
+                return
+            }
+            on key.modifiers == 0 && (key.scan_code == TermScanCode.Backspace || (key.scan_code == TermScanCode.Delete && key.character == 127.as(u32))) => {
+                on self.leader_prefix.count > 0 => self.leader_prefix = self.leader_prefix[.. self.leader_prefix.count - 1]
+                self.suppress_character = key.character != nil
+                return
+            }
+            on key.modifiers == 0 => {
+                on key.character {
+                    rune => {
+                        -- The paired character event dispatches the sequence.
+                        on rune >= 32 && rune != 127 => return
+                    }
+                    else => on key.label => [rune] {
+                        on rune >= 32 && rune != 127 => {
+                            self.leader_character(rune)
+                            return
+                        }
+                    }
+                }
+            }
             self.cancel_leader()
             self.suppress_character = key.character != nil
             return
@@ -1413,16 +1465,7 @@ impl Editor {
             return
         }
         on self.leader => {
-            self.cancel_leader()
-            on rune == ' '.as(u32) {
-                yes => on self.open_file_picker() {
-                    _success => {
-                    }
-                    error! => self.tell(error)
-                }
-                else => on rune != 27 => self.tell("Unknown Space key; press "
-                    +"Space, then Space to open a file")
-            }
+            self.leader_character(rune)
             return
         }
         text_view := self.workspace.active_view()
@@ -1435,6 +1478,7 @@ impl Editor {
             self.leader = yes
             self.leader_shown = no
             self.leader_started = now()
+            self.leader_prefix = ""
             return
         }
         suppressed := text_view.keyboard.suppress_text
@@ -1485,7 +1529,6 @@ impl Editor {
         }
         on before != after => self.changed()
         current := now()
-        self.poll_leader(current)
         on self.dirty && self.workspace.persistent && elapsed(self.checkpoint_at, current) >= from_ms(1000) && (elapsed(self.changed_at, current) >= from_ms(400) || elapsed(self.checkpoint_at, current) >= from_ms(2000)) => {
             on self.workspace.checkpoint(scratch) {
                 _success => self.dirty = no error! => self.tell(error)
@@ -2730,14 +2773,34 @@ test "Space leader waits for help, cancels and leaves Insert and prompts literal
     editor.workspace.active_view().interaction.state = Interaction.Normal
     editor.character(^scratch, 32)
     assert editor.leader && !editor.leader_shown
+    editor.tell("Keep this message")
     editor.poll_leader(editor.leader_started)
     assert !editor.leader_shown
+    editor.poll_leader(editor.leader_started.add(from_ms(2000)))
+    assert editor.leader_shown && bytes_text(editor.message) == "Keep this "
+        +"message"
+    editor.leader_prefix = "g"
+    editor.key(^scratch,
+               TermKeyEvent { scan_code: Backspace action: Press character: 8.as(u32) ... })
+    editor.character(^scratch, 8)
+    assert editor.leader && editor.leader_prefix == ""
     editor.character(^scratch, 'i'.as(u32))
     assert !editor.leader && editor.workspace.active_view().interaction.state == Interaction.Normal
     editor.character(^scratch, 32)
     editor.key(^scratch,
                TermKeyEvent { scan_code: ArrowRight action: Press ... })
     assert !editor.leader && editor.workspace.active_view().interaction.selection.active == 0
+    editor.character(^scratch, 32)
+    editor.key(^scratch,
+               TermKeyEvent { scan_code: Enter action: Press character: 10.as(u32) ... })
+    editor.character(^scratch, 10)
+    assert !editor.leader && editor.workspace.active_document().text.text() == ""
+    editor.character(^scratch, 32)
+    editor.key(^scratch,
+               TermKeyEvent { scan_code: Delete action: Press character: 127.as(u32) ... })
+    editor.character(^scratch, 127)
+    assert editor.leader && editor.workspace.active_document().text.text() == ""
+    editor.cancel_leader()
     editor.character(^scratch, 'i'.as(u32))
     editor.character(^scratch, 32)
     assert !editor.leader && editor.workspace.active_document().text.text() == " "

@@ -193,7 +193,8 @@ fresh discovery on reopening, safe acceptance and no-match handling.
 ## Agreed MS2 work
 
 The following tasks were explicitly accepted after T1/T2. T3's detailed
-interaction is now agreed and implemented; T4 is in progress; T5–T6 remain queued. T2's filename
+interaction is now agreed and implemented; T4/T4a/T4b are complete; T5–T6 remain
+queued. T2's filename
 completion still uses the existing message area, separate from the reusable popup.
 
 ### T3 — Popup/picker foundation, buffer switcher and Ctrl+W — done
@@ -313,6 +314,18 @@ ELF shared-library dependencies or interpreter. Release installation uses
 - Verified formatting/type checking, 160 native tests (48 ME + 112 imported),
   all 37 debug PTY groups and the focused release Ctrl+HJKL group, plus Python
   compilation and diff checks. Installation uses the tested release build.
+
+### T4b — Sliding Space menu overlay — done
+
+- Show the Space menu as a styled overlay sliding up from the bottom, retaining
+  the two-second delay and immediate Space Space action.
+- Preserve underlying views/messages and mask native/composite text underneath.
+- Prepare declarative grouped sequences, path headings and parent navigation.
+- Space b d remains an illustrative proposal, explicitly not an active binding.
+- Verified formatting/checking, 162 native tests (50 ME + 112 imported), all 38
+  debug and 38 release PTY groups, Python compilation and diff checks. A rendered
+  PTY preview was visually checked; release installation uses `just install`.
+
 
 ### T5 — Split-pane UI
 

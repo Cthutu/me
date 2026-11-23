@@ -1320,7 +1320,7 @@ overlay stack remain separate queued work.
 
 - Normal Space Space and `:files` open the existing generic popup; comma retains
   the buffer list. Space starts a leader sequence with a known-key menu after
-  two seconds; a second Space works immediately. Escape cancels; unknown keys
+  two seconds, as a bottom overlay (see §27); a second Space works immediately. Escape cancels; unknown keys
   cancel without running an editing command. Insert/prompts retain literal spaces;
   releases and Space repeats do not advance the sequence.
 - Search includes relative directory components. Results retain traversal/source
@@ -1357,3 +1357,29 @@ Errors and exceeded limits visibly mark results incomplete instead of implying a
 complete scan. Enumeration order is not a stable sorting contract. Revalidation
 uses normal Linux pathname operations, not a filesystem transaction against
 concurrent writers.
+
+
+## 27. Space menu presentation and nested-sequence foundation
+
+The agreed presentation is a bottom overlay which slides upwards after the
+existing two-second leader delay. Terminal row animation uses a 180 ms ease-out
+and advances from elapsed monotonic time, without blocking input. The full-width
+surface has a separating border, coloured key labels, action names and an Escape
+hint. It clips on small terminals and does not resize text views, replace the
+message area or change caret/selection/scroll state. Composite graphemes beneath
+the surface are masked alongside native cells; dismissal restores the editor.
+
+`src/leader_menu.n` declares entries by the sequence after the initial Space,
+label and operation. Sequence keys are printable ASCII; labels may be Unicode.
+Both dispatch and visible immediate-child hints use those entries. Group entries
+select a prefix; the heading includes the group's label and Backspace returns to
+its parent. A group entered before the initial delay reveals its menu immediately;
+an already-visible menu updates in place. Fast complete sequences do not wait for
+animation. Enhanced key labels without paired text, paired character events,
+releases and repeats are handled without duplicate dispatch. Other non-menu keys
+cancel and are consumed, so Enter cannot insert a newline beneath the overlay.
+
+Space Space remains the only active menu action. Matt explicitly clarified that
+Space b d was an example for future nested sequences; it is **not** a binding or
+an agreed buffer-deletion task. Future groups/actions require agreement before
+adding entries. This menu does not implement a general overlay stack or pane UI.
