@@ -168,14 +168,22 @@ impl Keyboard {
             return nil
         }
         count := self.take_count()
+        direction: ?Direction = on rune {
+            'h'.as(u32)  => Direction.Left
+            'j'.as(u32)  => Direction.Down
+            'k'.as(u32)  => Direction.Up
+            'l'.as(u32)  => Direction.Right
+            else         => nil
+        }
+        on direction => [value] return Command.Move { direction: value count extend: no }
         on count > 1 &&
             rune != 'w'.as(u32) &&
-            rune != 'l'.as(u32) => return Command.Error("Command does not "
+            rune != 'q'.as(u32) => return Command.Error("Command does not "
             +"accept a count")
         return on rune {
             'i'.as(u32), 'a'.as(u32), 'A'.as(u32), 'I'.as(u32), 'o'.as(u32), 'O'.as(u32)  => Command.EnterInsert(rune)
             'w'.as(u32)                                                                   => Command.SelectWord(count)
-            'l'.as(u32)                                                                   => Command.SelectLine(count)
+            'q'.as(u32)                                                                   => Command.SelectLine(count)
             'y'.as(u32)                                                                   => Command.Copy
             'x'.as(u32)                                                                   => Command.Cut
             'v'.as(u32)                                                                   => Command.Paste
@@ -222,6 +230,60 @@ test "keyboard counts emit commands rather than directly moving a view" {
         command => {
             on command {
                 Error(_message) => {
+                }
+
+                else => {
+                    assert no
+                }
+            }
+        }
+
+        else => {
+            assert no
+        }
+    }
+    assert keyboard.count == 0
+}
+
+test "Normal hjkl emit counted arrow-equivalent moves and q selects lines without changing Insert text" {
+    keyboard   : Keyboard
+    keys                      := "hjkl"
+    directions : [4]Direction =
+                                [Direction.Left, Direction.Down, Direction.Up, Direction.Right]
+
+    for index in [0 .. 4] {
+        for amount in [1.as(usize), 3] {
+            on amount^ == 3 => {
+                assert keyboard.character('3'.as(u32), Interaction.Normal) == nil
+            }
+            on keyboard.character(keys[index].as(u32), Interaction.Normal) {
+                command => {
+                    on command {
+                        Move { direction, count, extend } => {
+                            assert direction == directions[index] && count == amount^ && !extend
+                        }
+
+                        else => {
+                            assert no
+                        }
+                    }
+                }
+
+                else => {
+                    assert no
+                }
+            }
+            assert keyboard.count == 0
+        }
+        assert keyboard.character(keys[index].as(u32), Interaction.Insert) == nil
+    }
+    assert keyboard.character('q'.as(u32), Interaction.Insert) == nil
+    assert keyboard.character('3'.as(u32), Interaction.Normal) == nil
+    on keyboard.character('q'.as(u32), Interaction.Normal) {
+        command => {
+            on command {
+                SelectLine(count) => {
+                    assert count == 3
                 }
 
                 else => {

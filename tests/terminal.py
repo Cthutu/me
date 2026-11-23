@@ -646,12 +646,44 @@ def word_delete(binary, folder):
             session.quit()
 
 
+def hjkl_and_line_selection(binary, folder):
+    path = folder / "hjkl.txt"
+    original = "a👩‍💻bc\nx\na👩‍💻bc"
+    path.write_text(original)
+    with Session(binary, folder, "-r", path.name) as session:
+        session.send("2ljjkkhliX")
+        session.send(b"\x13")
+        assert path.read_text() == "a👩‍💻Xbc\nx\na👩‍💻bc", "hjkl lost grapheme/preferred-column motion"
+        session.send(b"\x1a\x13")
+        assert path.read_text() == original
+        session.send(b"\x1b[1;5H")
+        session.send("2qx")
+        session.send(b"\x13")
+        assert path.read_text() == "a👩‍💻bc", "2q did not select two complete lines"
+        session.send(b"\x1a\x13")
+        session.send(b"\x1b[1;5H")
+        session.send("qqx")
+        session.send(b"\x13")
+        assert path.read_text() == "a👩‍💻bc", "repeated q did not extend the line selection"
+        session.send(b"\x1a\x13")
+        session.send(b"\x1b[1;5H")
+        session.send("iqhjkl")
+        session.send(b"\x13")
+        assert path.read_text() == "qhjkl" + original, "Normal bindings leaked into Insert"
+        session.normal()
+        session.send("/qhjkl\r")
+        session.send("iZ")
+        session.send(b"\x13")
+        assert path.read_text() == "Zqhjkl" + original, "search prompt did not retain literal qhjkl"
+        session.quit()
+
+
 def duplicate_selection(binary, folder):
     path = folder / "duplicate.txt"
     block = b"one\r\ntwo\n"
     path.write_bytes(block + b"three")
     with Session(binary, folder, "-r", "duplicate.txt") as session:
-        session.send("2l")
+        session.send("2q")
         session.send(b"\x04")
         session.send(b"\x04")
         session.send(b"\x13")
@@ -930,7 +962,7 @@ def main():
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
     checks = [recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
               search_replace_and_buffers, search_origins, slash_replacement, confirmation_recovery, byte_paths_and_checkpoint_failures,
-              second_instance, crash_and_signals, undo_caret, word_delete, duplicate_selection, command_completion, live_completion_filter, file_completion, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
+              second_instance, crash_and_signals, undo_caret, word_delete, hjkl_and_line_selection, duplicate_selection, command_completion, live_completion_filter, file_completion, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
     selected = [check for check in checks if args.filter in check.__name__]
     if not selected:
         parser.error(f"No PTY checks match {args.filter!r}")

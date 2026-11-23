@@ -15,7 +15,8 @@ first-release scope.
 - Discuss the design thoroughly before implementing the editor.
 - Modal interaction, but not a requirement to reproduce Vim.
 - Start with selected Vim-inspired editing commands, not Vim compatibility.
-  Movement uses cursor keys only; do not plan `h`/`j`/`k`/`l` movement bindings.
+  Movement uses cursor keys and Normal `h`/`j`/`k`/`l` for left/down/up/right.
+  The later HJKL decision supersedes the original cursor-keys-only policy.
 - Fast startup and responsive editing are architectural priorities.
 - Support panes, independent views, shared buffers, transformed presentation, and
   popups, including global file-navigation popups.
@@ -531,7 +532,8 @@ external API names, protocol identifiers, and literal compatibility requirements
   `o` opens a line below; `O` opens a line above.
   Exact remaining caret-boundary semantics and undo boundaries still need
   agreement.
-- Use cursor keys for movement. Do not bind or plan `h`/`j`/`k`/`l` as movement.
+- Use cursor keys for movement in either state, plus `h`/`j`/`k`/`l` in Normal.
+  HJKL share arrow movement/count semantics and remain text in Insert/prompts.
 
 ### Indentation — agreed
 
@@ -756,7 +758,8 @@ MS1; persist the layout actually supported by each milestone.
 ## 17. Selection-first Normal commands — agreed experimental vocabulary
 
 These are Normal-state commands; their letters remain ordinary text in Insert.
-Do not reserve `v` for a separate selection state or `l` for Vim-style movement.
+Do not reserve `v` for a separate selection state. The later agreed HJKL
+navigation assigns `l` to right movement and moves line selection to `q`.
 
 | Key | Action |
 | --- | --- |
@@ -764,7 +767,7 @@ Do not reserve `v` for a separate selection state or `l` for Vim-style movement.
 | `x` | Cut the selection; leave the caret at the deletion point |
 | `v` | Paste, respecting characterwise versus linewise content |
 | `c` | Delete selection as one operation, then enter Insert |
-| `l` | Select a line, including its line ending when present |
+| `q` | Select a line, including its line ending when present |
 | `w` | Select the whole word containing the caret |
 
 - Characterwise paste replaces an existing selection or inserts at the caret
@@ -775,14 +778,14 @@ Do not reserve `v` for a separate selection state or `l` for Vim-style movement.
   selection still needs agreement.
 - `w` inside a word selects the whole word. Partial-word command forms can come
   later. Whitespace/punctuation classification remains open.
-- `l` includes an existing line ending, enabling whole-line cut without leaving
+- `q` includes an existing line ending, enabling whole-line cut without leaving
   an extra empty line. On a final unterminated line, never invent a file newline
   just to select it; exact cut/paste boundary handling remains open.
-- Repeated `w`/`l` extend the selection by another word/line: `lll` selects three
+- Repeated `w`/`q` extend the selection by another word/line: `qqq` selects three
   lines. This does not imply a persistent unit cursor model.
 - `<num>w` selects that many words, from the beginning of the first word through
   the end of the last, including intervening separators. The first word contains
-  the caret when the caret is inside a word. `<num>l` likewise selects that
+  the caret when the caret is inside a word. `<num>q` likewise selects that
   many lines. Count handling on existing selections, whitespace starts, and
   numeric prefixes for other commands remain open.
 - Word selection treats letters, digits, and underscores as a word, so

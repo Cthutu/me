@@ -2144,3 +2144,48 @@ test "Ctrl+Backspace deletes previous Unicode words or selections as one Normal-
         }
     }
 }
+
+test "hjkl preserve graphemes and preferred columns while q keeps linewise selection and prompts stay literal" {
+    scratch : arena
+    defer scratch.done()
+    editor : Editor
+    editor.workspace.lock_fd = -1
+    defer editor.release()
+    editor.workspace.add_empty()
+    doc := ^editor.workspace.active_document().text
+    on doc.load("a👩‍💻bc\nx\na👩‍💻bc") {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    view := ^editor.workspace.active_view().interaction
+    view.state = Interaction.Normal
+    for rune in "2ljjkkhl" {
+        editor.character(^scratch, rune^.as(u32))
+    }
+    assert view.selection.active == 12 && view.selection.empty()
+    assert view.state == Interaction.Normal && doc.history.count == 0
+    view.place(doc, 0, no)
+    editor.character(^scratch, '2'.as(u32))
+    editor.character(^scratch, 'q'.as(u32))
+    assert view.linewise && view.selection.start() == 0 && view.selection.end() == 17
+    editor.character(^scratch, 'q'.as(u32))
+    assert view.selection.end() == doc.text().count
+    editor.character(^scratch, 'h'.as(u32))
+    assert view.selection.empty() && !view.linewise
+    editor.prompt_open('/'.as(u32))
+    for rune in "qhjkl" {
+        editor.character(^scratch, rune^.as(u32))
+    }
+    assert bytes_text(editor.prompt) == "qhjkl"
+    editor.prompt_cancel()
+    view.place(doc, 0, no)
+    view.state = Interaction.Insert
+    for rune in "qhjkl" {
+        editor.character(^scratch, rune^.as(u32))
+    }
+    assert doc.text()[..5] == "qhjkl" && view.state == Interaction.Insert
+}

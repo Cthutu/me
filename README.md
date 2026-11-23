@@ -68,11 +68,13 @@ Empty buffers start in **Insert**, non-empty files in **Normal**, including
 recovered documents. Text input
 in Insert replaces a selection, if present. Escape returns to Normal without
 throwing the selection away. Normal movement cancels selection; Shift movement
-extends it in either state. Use cursor keys, not `hjkl`.
+extends it in either state. Normal `h`/`j`/`k`/`l` also move left/down/up/right;
+these letters remain literal text in Insert and prompts.
 
 | Keys | Action |
 | --- | --- |
 | Cursor keys | Grapheme/line navigation |
+| `h` / `j` / `k` / `l` | Normal-only left / down / up / right; same movement as arrows |
 | Ctrl+Left/Right | Word movement |
 | Home / End | First non-whitespace, then line start / line end |
 | Ctrl+Home/End | Document edges |
@@ -83,7 +85,7 @@ extends it in either state. Use cursor keys, not `hjkl`.
 | `a` / `A` | Insert after character / at line end |
 | `I` | Insert at first non-whitespace |
 | `o` / `O` | New line below / above; no automatic indentation |
-| `w` / `l` | Select whole word / line; repeats extend |
+| `w` / `q` | Select whole word / line; repeats extend |
 | `y` / `x` / `v` | Copy / cut / paste using the internal typed clipboard |
 | `c` | Delete selection and enter Insert; no selection just enters Insert |
 | Ctrl+Backspace | Delete the selection, or back to the previous Ctrl+Left word boundary; one undo; enter Normal |
@@ -103,7 +105,9 @@ word deletion too. Byte `0x7f` remains ordinary Backspace. Terminals sending
 `0x08` for plain Backspace cannot distinguish it from this shortcut without
 configuration or enhanced keyboard reporting.
 
-Positive Normal counts prefix arrows, word/paragraph/page movement and `w`/`l`.
+Positive Normal counts prefix arrows, `h`/`j`/`k`/`l`, word/paragraph/page
+movement and `w`/`q`. For example, `3j` moves down three lines and `3q` selects
+three lines; `qqq` also selects three lines.
 Unsupported combinations report an error and consume the count. `:120` jumps to
 line 120's first non-whitespace; out-of-range lines are clamped. Vertical motion
 retains a preferred display-cell column through shorter lines. Intentional

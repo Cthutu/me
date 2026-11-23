@@ -125,6 +125,18 @@ fresh discovery on reopening, safe acceptance and no-match handling.
   All 23 PTY groups pass on debug and release. Installed help/origin smoke passed;
   installation and smoke are repeated after pushing the completed change.
 
+## T2e — Normal HJKL navigation and q line selection — done
+
+- Add Normal `h`/`j`/`k`/`l` as arrow-equivalent left/down/up/right movement,
+  including counts, grapheme boundaries, preferred columns and selection clearing.
+- Reassign line selection from `l` to `q`, retaining counts/repeated extension and
+  typed linewise clipboard behaviour. Arrow bindings remain available.
+- Preserve literal HJKL/q input in Insert and prompts; leave uppercase bindings
+  unchanged. Update help, references and native/real-key regressions.
+- Verified: 140 native tests (31 ME + 109 imported), all 24 PTY groups on debug
+  and release, and formatting idempotence. Installed HJKL/q and help smoke run
+  after committing/pushing and installing the release executable.
+
 ## Agreed MS2 queue — not started
 
 The following tasks were explicitly accepted after T1/T2. This is the intended

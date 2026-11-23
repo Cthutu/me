@@ -43,7 +43,9 @@ new user agreements and remain open to hands-on feedback.
 - Insert typing replaces selection; Normal letters invoke commands.
 - `i` alone preserves selection on Insert entry; `a`, `A`, `I`, `o`, `O` clear it
   before repositioning.
-- Cursor keys only for movement: do not plan `h`/`j`/`k`/`l` bindings.
+- Cursor keys remain available; the later agreed Normal `h`/`j`/`k`/`l`
+  bindings add left/down/up/right movement with counts. These are literal in
+  Insert/prompts; `q` replaces `l` for line selection.
 - Tab inserts exactly four spaces by default, not spaces to a tab stop. Facets
   can hook into and redefine handling. A configuration system is wanted later.
 - Backspace removes one Tab's inserted spaces as a unit at line beginning/end;
@@ -142,19 +144,19 @@ Remaining:
 
 ## Next: selection units and typed paste
 
-- Adopt experimental Normal bindings: `y` copy, `x` cut, `v` paste, `l` line,
+- Adopt experimental Normal bindings: `y` copy, `x` cut, `v` paste, `q` line,
   `w` whole word; `c` changes selection.
 - Yank preserves selection; cut leaves caret at deletion point; characterwise
   paste replaces selection or inserts at caret, as one undo operation.
-- `l` includes the line ending; `w` inside a word selects the whole word.
+- `q` includes the line ending; `w` inside a word selects the whole word.
 - Preserve characterwise/linewise clipboard metadata so `v` can distinguish them.
 
 1. Linewise paste without selection inserts below the current line (settled).
    How should it behave with an existing characterwise/linewise selection?
-2. Repeated `w`/`l` extend selection (settled); `<num>w` selects from the first
+2. Repeated `w`/`q` extend selection (settled); `<num>w` selects from the first
    word's beginning through the last word's end. Define count behaviour on
    existing selections and support for counts on other commands.
-   `<num>l` is also supported. Ctrl+D duplicates below, moves to the duplicate
+   `<num>q` is also supported. Ctrl+D duplicates below, moves to the duplicate
    at the same column and is one undo operation. Latest Ctrl-command policy
    supersedes state preservation: Ctrl+D enters Normal. Define selection handling.
 3. Settled: letters/digits/underscores form words, punctuation forms separate
@@ -182,8 +184,8 @@ Remaining:
 - Scroll-only navigation can leave the caret off-screen. Caret movement or text
   insertion reveals it again. Normal numeric-prefix entry and opening/typing in
   the `:` prompt do not snap back; executed navigation reveals its destination.
-- Settled: Normal counts apply to arrows (`12` then Down moves 12 document
-  lines); `:120` goes to absolute line 120; relative gutter numbers are measured
+- Settled: Normal counts apply to arrows and HJKL (`12` then Down or `12j`
+  moves 12 document lines); `:120` goes to absolute line 120; relative gutter numbers are measured
   from the actual caret line even when off-screen.
 - Settled: clamp out-of-range movement; absolute line jumps use first
   non-whitespace. Vertical arrows retain a preferred column through short lines
