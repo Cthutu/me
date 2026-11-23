@@ -4,6 +4,7 @@ use editor
 use key_diagnostics
 use native
 use os.linux
+use picker
 use positions
 use std.term
 use std.text
@@ -97,6 +98,7 @@ message_rows :: fn (text: string, width: usize) -> [..]string {
 }
 
 impl Terminal {
+
     pub release :: fn (self: ^Self) {
         self.editor.release()
         self.scratch.done()
@@ -110,40 +112,51 @@ impl Terminal {
             _ := sys_close(self.signal_fd)
         }
         on self.signals_active => {
-            _ := syscall(SYS_RT_SIGPROCMASK, 2, (^self.signal_mask).as(usize).as(u64), 0, 8, 0, 0)
+            _ := syscall(SYS_RT_SIGPROCMASK,
+                         2,
+                         (^self.signal_mask).as(usize).as(u64),
+                         0,
+                         8,
+                         0,
+                         0)
         }
     }
+
     pub signals_start :: fn (self: ^Self) -> void\string {
-        self.signal_fd = - 1
-        mask: u64 = (1 << 14) | 3
+        self.signal_fd = -1
+        mask : u64 = (1 << 14) | 3
         on syscall(SYS_RT_SIGPROCMASK, 0, (^mask).as(usize).as(u64), (^self.signal_mask).as(usize).as(u64), 8, 0, 0).as(i64) < 0 => return "Cannot arrange safe termination signals"!
         self.signals_active = yes
-        fd := syscall(SYS_SIGNALFD4, (- 1).as(u64), (^mask).as(usize).as(u64), 8, (0x800 | 0x80000), 0, 0).as(i32)
+        fd := syscall(SYS_SIGNALFD4, (-1).as(u64), (^mask).as(usize).as(u64), 8, (0x800 | 0x80000), 0, 0).as(i32)
         on fd < 0 => return "Cannot open termination signal descriptor"!
         self.signal_fd = fd
     }
+
     pub simulate :: fn (self: ^Self) {
         self.scratch.reset()
         on self.frames >= 2 => {
-            output: [..]u8
+            output : [..]u8
             defer output.free()
             for glyph in self.glyphs {
                 on !glyph.pending => again
-                ink := glyph.ink.as(u32)
+                ink   := glyph.ink.as(u32)
                 paper := glyph.paper.as(u32)
-                text := self.scratch.pr($"\x1b[{glyph.y + 1};{glyph.x + 1}H\x1b[38;2;{(ink >> 16) & 255};{(ink >> 8) & 255};{ink & 255}m\x1b[48;2;{(paper >> 16) & 255};{(paper >> 8) & 255};{paper & 255}m{glyph.text}\x1b[0m")
+                text  := self.scratch.pr($"\x1b[{glyph.y + 1};{glyph.x + 1}H\x1b[38;2;{(ink >> 16) & 255};{(ink >> 8) & 255};{ink & 255}m\x1b[48;2;{(paper >> 16) & 255};{(paper >> 8) & 255};{paper & 255}m{glyph.text}\x1b[0m")
                 start := output.count
+
                 output.resize_undefined_to(start + text.count)
-                output[start ..] = text.as([]u8)
+                output[start..] = text.as([]u8)
                 glyph.pending = no
             }
             on output.count > 0 => term_print(bytes_text(output))
         }
-        signal: [128]u8
-        on self.signal_fd >= 0 && sys_read(self.signal_fd, ^signal, 128) == 128 => {
+        signal : [128]u8
+        on self.signal_fd >= 0 &&
+            sys_read(self.signal_fd, ^signal, 128) == 128 => {
             on self.editor.quit_safely(^self.scratch) {
                 _success => {
                 }
+
                 error! => self.editor.tell(error)
             }
         }
@@ -154,15 +167,33 @@ impl Terminal {
         }
         on self.editor.quit => term_done()
     }
-    set :: fn (self: ^Self, x: usize, y: usize, rune: u32, ink: Colour, paper: Colour) {
-        on x < self.width && y < self.height => self.cells[y * self.width + x] = Cell {
-            rune ink paper ...
+
+    set :: fn (self  : ^Self,
+               x     : usize,
+               y     : usize,
+               rune  : u32,
+               ink   : Colour,
+               paper : Colour) {
+        on x < self.width &&
+            y < self.height => self.cells[y * self.width + x] = Cell {
+            rune
+            ink
+            paper
+            ...
         }
     }
-    text :: fn (self: ^Self, x: usize, y: usize, input: string, ink: Colour, paper: Colour, max_width: usize) {
-        text := display_text(^self.scratch, input, single_line = yes)
-        offset: usize = 0
-        column: usize = 0
+
+    text :: fn (self      : ^Self,
+                x         : usize,
+                y         : usize,
+                input     : string,
+                ink       : Colour,
+                paper     : Colour,
+                max_width : usize) {
+        text           := display_text(^self.scratch, input, single_line = yes)
+        offset : usize = 0
+        column : usize = 0
+
         for offset < text.count &&
             column < max_width &&
             x + column < self.width {
@@ -170,45 +201,224 @@ impl Terminal {
             on text[offset] == '\n' || text[offset] == '\r' => break
             width := character_width(text, offset, column)
             on width == 0 => width = 1
-            on column + width > max_width || x + column + width > self.width => break
-            self.character(x + column, y, text[offset .. next], width, ink, paper)
+            on column + width > max_width ||
+                x + column + width > self.width => break
+            self.character(x + column, y, text[offset..next], width, ink, paper)
             column += width
             offset = next
         }
     }
-    character :: fn (self: ^Self, x: usize, y: usize, text: string, width: usize, ink: Colour, paper: Colour) {
+
+    character :: fn (self  : ^Self,
+                     x     : usize,
+                     y     : usize,
+                     text  : string,
+                     width : usize,
+                     ink   : Colour,
+                     paper : Colour) {
         (rune, size) := utf8_decode(text.as([]u8))
-        on rune < 32 || (rune >= 0x7f && rune < 0xa0) || grapheme_property(rune) == 3 => {
+        on rune < 32 ||
+            (rune >= 0x7f && rune < 0xa0) ||
+            grapheme_property(rune) == 3 => {
             rune = 0xfffd
             on text[0] == '\t' => rune = ' '.as(u32)
         }
         cluster := text
         on scalar_width(rune) == 0 => {
-            rune = 0x25cc
+            rune    = 0x25cc
             cluster = self.glyph_storage.pr($"◌{text}")
         }
         native_width := rune.display_width()
-        composite := (size < text.count || rune == 0x25cc || native_width.as(usize) != width) && text[0] != '\t'
+        composite    := (size < text.count || rune == 0x25cc || native_width.as(usize) != width) && text[0] != '\t'
         -- The backend's scalar-width table is narrower than Unicode 16.
         -- Do not emit a misleading head cell: it would shift subsequent
         -- physical output. Reserve spaces and overlay the real glyph instead.
-        on composite && native_width.as(usize) != width => {
-            rune = ' '.as(u32)
+        on composite &&
+            native_width.as(usize) != width => {
+            rune         = ' '.as(u32)
             native_width = 1
         }
         self.set(x, y, rune, ink, paper)
         for tail in [1.as(usize) .. width] {
             padding := on native_width > 0 && tail < native_width.as(usize) {
-                yes => 0.as(u32) else => ' '.as(u32)
+                yes   => 0.as(u32)
+                else  => ' '.as(u32)
             }
             self.set(x + tail, y, padding, ink, paper)
         }
         on composite => {
             self.glyphs.push(Glyph {
-                x y text: self.glyph_storage.pr(cluster) ink paper pending: yes
+                x
+                y
+                text: self.glyph_storage.pr(cluster)
+                ink
+                paper
+                pending: yes
             })
         }
     }
+
+    paint_picker :: fn (self: ^Self, picker: ^FuzzyPicker) {
+        box := popup_bounds(self.width, self.height)
+        -- Composite glyph overlays must not redraw through an opaque popup.
+        kept : usize = 0
+        for glyph in self.glyphs {
+            cells := character_width(glyph.text, 0, glyph.x)
+            on glyph.y >= box.y && glyph.y < box.y + box.height && glyph.x < box.x + box.width && glyph.x + cells > box.x {
+                yes => {
+                    end := on glyph.x + cells < self.width {
+                        yes   => glyph.x + cells
+                        else  => self.width
+                    }
+                    for x in [glyph.x .. end] {
+                        self.set(x, glyph.y, ' '.as(u32), INK, PAPER)
+                    }
+                }
+
+                else => {
+                    self.glyphs[kept] = glyph^
+                    kept += 1
+                }
+            }
+        }
+        self.glyphs.resize_undefined_to(kept)
+        -- Also clip native double-width scalars whose head/tail straddles
+        -- the popup edge, keeping retained cells equal to the physical screen.
+        right := box.x + box.width
+        for y in [box.y .. box.y + box.height] {
+            on box.x > 0 &&
+                self.cells[y * self.width + box.x].rune == 0 => {
+                self.set(box.x - 1, y, ' '.as(u32), INK, PAPER)
+            }
+            on right < self.width &&
+                self.cells[y * self.width + right].rune == 0 => {
+                self.set(right, y, ' '.as(u32), INK, PAPER)
+            }
+        }
+        for y in [box.y .. box.y + box.height] {
+            for x in [box.x .. box.x + box.width] {
+                self.set(x, y, ' '.as(u32), INK, GUTTER_PAPER)
+            }
+        }
+        border := on box.width >= 4 && box.height >= 4 {
+            yes   => 1.as(usize)
+            else  => 0
+        }
+        left     := box.x + border
+        inner    := box.width - border * 2
+        search_y := box.y + border
+        footer   := box.height >= 5
+        bottom   := box.y + box.height - border
+
+        on footer => bottom -= 1
+        list_y := search_y + 1
+        rows := on bottom > list_y {
+            yes   => bottom - list_y
+            else  => 0
+        }
+        picker.reveal(rows)
+        on border != 0 => {
+            for x in [box.x + 1 .. box.x + box.width - 1] {
+                self.set(x, box.y, '─'.as(u32), NORMAL_CARET, GUTTER_PAPER)
+                self.set(x,
+                         box.y + box.height - 1,
+                         '─'.as(u32),
+                         NORMAL_CARET,
+                         GUTTER_PAPER)
+            }
+            for y in [box.y + 1 .. box.y + box.height - 1] {
+                self.set(box.x, y, '│'.as(u32), NORMAL_CARET, GUTTER_PAPER)
+                self.set(box.x + box.width - 1,
+                         y,
+                         '│'.as(u32),
+                         NORMAL_CARET,
+                         GUTTER_PAPER)
+            }
+            self.set(box.x, box.y, '┌'.as(u32), NORMAL_CARET, GUTTER_PAPER)
+            self.set(box.x + box.width - 1,
+                     box.y,
+                     '┐'.as(u32),
+                     NORMAL_CARET,
+                     GUTTER_PAPER)
+            self.set(box.x,
+                     box.y + box.height - 1,
+                     '└'.as(u32),
+                     NORMAL_CARET,
+                     GUTTER_PAPER)
+            self.set(box.x + box.width - 1,
+                     box.y + box.height - 1,
+                     '┘'.as(u32),
+                     NORMAL_CARET,
+                     GUTTER_PAPER)
+            title := self.scratch.pr($" {picker.title} · {picker.matches.count}/{picker.entries.count} ")
+            self.text(box.x + 2,
+                      box.y,
+                      title,
+                      NORMAL_CARET,
+                      GUTTER_PAPER,
+                      box.width - 4)
+        }
+        prefix := on inner >= 2 {
+            yes   => 2.as(usize)
+            else  => 0
+        }
+        on prefix > 0 => self.text(left, search_y, "> ", NORMAL_CARET, GUTTER_PAPER, prefix)
+        shown             := display_text(^self.scratch, bytes_text(picker.query), single_line = yes)
+        before            := display_text(^self.scratch, bytes_text(picker.query)[..picker.caret], single_line = yes)
+        column            := display_column(before, 0, before.count)
+        available         := inner - prefix
+        offset    : usize = 0
+        skipped   : usize = 0
+
+        for offset < shown.count &&
+            available > 0 &&
+            column - skipped >= available {
+            skipped += character_width(shown, offset, skipped)
+            offset  = next_character(shown, offset)
+        }
+        self.text(left + prefix,
+                  search_y,
+                  shown[offset..],
+                  INK,
+                  GUTTER_PAPER,
+                  available)
+        on available > 0 &&
+            column >= skipped &&
+            column - skipped < available => {
+            x    := left + prefix + column - skipped
+            cell := ^self.cells[search_y * self.width + x]
+
+            cell.ink = PAPER
+            cell.paper = NORMAL_CARET
+            for glyph in self.glyphs {
+                on glyph.x == x &&
+                    glyph.y == search_y => {
+                    glyph.ink = PAPER
+                    glyph.paper = NORMAL_CARET
+                }
+            }
+        }
+        for row in [0.as(usize) .. rows] {
+            index := picker.top + row
+            on index >= picker.matches.count => break
+            item := picker.entries[picker.matches[index]]
+            paper := on index == picker.selected {
+                yes   => SELECT
+                else  => GUTTER_PAPER
+            }
+            for x in [left .. left + inner] {
+                self.set(x, list_y + row, ' '.as(u32), INK, paper)
+            }
+            label := self.scratch.pr($" {item.annotation} {item.label}")
+            self.text(left, list_y + row, label, INK, paper, inner)
+        }
+        on picker.matches.count == 0 &&
+            rows > 0 => self.text(left, list_y, " "
+            +"No matches", MUTED, GUTTER_PAPER, inner)
+        on footer => self.text(left, bottom, "Enter choose · Esc cancel · "
+            +"Ctrl+W close active", MUTED, GUTTER_PAPER, inner)
+    }
+
     pub paint :: fn (self: ^Self, width: usize, height: usize) {
         self.scratch.reset()
         on width == 0 || height == 0 => return
@@ -221,7 +431,8 @@ impl Terminal {
         self.glyphs = old_glyphs
         self.glyphs.clear()
         self.glyph_storage = on self.frames % 2 == 0 {
-            yes => ^self.glyph_arena else => ^self.previous_arena
+            yes   => ^self.glyph_arena
+            else  => ^self.previous_arena
         }
         self.glyph_storage.reset()
         old_cells := self.previous_cells
@@ -229,66 +440,78 @@ impl Terminal {
         self.cells = old_cells
         self.cells.resize_undefined_to(width * height)
         for cell in self.cells {
-            cell^ = Cell {
-                rune: ' '.as(u32) ink: INK paper: PAPER ...
-            }
+            cell^ = Cell { rune: ' '.as(u32) ink: INK paper: PAPER ... }
         }
-        editor := ^self.editor
+        editor    := ^self.editor
         text_view := editor.workspace.active_view()
-        view := ^text_view.interaction
+        view      := ^text_view.interaction
         inserting := view.state == Interaction.Insert
+
         caret_paper := on inserting {
-            yes => INSERT_CARET else => NORMAL_CARET
+            yes   => INSERT_CARET
+            else  => NORMAL_CARET
         }
         status_paper := on inserting {
-            yes => INSERT_PAPER else => NORMAL_PAPER
+            yes   => INSERT_PAPER
+            else  => NORMAL_PAPER
         }
-        entry := editor.workspace.active_document()
-        doc := ^entry.text
+        entry      := editor.workspace.active_document()
+        doc        := ^entry.text
         caret_line := doc.line_at(view.selection.active)
-        message := display_text(^self.scratch, bytes_text(editor.message))
-        messages := message_rows(message, width)
+        message    := display_text(^self.scratch, bytes_text(editor.message))
+        messages   := message_rows(message, width)
+
         defer messages.free()
         message_lines := messages.count
         message_height := on editor.completion.active {
             yes => on editor.completion.items.count > 0 {
                 yes => editor.completion.items.count + 1
+
                 else => on message.count > 0 {
-                    yes => message_lines + 1 else => 2
+                    yes   => message_lines + 1
+                    else  => 2
                 }
             }
+
             else => on message.count > 0 {
-                yes => message_lines + on editor.prompt_kind != 0 {
-                    yes => 1 else => 0
-                }
+                yes => message_lines + (on editor.prompt_kind != 0 { yes => 1 else => 0 })
+
                 else => 1
             }
         }
         maximum_message_height := on editor.diagnostics.active {
-            yes => height - 1 else => height / 2
+            yes   => height - 1
+            else  => height / 2
         }
         on message_height > maximum_message_height => message_height = maximum_message_height
         on message_height == 0 => message_height = 1
         rows := on height > message_height + 1 {
-            yes => height - message_height - 1 else => 0
+            yes   => height - message_height - 1
+            else  => 0
         }
         previously_visible := caret_line >= view.top && caret_line < view.top + view.rows
-        on (resized || view.rows != rows) && previously_visible && (caret_line < view.top || caret_line >= view.top + rows) => {
+        on (resized || view.rows != rows) &&
+            previously_visible &&
+            (caret_line < view.top || caret_line >= view.top + rows) => {
             view.top = on caret_line > rows / 2 {
-                yes => caret_line - rows / 2 else => 0
+                yes   => caret_line - rows / 2
+                else  => 0
             }
         }
         view.rows = on rows > 0 {
-            yes => rows else => 1
+            yes   => rows
+            else  => 1
         }
-        digits: usize = 1
-        magnitude := doc.lines.count
+        digits    : usize = 1
+        magnitude         := doc.lines.count
+
         for magnitude >= 10 {
             magnitude /= 10
-            digits += 1
+            digits    += 1
         }
         gutter := on width >= digits + 5 {
-            yes => digits + 2 else => 0
+            yes   => digits + 2
+            else  => 0
         }
         view.columns = width - gutter
         on caret_line != self.previous_caret_line => view.horizontal = 0
@@ -296,29 +519,38 @@ impl Terminal {
         on view.reveal => {
             on caret_line < view.top => view.top = caret_line
             on caret_line >= view.top + view.rows => view.top = caret_line - view.rows + 1
-            column := display_column(doc.text(), doc.line_start(caret_line), view.selection.active)
+            column := display_column(doc.text(),
+                                     doc.line_start(caret_line),
+                                     view.selection.active)
             on column < view.horizontal => view.horizontal = column
-            on view.columns > 0 && column >= view.horizontal + view.columns => view.horizontal = column - view.columns + 1
+            on view.columns > 0 &&
+                column >= view.horizontal + view.columns => view.horizontal = column - view.columns + 1
             view.reveal = no
         }
         query := on editor.prompt_kind != 0 && editor.prompt_kind != ':'.as(u32) {
-            yes => editor.search_query() else => bytes_text(editor.last_search)
+            yes   => editor.search_query()
+            else  => bytes_text(editor.last_search)
         }
         for row in [0.as(usize) .. rows] {
             line := view.top + row
             on line >= doc.lines.count => again
             number := on view.state == Interaction.Insert || line == caret_line {
-                yes => line + 1 else => on line > caret_line {
-                    yes => line - caret_line else => caret_line - line
+                yes => line + 1
+
+                else => on line > caret_line {
+                    yes   => line - caret_line
+                    else  => caret_line - line
                 }
             }
             on gutter > 0 => {
                 current := line == caret_line
                 ink := on current {
-                    yes => GUTTER_INK else => MUTED
+                    yes   => GUTTER_INK
+                    else  => MUTED
                 }
                 paper := on current {
-                    yes => GUTTER_PAPER else => PAPER
+                    yes   => GUTTER_PAPER
+                    else  => PAPER
                 }
                 on current => {
                     for x in [0.as(usize) .. gutter] {
@@ -326,50 +558,73 @@ impl Terminal {
                     }
                 }
                 label := self.scratch.pr($"{number}")
-                self.text(gutter - 1 - label.count, row, label, ink, paper, label.count)
+                self.text(gutter - 1 - label.count,
+                          row,
+                          label,
+                          ink,
+                          paper,
+                          label.count)
             }
             horizontal := on line == caret_line {
-                yes => view.horizontal else => 0
+                yes   => view.horizontal
+                else  => 0
             }
-            position := doc.line_start(line)
-            end := doc.line_end(line)
-            column: usize = 0
-            match_end: usize = 0
+            position          := doc.line_start(line)
+            end               := doc.line_end(line)
+            column    : usize = 0
+            match_end : usize = 0
             -- Find visible-line occurrences independently; include a match
             -- beginning on an earlier line and continuing into this one.
-            match_position: usize = 0
-            on editor.highlights && query.count > 0 => {
+            match_position : usize = 0
+            on editor.highlights &&
+                query.count > 0 => {
                 match_position = on position > query.count {
-                    yes => position - query.count else => 0
+                    yes   => position - query.count
+                    else  => 0
                 }
             }
             for position < end {
-                next := next_character(doc.text(), position)
+                next  := next_character(doc.text(), position)
                 cells := character_width(doc.text(), position, column)
+
                 on cells == 0 => cells = 1
                 paper := PAPER
-                ink := INK
-                on editor.highlights && query.count > 0 => {
+                ink   := INK
+
+                on editor.highlights &&
+                    query.count > 0 => {
                     for match_position < next &&
                         match_position + query.count <= doc.text().count {
-                        on doc.text()[match_position .. match_position + query.count] == query => match_end = match_position + query.count
+                        on doc.text()[match_position..match_position + query.count] == query => match_end = match_position + query.count
                         match_position += 1
                     }
                     on position < match_end => paper = MATCH
                 }
-                on position < view.selection.end() && next > view.selection.start() => paper = SELECT
-                on editor.prompt_kind == 0 && view.selection.active >= position && view.selection.active < next => {
+                on position < view.selection.end() &&
+                    next > view.selection.start() => paper = SELECT
+                on editor.prompt_kind == 0 &&
+                    view.selection.active >= position &&
+                    view.selection.active < next => {
                     paper = caret_paper
-                    ink = PAPER
+                    ink   = PAPER
                 }
-                on column >= horizontal && column - horizontal + cells <= view.columns => {
-                    self.character(gutter + column - horizontal, row, doc.text()[position .. next], cells, ink, paper)
+                on column >= horizontal &&
+                    column - horizontal + cells <= view.columns => {
+                    self.character(gutter + column - horizontal,
+                                   row,
+                                   doc.text()[position..next],
+                                   cells,
+                                   ink,
+                                   paper)
                 }
-                column += cells
+                column   += cells
                 position = next
                 on column >= horizontal + view.columns => break
             }
-            on editor.prompt_kind == 0 && view.selection.active == end && column >= horizontal && column - horizontal < view.columns => self.set(gutter + column - horizontal, row, ' '.as(u32), PAPER, caret_paper)
+            on editor.prompt_kind == 0 &&
+                view.selection.active == end &&
+                column >= horizontal &&
+                column - horizontal < view.columns => self.set(gutter + column - horizontal, row, ' '.as(u32), PAPER, caret_paper)
         }
         on height > message_height => {
             status_y := height - message_height - 1
@@ -377,33 +632,41 @@ impl Terminal {
                 self.set(x, status_y, ' '.as(u32), INK, status_paper)
             }
             badge := on width < 32 {
-                yes => on inserting {
-                    yes => " I " else => " N "
-                }
+                yes => on inserting { yes => " I " else => " N " }
+
                 else => on inserting {
-                    yes => " ✎ INSERT " else => " ◆ NORMAL "
+                    yes   => " ✎ INSERT "
+                    else  => " ◆ NORMAL "
                 }
             }
             badge_width := display_column(badge, 0, badge.count)
             path := on entry.path.count == 0 {
-                yes => "[unnamed]" else => bytes_text(entry.path)
+                yes   => "[unnamed]"
+                else  => bytes_text(entry.path)
             }
             modified := on entry.modified() {
-                yes => " ●" else => ""
+                yes   => " ●"
+                else  => ""
             }
             conflict := on entry.conflict {
-                yes => " !conflict" else => ""
+                yes   => " !conflict"
+                else  => ""
             }
             missing := on entry.missing {
-                yes => " ?missing" else => ""
+                yes   => " ?missing"
+                else  => ""
             }
             persistence := on editor.workspace.checkpoint_failed {
-                yes => " !C" else => on editor.workspace.persistent {
-                    yes => "" else => " ~"
+                yes => " !C"
+
+                else => on editor.workspace.persistent {
+                    yes   => ""
+                    else  => " ~"
                 }
             }
             count := on text_view.keyboard.count > 0 {
-                yes => self.scratch.pr($"  {text_view.keyboard.count}") else => ""
+                yes   => self.scratch.pr($"  {text_view.keyboard.count}")
+                else  => ""
             }
             status := self.scratch.pr($"{persistence}{conflict}{missing}{modified} │ {caret_line + 1}:{display_column(doc.text(), doc.line_start(caret_line), view.selection.active) + 1}{count} │ {text_view.document_id + 1}/{editor.workspace.documents.count} │ {path}")
             self.text(0, status_y, badge, PAPER, caret_paper, width)
@@ -412,30 +675,35 @@ impl Terminal {
         bottom := height - message_height
         on editor.prompt_kind != 0 {
             yes => {
-                prompt_y := height - 1
-                encoded: [4]u8
-                size := editor.prompt_kind.as(Rune).utf8_encode(encoded[..])
-                shown := display_text(^self.scratch, bytes_text(editor.prompt), single_line = yes)
-                prefix := display_text(^self.scratch, bytes_text(editor.prompt)[.. editor.prompt_caret], single_line = yes)
-                prompt := self.scratch.pr($"{encoded[..size].as(string)}{shown}")
-                column := 1 + display_column(prefix, 0, prefix.count)
+                prompt_y         := height - 1
+                encoded  : [4]u8
+                size             := editor.prompt_kind.as(Rune).utf8_encode(encoded[..])
+                shown            := display_text(^self.scratch, bytes_text(editor.prompt), single_line = yes)
+                prefix           := display_text(^self.scratch, bytes_text(editor.prompt)[..editor.prompt_caret], single_line = yes)
+                prompt           := self.scratch.pr($"{encoded[..size].as(string)}{shown}")
+                column           := 1 + display_column(prefix, 0, prefix.count)
+
                 horizontal := on column >= width {
-                    yes => column - width + 1 else => 0
+                    yes   => column - width + 1
+                    else  => 0
                 }
-                offset: usize = 0
-                skipped: usize = 0
+                offset  : usize = 0
+                skipped : usize = 0
+
                 for offset < prompt.count &&
                     skipped < horizontal {
                     skipped += character_width(prompt, offset, skipped)
-                    offset = next_character(prompt, offset)
+                    offset  = next_character(prompt, offset)
                 }
-                self.text(0, prompt_y, prompt[offset ..], INK, PAPER, width)
-                on column >= skipped && column - skipped < width => {
+                self.text(0, prompt_y, prompt[offset..], INK, PAPER, width)
+                on column >= skipped &&
+                    column - skipped < width => {
                     cell := ^self.cells[prompt_y * width + column - skipped]
                     cell.ink = PAPER
                     cell.paper = caret_paper
                     for glyph in self.glyphs {
-                        on glyph.x == column - skipped && glyph.y == prompt_y => {
+                        on glyph.x == column - skipped &&
+                            glyph.y == prompt_y => {
                             glyph.ink = PAPER
                             glyph.paper = caret_paper
                         }
@@ -451,33 +719,46 @@ impl Terminal {
                                         on row < messages.count => self.text(0, bottom + row, messages[row], INK, PAPER, width)
                                     }
                                 }
-                                else => on available > 0 => self.text(0, bottom, on editor.completion.command_mode {
-                                    yes => "No matching commands" else => "No "
-                                        +"matching files"
-                                }
-                                , MUTED, PAPER, width)
+
+                                else => on available > 0 => self.text(0, bottom, on editor.completion.command_mode { yes => "No matching commands" else => "No "
+                                    +"matching files" }, MUTED, PAPER, width)
                             }
                         }
                         first := on editor.completion.selected >= available {
-                            yes => editor.completion.selected - available + 1 else => 0
+                            yes   => editor.completion.selected - available + 1
+                            else  => 0
                         }
                         for row in [0.as(usize) .. available] {
                             index := first + row
                             on index >= editor.completion.items.count => break
                             selected := index == editor.completion.selected
                             paper := on selected {
-                                yes => SELECT else => PAPER
+                                yes   => SELECT
+                                else  => PAPER
                             }
                             for x in [0.as(usize) .. width] {
-                                self.set(x, bottom + row, ' '.as(u32), INK, paper)
+                                self.set(x,
+                                         bottom + row,
+                                         ' '.as(u32),
+                                         INK,
+                                         paper)
                             }
                             marker := on selected {
-                                yes => "› " else => "  "
+                                yes   => "› "
+                                else  => "  "
                             }
-                            label := display_text(^self.scratch, editor.completion.items[index], single_line = yes)
-                            self.text(0, bottom + row, self.scratch.pr($"{marker}{label}"), INK, paper, width)
+                            label := display_text(^self.scratch,
+                                                  editor.completion.items[index],
+                                                  single_line = yes)
+                            self.text(0,
+                                      bottom + row,
+                                      self.scratch.pr($"{marker}{label}"),
+                                      INK,
+                                      paper,
+                                      width)
                         }
                     }
+
                     else => {
                         for row in [0.as(usize) .. available] {
                             on row < messages.count => self.text(0, bottom + row, messages[row], INK, PAPER, width)
@@ -485,10 +766,12 @@ impl Terminal {
                     }
                 }
             }
+
             else => {
                 scroll := editor.message_scroll
                 on scroll + message_height > message_lines => scroll = on message_lines > message_height {
-                    yes => message_lines - message_height else => 0
+                    yes   => message_lines - message_height
+                    else  => 0
                 }
                 editor.message_scroll = scroll
                 for row in [0.as(usize) .. message_height] {
@@ -496,18 +779,29 @@ impl Terminal {
                 }
             }
         }
+        on editor.picker.active => self.paint_picker(^editor.picker)
         -- Invalidate an old composite only when its text/colour/position changes.
         -- Otherwise std.term must leave its base cell clean for the overlay.
         for previous in self.previous_glyphs {
             same := no
             for glyph in self.glyphs {
-                on glyph.x == previous.x && glyph.y == previous.y && glyph.text == previous.text && glyph.ink == previous.ink && glyph.paper == previous.paper => {
+                on glyph.x == previous.x &&
+                    glyph.y == previous.y &&
+                    glyph.text == previous.text &&
+                    glyph.ink == previous.ink &&
+                    glyph.paper == previous.paper => {
                     glyph.pending = previous.pending || resized
                     same = yes
                 }
             }
-            on !same && previous.x < width && previous.y < height => {
-                term_fb_put(previous.x.as(i32), previous.y.as(i32), ' '.as(u32), ink = previous.ink, paper = previous.paper)
+            on !same &&
+                previous.x < width &&
+                previous.y < height => {
+                term_fb_put(previous.x.as(i32),
+                            previous.y.as(i32),
+                            ' '.as(u32),
+                            ink = previous.ink,
+                            paper = previous.paper)
                 self.cells[previous.y * width + previous.x].force = yes
                 on previous.x + 1 < width => self.cells[previous.y * width + previous.x + 1].force = yes
             }
@@ -516,15 +810,24 @@ impl Terminal {
             for x in [0.as(usize) .. width] {
                 cell := self.cells[y * width + x]
                 on cell.rune == 0 => again
-                on !resized && !cell.force && y * width + x < self.previous_cells.count => {
+                on !resized &&
+                    !cell.force &&
+                    y * width + x < self.previous_cells.count => {
                     previous := self.previous_cells[y * width + x]
-                    on cell.rune == previous.rune && cell.ink == previous.ink && cell.paper == previous.paper => again
+                    on cell.rune == previous.rune &&
+                        cell.ink == previous.ink &&
+                        cell.paper == previous.paper => again
                 }
-                term_fb_put(x.as(i32), y.as(i32), cell.rune, ink = cell.ink, paper = cell.paper)
+                term_fb_put(x.as(i32),
+                            y.as(i32),
+                            cell.rune,
+                            ink = cell.ink,
+                            paper = cell.paper)
             }
         }
         term_present_cursor(0, 0, visible = no)
     }
+
 }
 
 pub input_hook :: fn (input: TermInput) {
@@ -558,6 +861,47 @@ pub simulation_hook :: fn (simulation: TermSimulate) {
 pub presentation_hook :: fn (presentation: TermPresent) {
     presentation.user_data.as(^Terminal).paint(presentation.width.as(usize),
                                                presentation.height.as(usize))
+}
+
+test "buffer popup is opaque, selected and safe across Unicode and tiny resizes" {
+    terminal : Terminal
+    terminal.signal_fd = -1
+    terminal.editor.workspace.lock_fd = -1
+    defer terminal.release()
+    terminal.editor.workspace.add_empty()
+    own(^terminal.editor.workspace.active_document().path, "/first")
+    on terminal.editor.workspace.active_document().text.load("0\n1\n2\na界abcdefghij👩‍💻rest") {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    terminal.editor.workspace.add_empty()
+    own(^terminal.editor.workspace.active_document().path, "/second")
+    assert terminal.editor.workspace.focus_document(0)
+    terminal.paint(80, 24)
+    assert terminal.glyphs.count > 0
+    assert terminal.cells[3 * 80 + 4].rune == '界'.as(u32)
+    terminal.editor.open_buffer_picker(^terminal.scratch)
+    terminal.paint(80, 24)
+    assert terminal.editor.picker.selected == 1
+    assert terminal.cells[5 * 80 + 6].paper == SELECT
+    assert terminal.glyphs.count == 0
+    assert terminal.cells[3 * 80 + 4].rune == ' '.as(u32)
+    assert terminal.editor.workspace.active_view().interaction.selection.active == 0
+    terminal.editor.picker.insert("👩‍💻")
+    terminal.paint(80, 24)
+    assert terminal.glyphs.count > 0
+    for size in [1.as(usize), 2, 4, 8, 20] {
+        terminal.paint(size^, size^)
+        assert terminal.cells.count == size^ * size^
+    }
+    terminal.editor.picker.active = no
+    terminal.paint(80, 24)
+    assert terminal.glyphs.count > 0
+    assert terminal.cells[3 * 80 + 4].rune == '界'.as(u32)
 }
 
 test "mode presentation uses contrasting green/red cursors and UTF-8 status badges, including narrow layouts" {

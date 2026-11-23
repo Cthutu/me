@@ -68,6 +68,7 @@ pub Surface :: plex {
 pub Workspace :: plex {
     documents         [..]DocumentEntry
     views             [..]TextView
+    access_order      [..]usize
     surface           Surface
     folder            [..]u8
     session_path      [..]u8
@@ -99,6 +100,7 @@ impl Workspace {
         }
         self.documents.free()
         self.views.free()
+        self.access_order.free()
     }
 
     pub release :: fn (self: ^Self) {
@@ -109,6 +111,56 @@ impl Workspace {
             _ := sys_close(self.lock_fd)
         }
         self.lock_fd = -1
+    }
+
+    pub record_access :: fn (self: ^Self) {
+        on self.access_order.count + 1 == self.documents.count {
+            yes => self.access_order.push(self.documents.count - 1)
+
+            else => on self.access_order.count != self.documents.count => {
+                for id in [0 .. self.documents.count] {
+                    found := no
+                    for known in self.access_order {
+                        on known^ == id => found = yes
+                    }
+                    on !found => self.access_order.push(id)
+                }
+            }
+        }
+        on self.views.count == 0 => return
+        id            := self.active_view().document_id
+        index : usize = 0
+
+        for index < self.access_order.count &&
+            self.access_order[index] != id {
+            index += 1
+        }
+        on index == self.access_order.count => return
+        for index > 0 {
+            self.access_order[index] = self.access_order[index - 1]
+            index -= 1
+        }
+        self.access_order[0] = id
+    }
+
+    pub focus_view :: fn (self: ^Self, id: usize) {
+        self.surface.view_id = id
+        self.record_access()
+    }
+
+    pub focus_document :: fn (self: ^Self, id: usize) -> bool {
+        on self.surface.view_id < self.views.count &&
+            self.active_view().document_id == id => {
+            self.record_access()
+            return yes
+        }
+        for index, text_view in self.views {
+            on text_view.document_id == id => {
+                self.focus_view(index)
+                return yes
+            }
+        }
+        return no
     }
 
     pub active_view :: fn (self: ^Self) => ^self.views[self.surface.view_id]
@@ -129,7 +181,7 @@ impl Workspace {
         text_view.interaction.state = Interaction.Insert
         text_view.interaction.reveal = yes
         self.views.push(text_view)
-        self.surface.view_id = self.views.count - 1
+        self.focus_view(self.views.count - 1)
     }
 
     pub open_file :: fn (self    : ^Self,
@@ -154,7 +206,7 @@ impl Workspace {
             on same_file => {
                 for view_index, text_view in self.views {
                     on text_view.document_id == index => {
-                        self.surface.view_id = view_index
+                        self.focus_view(view_index)
                         return
                     }
                 }
@@ -198,7 +250,7 @@ impl Workspace {
         }
         text_view.interaction.reveal = yes
         self.views.push(text_view)
-        self.surface.view_id = self.views.count - 1
+        self.focus_view(self.views.count - 1)
     }
 
     pub initialise :: fn (self    : ^Self,
@@ -230,7 +282,9 @@ impl Workspace {
         }
         on syscall(SYS_FLOCK, fd.as(u64), 6, 0, 0, 0, 0).as(i64) < 0 => {
             _ := sys_close(fd)
-            return "Another ME owns this folder's continuation. This session starts fresh and will not read or write snapshots. Save files before :q, or use :q! to discard unsaved buffers."!
+            return "Another ME owns this folder's continuation. This session "
+                +"starts fresh and will not read or write snapshots. Save files "
+                +"before :q, or use :q! to discard unsaved buffers."!
         }
         self.lock_fd = fd
         self.persistent = yes
@@ -255,7 +309,8 @@ impl Workspace {
         on !self.persistent => return "Continuation is unavailable"!
         encoded : Encoder
         defer encoded.bytes.free()
-        encoded.text("ME/MS1/2")
+        self.record_access()
+        encoded.text("ME/MS1/3")
         encoded.text(bytes_text(self.folder))
         encoded.number(self.documents.count.as(u64))
         for entry in self.documents {
@@ -279,7 +334,10 @@ impl Workspace {
             encoded.number(view.selection.active.as(u64))
             encoded.number(view.preferred.as(u64))
             doc := ^self.documents[text_view.document_id].text
-            top := on view.top < doc.lines.count { yes => view.top else => doc.lines.count - 1 }
+            top := on view.top < doc.lines.count {
+                yes   => view.top
+                else  => doc.lines.count - 1
+            }
 
             encoded.number(top.as(u64))
             encoded.number(view.horizontal.as(u64))
@@ -293,6 +351,10 @@ impl Workspace {
             })
         }
         encoded.number(self.surface.view_id.as(u64))
+        encoded.number(self.access_order.count.as(u64))
+        for id in self.access_order {
+            encoded.number(id^.as(u64))
+        }
         encoded.number(fingerprint(bytes_text(encoded.bytes)))
         on atomic_write(scratch, bytes_text(self.session_path), bytes_text(encoded.bytes), yes) {
             _success => {
@@ -315,7 +377,8 @@ impl Workspace {
         reader  := Decoder { bytes: bytes[..bytes.count - 8] offset: 0 }
         version := reader.text()?
 
-        on (version != "ME/MS1/1" && version != "ME/MS1/2") ||
+        on (version != "ME/MS1/1" && version != "ME/MS1/2" && version != "ME/MS"
+            +"1/3") ||
             reader.text()? != bytes_text(self.folder) => return "Continuation "
             +"version or folder mismatch"!
         documents := reader.number()?
@@ -373,9 +436,33 @@ impl Workspace {
             self.views.push(text_view)
         }
         self.surface.view_id = reader.number()?.as(usize)
-        on self.surface.view_id >= self.views.count ||
-            reader.offset != reader.bytes.count => return "Invalid "
+        on self.surface.view_id >= self.views.count => return "Invalid "
             +"continuation layout"!
+        on version == "ME/MS1/3" {
+            yes => {
+                count := reader.number()?.as(usize)
+                on count != self.documents.count => return "Invalid "
+                    +"continuation access order"!
+                seen := scratch.alloc_bytes(count)
+                for byte in seen {
+                    byte^ = 0
+                }
+                for _ in [0 .. count] {
+                    id := reader.number()?.as(usize)
+                    on id >= count ||
+                        seen[id] != 0 => return "Invalid "
+                        +"continuation access "
+                        +"order"!
+                    seen[id] = 1
+                    self.access_order.push(id)
+                }
+                on self.access_order[0] != self.active_view().document_id => return "Invalid continuation active access"!
+            }
+
+            else => self.record_access()
+        }
+        on reader.offset != reader.bytes.count => return "Invalid continuation "
+            +"layout"!
     }
 
     pub save :: fn (self           : ^Self,
@@ -404,7 +491,8 @@ impl Workspace {
                 }
             }
             on !same_path &&
-                !force_conflict => return "Different target exists; use :w! "
+                !force_conflict => return "Different target "
+                +"exists; use :w! "
                 +"filename"!
             on !force_conflict &&
                 same_path => {
@@ -510,8 +598,27 @@ impl Workspace {
                              force       : bool) -> void\string {
         on document_id >= self.documents.count => return "No such buffer"!
         on !force &&
-            self.documents[document_id].modified() => return "Buffer has "
+            self.documents[document_id].modified() => return "Buffer "
+            +"has "
             +"unsaved work; use :kill! to discard it"!
+        self.record_access()
+        fallback : ?usize = nil
+        on self.active_view().document_id == document_id => {
+            for id in self.access_order {
+                on id^ != document_id && fallback == nil => fallback = id^
+            }
+        }
+        kept : usize = 0
+        for id in self.access_order {
+            on id^ != document_id => {
+                self.access_order[kept] = on id^ > document_id {
+                    yes   => id^ - 1
+                    else  => id^
+                }
+                kept += 1
+            }
+        }
+        self.access_order.resize_undefined_to(kept)
         active         := self.surface.view_id
         index  : usize = 0
 
@@ -537,10 +644,17 @@ impl Workspace {
             on text_view.document_id > document_id => text_view.document_id -= 1
         }
         on self.views.count == 0 => self.add_empty()
-        self.surface.view_id = on active < self.views.count {
+        on fallback => [id] {
+            adjusted := on id > document_id {
+                yes   => id - 1
+                else  => id
+            }
+            on self.focus_document(adjusted) => return
+        }
+        self.focus_view(on active < self.views.count {
             yes   => active
             else  => self.views.count - 1
-        }
+        })
     }
 
     pub abandon :: fn (self: ^Self) -> void\string {
@@ -556,6 +670,77 @@ impl Workspace {
 }
 
 test {
+
+    exercise_access_order :: fn () -> void\string {
+        scratch : arena
+        defer scratch.done()
+        state : Workspace
+        state.lock_fd = -1
+        defer state.release()
+        for path in ["/A", "/B", "/C"] {
+            state.add_empty()
+            own(^state.active_document().path, path^)
+            state.active_document().disk_exists = yes
+        }
+        assert state.focus_document(0)
+        assert state.focus_document(1)
+        assert state.access_order[0] == 1 && state.access_order[1] == 0 && state.access_order[2] == 2
+        assert make_directory(^scratch, "_tmp")
+        snapshot := scratch.pr($"_tmp/mru-test-{syscall(SYS_GETPID, 0, 0, 0, 0, 0, 0)}")
+        own(^state.folder, "/mru-fixture")
+        own(^state.session_path, snapshot)
+        state.persistent = yes
+        state.checkpoint(^scratch)?
+        defer {
+            _ := syscall(SYS_UNLINK,
+                         snapshot.c_string().as(usize).as(u64),
+                         0,
+                         0,
+                         0,
+                         0,
+                         0)
+        }
+        restored : Workspace
+        restored.lock_fd = -1
+        defer restored.release()
+        own(^restored.folder, "/mru-fixture")
+        own(^restored.session_path, snapshot)
+        restored.restore(^scratch)?
+        assert restored.active_view().document_id == 1
+        assert restored.access_order[0] == 1 && restored.access_order[1] == 0 && restored.access_order[2] == 2
+        assert restored.focus_document(2)
+        restored.kill_document(2, no)?
+        assert bytes_text(restored.active_document().path) == "/B"
+        assert restored.access_order.count == 2 && restored.access_order[0] == 1
+        restored.kill_document(0, no)?
+        assert bytes_text(restored.active_document().path) == "/B" && restored.access_order[0] == 0
+
+        damaged : [..]u8
+        defer damaged.free()
+        own(^damaged, read_file(^scratch, snapshot)?)
+        ids := damaged.count - 8 - 3 * 8
+        for i in [0.as(usize) .. 8] {
+            damaged[ids + 8 + i] = damaged[ids + i]
+        }
+        checksum : Encoder
+        defer checksum.bytes.free()
+        checksum.number(fingerprint(damaged[..damaged.count - 8].as(string)))
+        damaged[damaged.count - 8..] = checksum.bytes[..]
+        atomic_write(^scratch, snapshot, bytes_text(damaged), yes)?
+        invalid : Workspace
+        invalid.lock_fd = -1
+        defer invalid.release()
+        own(^invalid.folder, "/mru-fixture")
+        own(^invalid.session_path, snapshot)
+        on invalid.restore(^scratch) {
+            _success => {
+                assert no, "Duplicate access IDs accepted"
+            }
+
+            _error! => {
+            }
+        }
+    }
 
     exercise_kill :: fn () -> void\string {
         workspace : Workspace
@@ -664,6 +849,17 @@ test {
         _ := syscall(SYS_RMDIR, folder.c_string().as(usize).as(u64), 0, 0, 0, 0, 0)
     }
 
+}
+
+test "MRU access order survives continuation and closing focuses the previous buffer" {
+    on exercise_access_order() {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
 }
 
 test "kill refuses unsaved work, removes all shared views and preserves surviving order and focus" {

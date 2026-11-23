@@ -19,6 +19,18 @@ library. Runtime code uses Nerd/Linux syscalls, without added external libraries
 | Safe process termination events | Terminal loop cleanup does not itself cover process termination signals | Linux `signalfd`/signal-mask integration in `src/terminal.n`; SIGTERM checkpoint and raw/alternate-screen restoration tested. No libc signal handlers or unsafe restorer stubs |
 | Validating persistent history codec | No editor-specific history format is expected in the library; generic bounded codec helpers may be reusable | `src/codec.n`, workspace envelope/checksum, native malformed/replay tests and PTY corrupted-snapshot retention |
 
+## Unicode case folding and generic fuzzy list — local candidates
+
+`src/picker.n` owns a reusable fuzzy-list model with query/caret, stable consumer
+IDs, source-order matches and selection/scroll state. It uses Unicode 16 default
+full case folding (including multi-codepoint mappings) before codepoint-ordered
+subsequence matching. `build/generate_unicode.py` generates the pinned C/F mappings
+from `CaseFolding.txt` into `src/unicode_data.n`; locale-specific Turkic mappings
+and canonical/accent normalisation are deliberately separate, unimplemented policies.
+Labels are display-sanitised while consumer IDs retain exact filename identity.
+The bounded popup layout/generic renderer is independent of workspace ownership.
+This remains local-first functionality, not a dependency or automatic stdlib API.
+
 ## CSI cursor-key actions — fixed in Nerd
 
 Traditional CSI cursor/Home/End/tilde reports accepted modifier subparameters but

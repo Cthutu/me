@@ -21,8 +21,13 @@ refreshes. See the [README](../README.md) for usage and explicit limitations.
   of selected lines or the caret line, clearing character-based selections.
   Ctrl+Backspace deletes selections or the previous Ctrl+Left word range.
   Undo/redo restores optional before/after caret hints without undoing navigation
-  or restoring selections. Snapshot v2 preserves hints and imports v1 history;
+  or restoring selections. Snapshot v3 preserves v2 hints, imports v1/v2 history and persists buffer MRU;
   codec checks reject out-of-bounds or split-UTF-8 history carets.
+- Normal comma opens the first reusable large fuzzy popup: Unicode full-case-folded
+  subsequence matching, MRU buffer order, second-row initial selection and immediate
+  Enter acceptance. Escape cancels; query/selection remain separate from text views.
+  Ctrl+W safely closes the active saved buffer, focuses MRU surviving work and
+  refuses unsaved work. Input-stream suppression survives switching/closing views.
 - Enhanced cursor/Home/End/tilde-key releases no longer execute commands. Nerd
   preserves CSI action subparameters; ME ignores decoded releases in ordinary
   handlers, including message scrolling. Repeats still navigate and diagnostics
@@ -79,13 +84,13 @@ refreshes. See the [README](../README.md) for usage and explicit limitations.
 ### Headless
 
 `just check`, `just format`, Python tooling compilation and `just test` have
-passed. All **36 project-authored named tests are colocated across 15 source
+passed. All **42 project-authored named tests are colocated across 16 source
 modules**, with many assertions and all 1,093 official Unicode vectors in the
 marked test section of `src/characters.n`. All 24 test helper functions and
 additional test-only imports live in bare `test { ... }` sections. The 17 former
 standalone Nerd test files have been removed.
 
-`just test` uses the single `main.n` root: **148 tests passed**, comprising 36 ME
+`just test` uses the single `main.n` root: **154 tests passed**, comprising 42 ME
 tests and 112 imported library tests, discovered once rather than repeated per
 test program. Inventory comparison verified that all 29 original named tests
 remain discoverable exactly once, and all 53 moved test/helper bodies were
@@ -96,7 +101,7 @@ build, confirming no production-code or test-only-code leakage.
 ### Real terminal integration
 
 `python3 tests/terminal.py --binary _bin/me` and the equivalent release command
-passed all **27 scenario groups**, including buffer lifecycle, gutter styling,
+passed all **30 scenario groups**, including buffer lifecycle, gutter styling,
 selected-line duplication, word deletion, file opening and filename completion,
 on both debug and release builds:
 
@@ -123,7 +128,7 @@ on both debug and release builds:
     events delete previous words or active selections;
     deletion is one undo operation, including when invoked from Insert.
 15. Backspace Undo and insertion Redo restore the initiating caret, including
-    after restart; legacy v1 snapshots retain history and upgrade to v2.
+    after restart; legacy v1/v2 snapshots retain history and upgrade to v3.
 16. Green Normal/red Insert cursors and status, UTF-8 mode/modified markers,
     correct composite-grapheme RGB, contrast, narrow layouts and resize.
 17. Real Tab completion, common-prefix and selectable ambiguity, directory suffixes,
@@ -159,6 +164,15 @@ on both debug and release builds:
     events still move. Home/End, Shift selections, delete releases and prompt
     editing use real CSI reports. Diagnostic traces retain cursor repeat/release;
     native editor checks cover counts and release-free message scrolling.
+28. Large buffer popup, MRU/current-first order, previous-buffer default, direct
+    Enter acceptance, Escape caret preservation, ordered-letter/case-insensitive
+    filtering, zero-result Enter/deletion, cursor actions, resize/page scrolling,
+    dirty-close refusal and enhanced Ctrl+W associated-text handoff.
+29. Buffer access order survives continuation and selects the previous buffer
+    after restart. Native checks reject duplicate access IDs and remap close IDs.
+30. Full Unicode case folding (ß and sigma), raw/control-byte filename identity
+    and safe popup rendering. Native UI checks cover opaque composite clipping,
+    Unicode query glyphs and tiny/zero terminal geometry.
 
 Normal/signal exits compare the actual PTY attributes against startup and check
 alternate-screen restoration. Tests use isolated temporary HOME/folders and do
@@ -183,7 +197,7 @@ hard real-time guarantee. Complex-grapheme overlays add one simulation step.
 Document projection/index rebuilding remains correctness-first, not a claim
 about very large-file scalability.
 
-## Nerd fixes — ten completed
+## Nerd fixes — twelve completed
 
 All compiler changes used dedicated worktrees. Each fix passed the unified full
 gate (**72 passed, 0 failed, 2 platform skips**), formatting and isolated installed
@@ -202,9 +216,11 @@ the latest record-field context/layout gate includes all earlier fixes.
 | `2776f687` | Preserve unterminated string bytes and formatter idempotence |
 | `93c8a38a` | Wrap optional/result record fields and preserve enum payload storage layout |
 | `98883071` | Reacquire local bindings after generic inference grows semantic tables |
+| `5535aaf9` | Preserve empty-string quotes at the formatter wrap boundary |
+| `46c711eb` | Accept slice-assignment CST targets and retain structured formatting |
 
 Fixes are committed, pushed on their own `agent` branches, and integrated into
-**local Nerd `main` at `40a30f21`**, not pushed directly to remote `main`. Their
+**local Nerd `main` at `46c711eb`**, not pushed directly to remote `main`. Their
 merged worktrees and local temporary branches have been removed. Other agents'
 worktrees/checkouts are untouched. `_tools/` contains the isolated compiler and
 modules. The validated `93c8a38a` compiler passed isolated and user-installed
@@ -212,10 +228,35 @@ regression checks. The user subsequently clarified that normal installation must
 run directly in `~/nerd`, not an installation-only worktree. That recipe has now
 installed its current `remove-linux-libc` checkout at `174a4576`, including matching
 modules and editor support. This is distinct from local `main`/ME's private
-`40a30f21` toolchain/modules; no branch switch or merge was performed. Integration
-of the latest local-binding/protocol changes into that other agent's branch
+`46c711eb` toolchain/modules; no branch switch or merge was performed. Integration
+of the latest local-binding/protocol/formatter changes into that other agent's branch
 awaits coordination. Installation from
 `~/nerd` is required after each fully validated compiler fix.
+
+### Picker-triggered formatter fixes
+
+Nerd `5535aaf9` preserves an empty string even when its quotes do not fit the
+remaining wrap column. The old segment loop emitted nothing for zero-length text,
+including function-signature probes, deleting an empty default argument in the
+new picker. `empty-string-boundary.f` reproduces the invalid output and checks
+retained quotes. Full gate **72 passed, 2 platform skips**, then format/direct
+install passed; the commit was immediately pushed to its fix branch and retained
+on local `main`.
+
+Nerd `46c711eb` allows `CK_Slice` assignment targets in the CST parser, matching
+existing executable slice-copy syntax. Otherwise the entire module silently used
+basic token formatting. The existing slice fixture's input is preserved with its
+new structured-format expectation, plus an additional bounded/open-ended case.
+The full gate passed (**72 passed, 2 platform skips**), as did the final focused
+suite and complete frontend rerun (**386 passed, 9 skips**). Formatting and direct
+install passed, the commit was pushed immediately and retained on local `main`.
+
+Both direct installs used unchanged active libc-removal `174a4576`, not a silent
+branch switch/merge. ME's private compiler contains both fixes. Both clean,
+completed worktrees/local temporary branches were removed after commit retention
+and process checks. Canonical formatting now reaches slice-copy code in ME's
+existing buffer/document/codec/replacement/terminal modules too; native and PTY
+regressions cover the formatted sources. No local syntax workaround was added.
 
 ### CSI key-action library fix
 

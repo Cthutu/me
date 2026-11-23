@@ -579,7 +579,7 @@ def undo_caret(binary, folder):
         session.quit()
 
     # Convert a real checkpoint to the previous envelope/history format.
-    # The new binary must still recover it, then write v2 on its next checkpoint.
+    # The new binary must recover it, then write v3 on its next checkpoint.
     snapshot = next((folder / "home/.config/me").glob("*/snapshot"))
     data = snapshot.read_bytes()
     offset = 0
@@ -596,7 +596,7 @@ def undo_caret(binary, folder):
         return value
     def encoded(value):
         return struct.pack("<Q", len(value)) + value
-    assert text() == b"ME/MS1/2"
+    assert text() == b"ME/MS1/3"
     old = bytearray(encoded(b"ME/MS1/1") + encoded(text()))
     documents = number()
     old.extend(struct.pack("<Q", documents))
@@ -610,7 +610,13 @@ def undo_caret(binary, folder):
             old.extend(struct.pack("<Q", number()) + encoded(text()) + encoded(text()))
             number()
             number()
-    old.extend(data[offset:-8])
+    view_start = offset
+    views = number()
+    for _ in range(views * 8):
+        number()
+    number()  # active view; v3 access-order extension follows this
+    access_start = offset
+    old.extend(data[view_start:access_start])
     checksum = 14695981039346656037
     for byte in old:
         checksum = ((checksum ^ byte) * 1099511628211) & ((1 << 64) - 1)
@@ -621,7 +627,17 @@ def undo_caret(binary, folder):
         session.send(b"\x13")
         assert path.read_bytes() == b"abcdX", "legacy history failed to recover"
         session.quit()
-    assert snapshot.read_bytes()[8:16] == b"ME/MS1/2", "legacy continuation was not upgraded"
+    assert snapshot.read_bytes()[8:16] == b"ME/MS1/3", "legacy continuation was not upgraded"
+    # V2 already has caret hints, but no access-order tail.
+    old2 = encoded(b"ME/MS1/2") + data[16:access_start]
+    checksum = 14695981039346656037
+    for byte in old2:
+        checksum = ((checksum ^ byte) * 1099511628211) & ((1 << 64) - 1)
+    snapshot.write_bytes(old2 + struct.pack("<Q", checksum))
+    with Session(binary, folder) as session:
+        assert b"version or folder mismatch" not in session.output
+        session.quit()
+    assert snapshot.read_bytes()[8:16] == b"ME/MS1/3", "v2 continuation was not upgraded"
 
 
 def word_delete(binary, folder):
@@ -644,6 +660,124 @@ def word_delete(binary, folder):
             session.send(b"\x13")
             assert path.read_bytes() == b"beta", "Ctrl+Backspace did not delete the active selection"
             session.quit()
+
+
+def buffer_picker(binary, folder):
+    alpha = folder / "alpha.txt"
+    beta = folder / "BetaTest.n"
+    gamma = folder / "gamma.txt"
+    for path, content in [(alpha, b"alpha"), (beta, b"beta"), (gamma, b"gamma")]:
+        path.write_bytes(content)
+    with Session(binary, folder, "-r", alpha.name) as session:
+        session.command("e BetaTest.n")
+        session.command("e gamma.txt")
+        session.send(",")
+        shown = screen(session)
+        assert shown.index(b"gamma.txt") < shown.index(b"BetaTest.n") < shown.index(b"alpha.txt")
+        assert b"Buffers" in shown and b"3/3" in shown
+        session.send("\r")  # second row is the most recently used other buffer
+        session.send("iB")
+        session.send(b"\x13")
+        assert beta.read_bytes() == b"Bbeta", (beta.read_bytes(), gamma.read_bytes(), screen(session))
+        session.send(",\r")
+        session.send("iC")
+        session.send(b"\x13")
+        assert gamma.read_bytes() == b"Cgamma"
+        session.command("buffer 1")
+        session.send("iQ")
+        session.normal()
+        session.send(",ignored")
+        session.send(b"\x1b", 0.15)
+        session.send("iR")
+        session.send(b"\x13")
+        assert alpha.read_bytes() == b"QRalpha", "cancel changed caret or leaked query"
+        session.send(",btt\r")
+        session.send("iF")
+        session.send(b"\x13")
+        assert beta.read_bytes() == b"BFbeta", "case-insensitive subsequence did not select BetaTest"
+        session.send(",zzzzhjklq,")
+        assert b"No matches" in screen(session)
+        session.send("\r")
+        assert b"No matches" in screen(session), "Enter dismissed an empty picker"
+        session.send(b"\x7f" * 10)
+        assert b"3/3" in screen(session), screen(session)
+        # A release must not move the initial selection a second time.
+        session.send(b"\x1b", 0.15)
+        session.send(",")
+        session.send(b"\x1b[1;1:1B\x1b[1;1:3B")  # row 1 -> row 2, not wrapped
+        session.send(b"\x1b[1;1:1A\x1b[1;1:3A")
+        session.send("\r")
+        session.send("iS")
+        session.send(b"\x13")
+        assert alpha.read_bytes() == b"QRSalpha", "picker cursor actions selected the wrong row"
+        session.send(",")
+        fcntl.ioctl(session.master, termios.TIOCSWINSZ, struct.pack("HHHH", 8, 20, 0, 0))
+        session.drain(0.15)
+        session.send(b"\x1b[6~\x1b[5~")
+        fcntl.ioctl(session.master, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+        session.drain(0.15)
+        session.send(b"\x1b", 0.15)
+        session.send("iD")
+        changed = session.send(b"\x17")
+        assert b"unsaved" in screen(session), "Ctrl W discarded unsaved work"
+        assert alpha.read_bytes() == b"QRSalpha"
+        session.send(b"\x1a\x13")
+        assert alpha.read_bytes() == b"QRSalpha"
+        # Associated control text must not close the fallback buffer as well.
+        session.send(b"\x1b[119;5;23u\x1b[119;5:3u")
+        session.send(",")
+        assert b"2/2" in screen(session)
+        session.send(b"\x1b", 0.15)
+        session.send(b"\x17")  # close clean Beta, returning to Gamma
+        session.send("iG")
+        session.send(b"\x13")
+        assert gamma.read_bytes() == b"CGgamma"
+        session.send(b"\x17")  # last clean buffer -> fresh empty buffer
+        session.send(",\r")
+        assert b"[unnamed]" in screen(session)
+        session.quit()
+
+
+def buffer_picker_recovery(binary, folder):
+    for name in ["alpha.txt", "beta.txt", "gamma.txt"]:
+        (folder / name).write_text(name)
+    with Session(binary, folder, "-r", "alpha.txt") as session:
+        session.command("e beta.txt")
+        session.command("e gamma.txt")
+        session.send(",ap\r")  # alpha, gamma, beta
+        session.quit()
+    with Session(binary, folder) as session:
+        session.send(",")
+        shown = screen(session)
+        assert shown.index(b"alpha.txt") < shown.index(b"gamma.txt") < shown.index(b"beta.txt")
+        session.send("\r")
+        session.send("iR")
+        session.send(b"\x13")
+        assert (folder / "gamma.txt").read_bytes() == b"Rgamma.txt"
+        session.quit()
+
+
+def buffer_picker_unicode_bytes(binary, folder):
+    unicode_file = folder / "Straße_Σ.txt"
+    unicode_file.write_bytes(b"unicode")
+    raw = os.fsencode(folder) + b"/odd\xff\x1b[31m.txt"
+    with open(raw, "wb") as stream:
+        stream.write(b"raw")
+    with Session(binary, folder, "-r", unicode_file.name) as session:
+        session.normal()
+        session.send(":e odd\t\r")
+        session.send(",STRASSEσ\r")
+        session.send("iU")
+        session.send(b"\x13")
+        assert unicode_file.read_bytes() == b"Uunicode"
+        session.send(",odd")
+        assert b"\x1b[31m" not in session.output, "filename control escaped popup sanitisation"
+        session.send("\r")
+        session.send("iR")
+        session.send(b"\x13")
+        with open(raw, "rb") as stream:
+            assert stream.read() == b"Rraw"
+        session.quit()
 
 
 def enhanced_key_actions(binary, folder):
@@ -711,29 +845,31 @@ def enhanced_key_actions(binary, folder):
         session.quit()
 
 
+def screen(session, width=80, height=24):
+    # Reconstruct the ASCII diagnostic area; retained rendering may only
+    # write changed cells, not complete phrases or their separating spaces.
+    cells = [[" "] * width for _ in range(height)]
+    row = column = 0
+    for part in re.split(r"(\x1b\[[0-?]*[ -/]*[@-~])", session.output.decode("utf-8", "replace")):
+        if part.startswith("\x1b["):
+            if part[-1] in "Hf":
+                values = part[2:-1].split(";")
+                row = int(values[0] or "1") - 1
+                column = int(values[1] or "1") - 1 if len(values) > 1 else 0
+            continue
+        for character in part:
+            if character == "\n":
+                row, column = row + 1, 0
+            elif character == "\r":
+                column = 0
+            elif ord(character) >= 32:
+                if 0 <= row < height and 0 <= column < width:
+                    cells[row][column] = character
+                column += 1
+    return "\n".join("".join(line) for line in cells).encode()
+
+
 def keyboard_diagnostics(binary, folder):
-    def screen(session):
-        # Reconstruct the ASCII diagnostic area; retained rendering may only
-        # write changed cells, not complete phrases or their separating spaces.
-        cells = [[" "] * 80 for _ in range(24)]
-        row = column = 0
-        for part in re.split(r"(\x1b\[[0-?]*[ -/]*[@-~])", session.output.decode("utf-8", "replace")):
-            if part.startswith("\x1b["):
-                if part[-1] in "Hf":
-                    values = part[2:-1].split(";")
-                    row = int(values[0] or "1") - 1
-                    column = int(values[1] or "1") - 1 if len(values) > 1 else 0
-                continue
-            for character in part:
-                if character == "\n":
-                    row, column = row + 1, 0
-                elif character == "\r":
-                    column = 0
-                elif ord(character) >= 32:
-                    if 0 <= row < 24 and 0 <= column < 80:
-                        cells[row][column] = character
-                    column += 1
-        return "\n".join("".join(line) for line in cells).encode()
     path = folder / "keys.txt"
     original = b"unchanged"
     path.write_bytes(original)
@@ -1180,7 +1316,7 @@ def main():
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
     checks = [recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
               search_replace_and_buffers, search_origins, slash_replacement, confirmation_recovery, byte_paths_and_checkpoint_failures,
-              second_instance, crash_and_signals, undo_caret, word_delete, enhanced_key_actions, keyboard_diagnostics, hjkl_and_line_selection, duplicate_selection, command_completion, live_completion_filter, file_completion, home_paths, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
+              second_instance, crash_and_signals, undo_caret, word_delete, buffer_picker, buffer_picker_recovery, buffer_picker_unicode_bytes, enhanced_key_actions, keyboard_diagnostics, hjkl_and_line_selection, duplicate_selection, command_completion, live_completion_filter, file_completion, home_paths, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
     selected = [check for check in checks if args.filter in check.__name__]
     if not selected:
         parser.error(f"No PTY checks match {args.filter!r}")

@@ -102,30 +102,33 @@ pub replacement_matches :: fn (matches : ^[..]usize,
 
 -- A single contiguous operation spans only the affected original matches.
 -- Replacement text is never recursively searched.
-pub plan_replacement :: fn (scratch: ^arena, text: string, command: ReplaceCommand, minimum: usize = 0) -> ?Replacement {
-    matches: [..]usize
+pub plan_replacement :: fn (scratch : ^arena,
+                            text    : string,
+                            command : ReplaceCommand,
+                            minimum : usize = 0) -> ?Replacement {
+    matches : [..]usize
     defer matches.free()
     replacement_matches(^matches, text, command.needle, minimum = minimum)
     on matches.count == 0 => return nil
-    start := matches[0]
-    end := matches[matches.count - 1] + command.needle.count
-    size := end - start - matches.count * command.needle.count + matches.count * command.replacement.count
-    payload := scratch.alloc_bytes(size)
-    source := start
-    destination: usize = 0
+    start               := matches[0]
+    end                 := matches[matches.count - 1] + command.needle.count
+    size                := end - start - matches.count * command.needle.count + matches.count * command.replacement.count
+    payload             := scratch.alloc_bytes(size)
+    source              := start
+    destination : usize = 0
+
     for position in matches {
         unchanged := position^ - source
-        payload[destination .. destination + unchanged] = text[source .. position^].as([]u8)
+        payload[destination..destination + unchanged] = text[source..position^].as([]u8)
         destination += unchanged
-        payload[destination .. destination + command.replacement.count] = command.replacement.as([]u8)
+        payload[destination..destination + command.replacement.count] = command.replacement.as([]u8)
         destination += command.replacement.count
-        source = position^ + command.needle.count
+        source      = position^ + command.needle.count
     }
     return Replacement {
-        range: {
-            start end
-        }
-        text: payload.as(string) count: matches.count
+        range : { start end }
+        text  : payload.as(string)
+        count : matches.count
     }
 }
 

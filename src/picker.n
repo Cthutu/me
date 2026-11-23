@@ -1,0 +1,257 @@
+use characters
+use native
+use std.text
+use unicode_data
+
+-- A generic, owning list/query model: IDs are supplied by the consumer.
+-- Matching is an ordered subsequence, never a score sort of the input list.
+pub PickerEntry :: plex {
+    id         usize
+    label      string
+    annotation string
+    folded     string
+}
+
+pub PopupBounds :: plex {
+    x      usize
+    y      usize
+    width  usize
+    height usize
+}
+
+pub popup_bounds :: fn (width: usize, height: usize) -> PopupBounds {
+    x := on width >= 20 { yes => width / 16 else => 0 }
+    y := on height >= 8 { yes => height / 12 else => 0 }
+
+    return PopupBounds { x y width: width - x * 2 height: height - y * 2 }
+}
+
+fold_text :: fn (destination: ^[..]u8, text: string) {
+    destination.clear()
+    offset : usize = 0
+    for offset < text.count {
+        (rune, size) := utf8_decode(text[offset..].as([]u8))
+        folded := unicode_case_fold(rune.as(u32))
+        on folded.count > 0 {
+            yes => {
+                for byte in folded.as([]u8) {
+                    destination.push(byte^)
+                }
+            }
+
+            else => {
+                for byte in text[offset..offset + size].as([]u8) {
+                    destination.push(byte^)
+                }
+            }
+        }
+        offset += size
+    }
+}
+
+fuzzy_subsequence :: fn (folded: string, query: string) -> bool {
+    wanted : usize = 0
+    offset : usize = 0
+
+    for wanted < query.count && offset < folded.count {
+        (rune, size) := utf8_decode(folded[offset..].as([]u8))
+        (needle, bytes) := utf8_decode(query[wanted..].as([]u8))
+        on rune == needle => wanted += bytes
+        offset += size
+    }
+    return wanted == query.count
+}
+
+pub FuzzyPicker :: plex {
+    storage      arena
+    entries      [..]PickerEntry
+    matches      [..]usize
+    query        [..]u8
+    folded_query [..]u8
+    title        string
+    caret        usize
+    selected     usize
+    top          usize
+    rows         usize
+    active       bool
+}
+
+impl FuzzyPicker {
+
+    pub release :: fn (self: ^Self) {
+        self.entries.free()
+        self.matches.free()
+        self.query.free()
+        self.folded_query.free()
+        self.storage.done()
+    }
+
+    pub start :: fn (self: ^Self, title: string) {
+        self.active = yes
+        self.entries.clear()
+        self.matches.clear()
+        self.query.clear()
+        self.folded_query.clear()
+        self.storage.reset()
+        self.title = self.storage.pr(title)
+        self.caret = 0
+        self.selected = 0
+        self.top = 0
+        self.rows = 10
+    }
+
+    pub add :: fn (self       : ^Self,
+                   id         : usize,
+                   label      : string,
+                   annotation : string = "") {
+        shown           := display_text(^self.storage, label, single_line = yes)
+        folded : [..]u8
+
+        defer folded.free()
+        fold_text(^folded, shown)
+        self.entries.push(PickerEntry {
+            id
+            label      : self.storage.pr(shown)
+            annotation : self.storage.pr(annotation)
+            folded     : self.storage.pr(bytes_text(folded))
+        })
+    }
+
+    pub chosen :: fn (self: ^Self) -> ?usize {
+        on self.selected >= self.matches.count => return nil
+        return self.entries[self.matches[self.selected]].id
+    }
+
+    pub filter :: fn (self: ^Self) {
+        previous := self.chosen()
+        self.matches.clear()
+        self.selected = 0
+        self.top = 0
+        fold_text(^self.folded_query, bytes_text(self.query))
+        for index, entry in self.entries {
+            on fuzzy_subsequence(entry.folded, bytes_text(self.folded_query)) => {
+                self.matches.push(index)
+                on previous => [id] {
+                    on entry.id == id => self.selected = self.matches.count - 1
+                }
+            }
+        }
+    }
+
+    pub insert :: fn (self: ^Self, text: string) {
+        on self.query.count + text.count > 4096 => return
+        on text.utf8_validate() {
+            _valid => {
+            }
+
+            _invalid! => return
+        }
+        count := self.query.count
+        self.query.resize_undefined_to(count + text.count)
+        index := count
+        for index > self.caret {
+            index -= 1
+            self.query[index + text.count] = self.query[index]
+        }
+        self.query[self.caret..self.caret + text.count] = text.as([]u8)
+        self.caret += text.count
+        self.filter()
+    }
+
+    pub erase :: fn (self: ^Self, backwards: bool) {
+        start := on backwards {
+            yes   => previous_character(bytes_text(self.query), self.caret)
+            else  => self.caret
+        }
+        end := on backwards {
+            yes   => self.caret
+            else  => next_character(bytes_text(self.query), self.caret)
+        }
+        for index in [end .. self.query.count] {
+            self.query[index - (end - start)] = self.query[index]
+        }
+        self.query.resize_undefined_to(self.query.count - (end - start))
+        self.caret = start
+        self.filter()
+    }
+
+    pub move_selection :: fn (self: ^Self, backwards: bool, count: usize = 1) {
+        on self.matches.count == 0 => return
+        on backwards {
+            yes => self.selected = on self.selected > count {
+                yes   => self.selected - count
+                else  => 0
+            }
+
+            else => self.selected = on count < self.matches.count - self.selected {
+                yes   => self.selected + count
+                else  => self.matches.count - 1
+            }
+        }
+    }
+
+    pub reveal :: fn (self: ^Self, rows: usize) {
+        self.rows = on rows > 0 {
+            yes   => rows
+            else  => 1
+        }
+        on self.selected < self.top => self.top = self.selected
+        on self.selected >= self.top + self.rows => self.top = self.selected - self.rows + 1
+    }
+
+}
+
+test "fuzzy picker folds Unicode and retains source order and selected identity" {
+    picker : FuzzyPicker
+    defer picker.release()
+    picker.start("Test")
+    picker.add(5, "AlphaBeta")
+    picker.add(2, "alphabet soup")
+    picker.add(8, "Straße/Σίσυφος")
+    picker.add(9, "éZ")
+    picker.filter()
+    assert picker.matches.count == 4
+    picker.selected = 1
+    picker.insert("aBT")
+    assert picker.matches.count == 2 && picker.chosen() == 2
+    picker.move_selection(no)
+    assert picker.chosen() == 2
+    picker.move_selection(yes)
+    assert picker.chosen() == 5
+    picker.insert("zz")
+    assert picker.matches.count == 0 && picker.chosen() == nil
+    picker.move_selection(no)
+    picker.erase(yes)
+    picker.erase(yes)
+    assert picker.matches.count == 2
+    picker.start("Unicode")
+    picker.add(8, "Straße/Σίσυφος")
+    picker.add(9, "éZ")
+    picker.filter()
+    picker.insert("STRASSEσς")
+    assert picker.chosen() == 8 && picker.matches.count == 1
+    picker.start("Codepoints")
+    picker.add(1, "Ã©")
+    picker.filter()
+    picker.insert("é")
+    assert picker.matches.count == 0
+    picker.start("Editing")
+    picker.insert("é👩‍💻")
+    picker.erase(yes)
+    assert bytes_text(picker.query) == "é" && picker.caret == 2
+    picker.caret = 0
+    picker.erase(no)
+    assert picker.query.count == 0
+    picker.reveal(0)
+    assert picker.rows == 1
+}
+
+test "popup bounds fit zero narrow and ordinary terminals" {
+    for width in [0.as(usize), 1, 2, 8, 20, 80] {
+        for height in [0.as(usize), 1, 2, 4, 8, 24] {
+            box := popup_bounds(width^, height^)
+            assert box.x + box.width <= width^
+            assert box.y + box.height <= height^
+        }
+    }
+}

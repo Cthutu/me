@@ -7,17 +7,20 @@ pub Encoder :: plex {
 }
 
 impl Encoder {
+
     pub number :: fn (self: ^Self, value: u64) {
         for shift in [0.as(usize) .. 8] {
             self.bytes.push(((value >> (shift * 8).as(u64)) & 255).as(u8))
         }
     }
+
     pub text :: fn (self: ^Self, text: string) {
         self.number(text.count.as(u64))
         start := self.bytes.count
         self.bytes.resize_undefined_to(start + text.count)
-        self.bytes[start ..] = text.as([]u8)
+        self.bytes[start..] = text.as([]u8)
     }
+
     pub document :: fn (self: ^Self, doc: ^Document, legacy: bool = no) {
         self.text(doc.text())
         self.number(doc.applied.as(u64))
@@ -28,14 +31,17 @@ impl Encoder {
             self.text(bytes_text(record.added))
             on !legacy => {
                 self.number(on record.caret_before {
-                    position => position.as(u64) + 1 else => 0
+                    position  => position.as(u64) + 1
+                    else      => 0
                 })
                 self.number(on record.caret_after {
-                    position => position.as(u64) + 1 else => 0
+                    position  => position.as(u64) + 1
+                    else      => 0
                 })
             }
         }
     }
+
 }
 
 pub Decoder :: plex {

@@ -190,18 +190,33 @@ fresh discovery on reopening, safe acceptance and no-match handling.
   release, checks/format idempotence/Python compilation passed. Installed enhanced
   navigation and diagnostic regressions run after commit/push/install.
 
-## Agreed MS2 queue — not started
+## Agreed MS2 work
 
-The following tasks were explicitly accepted after T1/T2. This is the intended
-sequence, not a claim that interaction details are settled or code exists.
-T2 uses the existing message area, not a separate popup layer. The shared MS2
-popup foundation remains queued; no one-off popup infrastructure was introduced.
+The following tasks were explicitly accepted after T1/T2. T3's detailed
+interaction is now agreed and implemented; T4–T6 remain queued. T2's filename
+completion still uses the existing message area, separate from the reusable popup.
 
-### T3 — Shared popup/picker infrastructure and buffer switcher
+### T3 — Popup/picker foundation, buffer switcher and Ctrl+W — done
 
-- Build the shared popup/picker foundation, first exercised by a buffer switcher.
-- Keep input/focus, query, candidate selection and dismissal separate from buffers.
-- Choose bindings and exact accept/cancel behaviour before implementation.
+- Normal `,` opens a large popup with a reusable top fuzzy-search widget.
+- Case-insensitive ordered-letter matching; Unicode 16 default full case folding.
+  Keep MRU result order, current first, second row selected initially. Enter chooses.
+- Escape cancels; Up/Down/Page keys select/scroll; query edits never edit documents.
+  Keep input/focus, query, candidate selection and dismissal separate from buffers.
+- Ctrl+W closes the active saved buffer (not the highlighted row); otherwise show
+  an error. No implicit save/discard; retain `:kill!` for explicit forced removal.
+- Persist validated MRU order in continuation v3 with v1/v2 import. Keep view IDs,
+  history and typed-buffer fidelity independent; preserve literal comma in Insert.
+- Fix cross-view associated-text suppression, not just Ctrl+W's immediate case.
+- Found/fixed two Nerd formatter issues in dedicated worktrees: empty defaults at
+  the wrap boundary and CST slice-assignment targets. Full gates/install/push and
+  cleanup follow the compiler policy; no ME syntax workaround.
+- Nerd `5535aaf9` / `46c711eb` pushed to their fix branches and retained on local
+  main; each full gate passed (72 passed, 2 platform skips). Both direct installs
+  passed from unchanged libc-removal `174a4576`; integration there remains pending.
+- ME verification: 154 native tests (42 project + 112 imported), all 30 PTY groups
+  on debug/release, format/check/Python compilation and Unicode regeneration
+  idempotence. Installed picker/recovery/Unicode-byte-path checks follow push/install.
 
 ### T4 — File picker
 

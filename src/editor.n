@@ -5,6 +5,7 @@ use document
 use key_diagnostics
 use keyboard
 use native
+use picker
 use positions
 use replacement
 use search
@@ -29,26 +30,28 @@ document_match :: fn (doc         : ^Document,
 }
 
 pub Editor :: plex {
-    workspace        Workspace
-    completion       PromptCompletion
-    confirmation     ReplaceConfirmation
-    diagnostics      KeyDiagnostics
-    search_decoded   [..]u8
-    clipboard        Clipboard
-    prompt           [..]u8
-    prompt_kind      u32
-    prompt_caret     usize
-    search_saved     View
-    last_search      [..]u8
-    highlights       bool
-    active_match     ?usize
-    message          [..]u8
-    message_scroll   usize
-    dirty            bool
-    changed_at       Instant
-    checkpoint_at    Instant
-    quit             bool
-    save_all_pending bool
+    workspace          Workspace
+    completion         PromptCompletion
+    confirmation       ReplaceConfirmation
+    diagnostics        KeyDiagnostics
+    picker             FuzzyPicker
+    suppress_character bool
+    search_decoded     [..]u8
+    clipboard          Clipboard
+    prompt             [..]u8
+    prompt_kind        u32
+    prompt_caret       usize
+    search_saved       View
+    last_search        [..]u8
+    highlights         bool
+    active_match       ?usize
+    message            [..]u8
+    message_scroll     usize
+    dirty              bool
+    changed_at         Instant
+    checkpoint_at      Instant
+    quit               bool
+    save_all_pending   bool
 }
 
 impl Editor {
@@ -57,6 +60,7 @@ impl Editor {
         self.completion.release()
         self.confirmation.release()
         self.diagnostics.release()
+        self.picker.release()
         self.search_decoded.free()
         self.clipboard.bytes.free()
         self.prompt.free()
@@ -475,12 +479,91 @@ impl Editor {
             else => return "No other match"!
         }
     }
+    pub open_buffer_picker :: fn (self: ^Self, scratch: ^arena) {
+        self.workspace.record_access()
+        self.picker.start("Buffers")
+        active := self.workspace.active_view().document_id
+        folder := bytes_text(self.workspace.folder)
+        for id in self.workspace.access_order {
+            entry := ^self.workspace.documents[id^]
+            path := on entry.path.count == 0 {
+                yes => "[unnamed]" else => bytes_text(entry.path)
+            }
+            on folder.count > 0 && path.count > folder.count && path[.. folder.count] == folder && path[folder.count] == '/' => path = path[folder.count + 1 ..]
+            current := on id^ == active {
+                yes => ">" else => " "
+            }
+            modified := on entry.modified() {
+                yes => "*" else => " "
+            }
+            self.picker.add(id^, path, annotation = scratch.pr($"{id^ + 1}{current}{modified}"))
+        }
+        self.picker.filter()
+        self.picker.selected = on self.picker.matches.count > 1 {
+            yes => 1 else => 0
+        }
+    }
+    pub close_buffer :: fn (self: ^Self, scratch: ^arena, force: bool = no, normalise: bool = no) -> void\string {
+        suppressed := self.workspace.active_view().keyboard.suppress_text
+        self.workspace.active_view().keyboard.suppress_text = no
+        self.suppress_character = self.suppress_character || suppressed
+        on self.prompt_kind != 0 => self.prompt_cancel()
+        self.picker.active = no
+        on normalise => self.workspace.active_view().interaction.state = Interaction.Normal
+        self.workspace.kill_document(self.workspace.active_view().document_id, force)?
+        on normalise => self.workspace.active_view().interaction.state = Interaction.Normal
+        self.highlights = no
+        self.active_match = nil
+        self.changed()
+        on self.workspace.persistent => {
+            self.workspace.checkpoint(scratch)?
+            self.dirty = no
+        }
+        self.tell("Buffer killed")
+    }
+    pub picker_key :: fn (self: ^Self, scratch: ^arena, key: TermKeyEvent) {
+        handled := yes
+        on key.scan_code {
+            ArrowUp => self.picker.move_selection(yes)
+            ArrowDown => self.picker.move_selection(no)
+            PageUp => self.picker.move_selection(yes, count = self.picker.rows)
+            PageDown => self.picker.move_selection(no, count = self.picker.rows)
+            ArrowLeft => self.picker.caret = previous_character(bytes_text(self.picker.query), self.picker.caret)
+            ArrowRight => self.picker.caret = next_character(bytes_text(self.picker.query), self.picker.caret)
+            Home => self.picker.caret = 0
+            End => self.picker.caret = self.picker.query.count
+            Backspace => self.picker.erase(yes)
+            -- Legacy DEL is Backspace, matching the text keyboard's policy.
+            Delete => self.picker.erase(key.character == 127.as(u32))
+            Escape => self.picker.active = no
+            Enter => on self.picker.chosen() => [id] {
+                on self.workspace.focus_document(id) => {
+                    self.workspace.active_view().interaction.state = Interaction.Normal
+                    self.highlights = no
+                    self.active_match = nil
+                    self.changed()
+                    self.message.clear()
+                    self.picker.active = no
+                }
+            }
+            W => on (key.modifiers & TERM_MOD_CONTROL) != 0 {
+                yes => on self.close_buffer(scratch, force = no, normalise = yes) {
+                    _success => {
+                    }
+                    error! => self.tell(error)
+                }
+                else => handled = no
+            }
+            else => handled = no
+        }
+        on handled && key.character != nil => self.suppress_character = yes
+    }
     pub save_all :: fn (self: ^Self, scratch: ^arena) -> void\string {
         for id, entry in self.workspace.documents {
             on !entry.modified() => again
             on entry.path.count == 0 => {
                 for index, text_view in self.workspace.views {
-                    on text_view.document_id == id => self.workspace.surface.view_id = index
+                    on text_view.document_id == id => self.workspace.focus_view(index)
                 }
                 self.prompt_open(':'.as(u32), initial = "w ")
                 self.save_all_pending = yes
@@ -490,7 +573,7 @@ impl Editor {
                 _success => self.dirty = yes
                 error! => {
                     for index, text_view in self.workspace.views {
-                        on text_view.document_id == id => self.workspace.surface.view_id = index
+                        on text_view.document_id == id => self.workspace.focus_view(index)
                     }
                     return scratch.pr($"Cannot save {bytes_text(entry.path)}: {error}")!
                 }
@@ -536,13 +619,7 @@ impl Editor {
             return
         }
         on command == "kill" || command == "kill!" => {
-            self.workspace.kill_document(self.workspace.active_view().document_id, command == "kill!")?
-            self.changed()
-            on self.workspace.persistent => {
-                self.workspace.checkpoint(scratch)?
-                self.dirty = no
-            }
-            self.tell("Buffer killed")
+            self.close_buffer(scratch, force = command == "kill!")?
             return
         }
         on command == "wq" => {
@@ -622,7 +699,7 @@ impl Editor {
             on number == 0 || number > self.workspace.documents.count => return "No such buffer; use :buffers"!
             for id, text_view in self.workspace.views {
                 on text_view.document_id == number - 1 => {
-                    self.workspace.surface.view_id = id
+                    self.workspace.focus_view(id)
                     text_view.interaction.state = Interaction.Normal
                     self.highlights = no
                     self.dirty = yes
@@ -733,6 +810,18 @@ impl Editor {
                 }
             }
             return
+        }
+        on command {
+            BufferPicker => {
+                self.open_buffer_picker(scratch)
+                return
+            }
+            CloseBuffer => {
+                self.close_buffer(scratch, force = no, normalise = yes)?
+                return
+            }
+            else => {
+            }
         }
         text_view := self.workspace.active_view()
         view := ^text_view.interaction
@@ -1117,6 +1206,10 @@ impl Editor {
         }
         -- Diagnostics must observe releases; ordinary UI/command handlers must not.
         on key.action == TermKeyAction.Release => return
+        on self.picker.active => {
+            self.picker_key(scratch, key)
+            return
+        }
         on self.confirmation.active => {
             on key.scan_code == TermScanCode.Escape => self.finish_confirmation(scratch, "Stopped after")
             return
@@ -1135,6 +1228,12 @@ impl Editor {
             }
         }
         on self.workspace.active_view().keyboard.key(key) => [command] {
+            -- The command may switch or destroy this view before its paired
+            -- text event arrives. Suppression belongs to the input stream.
+            on self.workspace.active_view().keyboard.suppress_text => {
+                self.workspace.active_view().keyboard.suppress_text = no
+                self.suppress_character = yes
+            }
             on self.execute(scratch, command) {
                 _success => {
                 }
@@ -1143,6 +1242,26 @@ impl Editor {
         }
     }
     pub character :: fn (self: ^Self, scratch: ^arena, rune: u32) {
+        on self.suppress_character => {
+            self.suppress_character = no
+            return
+        }
+        on self.picker.active => {
+            on rune == 23 => {
+                on self.close_buffer(scratch, force = no, normalise = yes) {
+                    _success => {
+                    }
+                    error! => self.tell(error)
+                }
+                return
+            }
+            on rune >= 32 && rune != 127 => {
+                encoded: [4]u8
+                size := rune.as(Rune).utf8_encode(encoded[..])
+                self.picker.insert(encoded[.. size].as(string))
+            }
+            return
+        }
         on self.diagnostics.active => {
             self.diagnostics.record(scratch, TermInputEvent.Character(rune))
             self.tell(self.diagnostics.message(scratch))
@@ -2232,6 +2351,72 @@ test "hjkl preserve graphemes and preferred columns while q keeps linewise selec
         editor.character(^scratch, rune^.as(u32))
     }
     assert doc.text()[..5] == "qhjkl" && view.state == Interaction.Insert
+}
+
+test "buffer picker starts at previous access and Ctrl W closes only saved buffers" {
+    scratch : arena
+    defer scratch.done()
+    editor : Editor
+    editor.workspace.lock_fd = -1
+    defer editor.release()
+    for name in ["/alpha.n", "/Beta.n", "/gamma.n"] {
+        editor.workspace.add_empty()
+        own(^editor.workspace.active_document().path, name^)
+        editor.workspace.active_document().disk_exists = yes
+    }
+    editor.workspace.active_view().interaction.state = Interaction.Normal
+    editor.prompt_open(':'.as(u32), initial = "buffer 2")
+    editor.key(^scratch,
+               TermKeyEvent { scan_code: Enter action: Press character: 13.as(u32) ... })
+    editor.character(^scratch, 13)
+    editor.character(^scratch, 'i'.as(u32))
+    editor.character(^scratch, 'z'.as(u32))
+    assert editor.workspace.active_document().text.text() == "z"
+    editor.character(^scratch, 26)
+    assert editor.workspace.active_document().text.text() == ""
+    assert !editor.workspace.views[2].keyboard.suppress_text
+    assert editor.workspace.focus_document(2)
+    editor.character(^scratch, ','.as(u32))
+    assert editor.picker.active && editor.picker.chosen() == 1
+    assert editor.picker.entries[0].id == 2 && editor.picker.entries[1].id == 1
+    editor.key(^scratch,
+               TermKeyEvent { scan_code: Enter action: Press character: 13.as(u32) ... })
+    editor.character(^scratch, 13)
+    assert !editor.picker.active && editor.workspace.active_view().document_id == 1
+    assert editor.workspace.access_order[0] == 1 && editor.workspace.access_order[1] == 2
+    editor.character(^scratch, ','.as(u32))
+    editor.character(^scratch, 'G'.as(u32))
+    editor.character(^scratch, 'M'.as(u32))
+    assert editor.picker.matches.count == 1 && editor.picker.chosen() == 2
+    editor.key(^scratch,
+               TermKeyEvent { scan_code: Escape action: Press character: 27.as(u32) ... })
+    editor.character(^scratch, 27)
+    assert editor.workspace.active_view().document_id == 1
+    editor.key(^scratch,
+               TermKeyEvent { scan_code: W action: Release modifiers: TERM_MOD_CONTROL ... })
+    assert editor.workspace.documents.count == 3
+    editor.key(^scratch,
+               TermKeyEvent { scan_code: W action: Press modifiers: TERM_MOD_CONTROL character: 23.as(u32) ... })
+    editor.character(^scratch, 23)
+    assert editor.workspace.documents.count == 2
+    assert bytes_text(editor.workspace.active_document().path) == "/gamma.n"
+    assert editor.workspace.active_view().interaction.state == Interaction.Normal
+    editor.character(^scratch, 'i'.as(u32))
+    editor.character(^scratch, ','.as(u32))
+    assert !editor.picker.active && editor.workspace.active_document().text.text() == ","
+    editor.character(^scratch, 23)
+    assert editor.workspace.documents.count == 2
+    assert editor.workspace.active_document().text.text() == ","
+    assert editor.workspace.active_view().interaction.state == Interaction.Normal
+    assert editor.message.count > 0
+    editor.open_buffer_picker(^scratch)
+    editor.picker.insert("zzzz")
+    editor.key(^scratch,
+               TermKeyEvent { scan_code: Enter action: Press character: 13.as(u32) ... })
+    editor.character(^scratch, 13)
+    assert editor.picker.active && editor.picker.matches.count == 0
+    editor.key(^scratch, TermKeyEvent { scan_code: Escape action: Press ... })
+    assert !editor.picker.active && editor.workspace.documents.count == 2
 }
 
 test "key releases leave navigation counts and message scrolling unchanged" {

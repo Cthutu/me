@@ -23,13 +23,18 @@ impl Keyboard {
         shift := (key.modifiers & TERM_MOD_SHIFT) != 0
 
         on self.count > 0 &&
-            ((ctrl && (key.scan_code == TermScanCode.S || key.scan_code == TermScanCode.Z || key.scan_code == TermScanCode.R || key.scan_code == TermScanCode.D)) || key.scan_code == TermScanCode.Tab || key.scan_code == TermScanCode.Enter || key.scan_code == TermScanCode.Backspace || key.scan_code == TermScanCode.Delete) => {
+            ((ctrl && (key.scan_code == TermScanCode.S || key.scan_code == TermScanCode.Z || key.scan_code == TermScanCode.R || key.scan_code == TermScanCode.D || key.scan_code == TermScanCode.W)) || key.scan_code == TermScanCode.Tab || key.scan_code == TermScanCode.Enter || key.scan_code == TermScanCode.Backspace || key.scan_code == TermScanCode.Delete) => {
             self.count = 0
             self.suppress_text = key.character != nil
             return Command.Error("Command does not accept a count")
         }
         on ctrl => {
             on key.scan_code {
+                W => {
+                    self.suppress_text = key.character != nil
+                    return Command.CloseBuffer
+                }
+
                 S => {
                     self.suppress_text = key.character != nil
                     return Command.Save
@@ -148,6 +153,7 @@ impl Keyboard {
         }
         -- Traditional terminals send control bytes without modifier metadata.
         on rune {
+            23  => return Command.CloseBuffer
             19  => return Command.Save
             26  => return Command.Undo
             18  => return Command.Redo
@@ -184,6 +190,7 @@ impl Keyboard {
             'i'.as(u32), 'a'.as(u32), 'A'.as(u32), 'I'.as(u32), 'o'.as(u32), 'O'.as(u32)  => Command.EnterInsert(rune)
             'w'.as(u32)                                                                   => Command.SelectWord(count)
             'q'.as(u32)                                                                   => Command.SelectLine(count)
+            ','.as(u32)                                                                   => Command.BufferPicker
             'y'.as(u32)                                                                   => Command.Copy
             'x'.as(u32)                                                                   => Command.Cut
             'v'.as(u32)                                                                   => Command.Paste
@@ -195,6 +202,72 @@ impl Keyboard {
         }
     }
 
+}
+
+test "comma is Normal-only and Ctrl W suppresses associated text without acting on releases" {
+    keyboard : Keyboard
+    assert keyboard.character(','.as(u32), Interaction.Insert) == nil
+    on keyboard.character(','.as(u32), Interaction.Normal) {
+        command => on command {
+            BufferPicker => {
+            }
+
+            else => {
+                assert no
+            }
+        }
+
+        else => {
+            assert no
+        }
+    }
+    on keyboard.key(TermKeyEvent { scan_code: W action: Press modifiers: TERM_MOD_CONTROL character: 23.as(u32) ... }) {
+        command => on command {
+            CloseBuffer => {
+            }
+
+            else => {
+                assert no
+            }
+        }
+
+        else => {
+            assert no
+        }
+    }
+    assert keyboard.suppress_text
+    assert keyboard.character(23, Interaction.Normal) == nil && !keyboard.suppress_text
+    on keyboard.character(23, Interaction.Insert) {
+        command => on command {
+            CloseBuffer => {
+            }
+
+            else => {
+                assert no
+            }
+        }
+
+        else => {
+            assert no
+        }
+    }
+    assert keyboard.key(TermKeyEvent { scan_code: W action: Release modifiers: TERM_MOD_CONTROL ... }) == nil
+    keyboard.count = 3
+    on keyboard.character(','.as(u32), Interaction.Normal) {
+        command => on command {
+            Error(_) => {
+            }
+
+            else => {
+                assert no
+            }
+        }
+
+        else => {
+            assert no
+        }
+    }
+    assert keyboard.count == 0
 }
 
 test "keyboard counts emit commands rather than directly moving a view" {

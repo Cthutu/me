@@ -46,7 +46,7 @@ The default compiler is installed `nerd`. Override `NERD` and `NERD_LIB_PATH` to
 use an isolated compiler/modules pair. An ignored local `.env` currently selects
 `_tools/nerd` and `_tools/mods`, containing the tested Nerd fixes; the shared Nerd
 checkout remains on the other agent's branch; see
-[toolchain status](docs/ms1-progress.md#nerd-fixes--ten-completed) for the distinct
+[toolchain status](docs/ms1-progress.md#nerd-fixes--twelve-completed) for the distinct
 user installation and validated private compiler. Generated outputs live in
 `_bin`, `_obj` and `_tmp`; `just clean` leaves compiler overrides alone.
 
@@ -92,6 +92,8 @@ these letters remain literal text in Insert and prompts.
 | Ctrl+D | Duplicate selected lines below (keeping the copy selected), or the current line at the same display column; clear character selections; one undo |
 | Ctrl+Z / Ctrl+R | Undo / redo |
 | Ctrl+S | Save active document; unnamed opens `:w ` |
+| `,` | Normal-only buffer picker; Enter switches, Escape cancels |
+| Ctrl+W | Close the active saved buffer; refuse unsaved work and enter Normal |
 
 Only `i` preserves selection on Insert entry; other entry commands clear it.
 Ctrl-bound editing commands enter Normal even on failure/no-op. Ctrl navigation
@@ -119,6 +121,39 @@ spaces; elsewhere it removes one grapheme. Existing tabs are never converted.
 Words are Unicode letters/decimal digits/underscore; punctuation forms separate
 runs. Line selections include their existing ending. Linewise paste without a
 selection inserts below; with a selection, paste replaces precisely that range.
+
+## Buffer picker
+
+Press **`,` in Normal** to open a large popup. Its top search bar filters paths
+by **case-insensitive ordered subsequence**: `btt` matches `BetaTest.n`. Matching
+uses Unicode 16 default full case folding, without accent removal or Unicode
+normalisation. Results retain **most-recent-access order**, not fuzzy scores:
+current buffer first, then previously accessed buffers. The **second row starts
+selected**, so `,<Enter>` switches straight to the previous buffer. With only one
+buffer, that row is selected instead.
+
+- **Up/Down** selects; **Page Up/Down** moves by a page. Releases do not move it.
+- **Enter** chooses immediately; **Escape** cancels without switching or changing
+  the originating buffer's caret/selection. Enter with no matches does nothing.
+- Typing edits the query, including Normal-command letters and commas. Backspace,
+  Delete, Left/Right and Home/End edit/navigate it; the query is bounded at 4,096
+  bytes. The list stays open with one or zero matches.
+- `>` marks the current buffer and `*` unsaved work. Startup-folder paths are
+  shown relative to it; other paths remain absolute. Display sanitisation never
+  changes the underlying filename/identity, including non-UTF-8/control bytes.
+- Access order survives continuation; accepting a buffer updates it. Cancelling
+  or merely moving the selection does not. Each buffer keeps its own view/history.
+
+**Ctrl+W closes the active buffer, not a highlighted popup row.** It dismisses
+any buffer picker, refuses unsaved/new/missing work with an error, and never
+writes or discards it implicitly. Success focuses the most recent surviving
+buffer; closing the last one leaves a fresh empty buffer. Ctrl+W enters Normal,
+including failure. `:kill`/`:kill!` remain available; `:kill!` is explicit discard.
+Comma remains literal in Insert and command/search prompts.
+
+The owning fuzzy-list model, popup layout and renderer are reusable. This first
+consumer does not implement asynchronous file discovery, an overlay stack or
+split-pane focus routing.
 
 ## Search and replacement
 
@@ -271,9 +306,11 @@ normalises interaction state as above; prompts are not resumed. Typing is deboun
 maximum two-second interval during continuous edits; normal quit checkpoints
 synchronously. Prompts, messages, search and clipboard are transient.
 
-Snapshots now use format v2 to preserve undo/redo caret hints. Existing v1
-snapshots are imported without dropping their content or history; the next
-checkpoint writes v2. Older ME binaries cannot read the new format.
+Snapshots now use format **v3**, retaining v2 undo/redo caret hints and adding
+validated buffer access order. Existing v1/v2 snapshots are imported without
+dropping content/history; the next checkpoint upgrades them to v3. Legacy access
+order starts with the restored active buffer, followed by document order because
+older snapshots did not record recency. Older ME binaries cannot read v3.
 
 `:q!` removes every buffer with unsaved work entirely, including recovered,
 unnamed, modified file-backed and missing-file buffers. It does not reset them to

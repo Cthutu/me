@@ -68,6 +68,7 @@ pub GapBuffer :: plex {
 }
 
 impl GapBuffer {
+
     pub release :: fn (self: ^Self) {
         self.storage.free()
         self.gap_start = 0
@@ -77,13 +78,13 @@ impl GapBuffer {
 
     physical_index :: fn (self: ^Self, position: usize) -> usize {
         return on position < self.gap_start {
-            yes => position
-            else => position + self.gap_end - self.gap_start
+            yes   => position
+            else  => position + self.gap_end - self.gap_start
         }
     }
 
     boundary :: fn (self: ^Self, position: usize) -> bool {
-        on position > self.length() => return no
+        on position > self.length()  => return no
         on position == self.length() => return yes
         byte := self.storage[self.physical_index(position)]
         return (byte & 0xc0) != 0x80
@@ -105,19 +106,22 @@ impl GapBuffer {
 
     reserve_gap :: fn (self: ^Self, required: usize) {
         on self.gap_end - self.gap_start >= required => return
-        size := self.length()
+        size     := self.length()
         capacity := self.storage.count * 2 + 64
+
         on capacity < size + required => capacity = size + required
-        replacement: [..]u8
+        replacement : [..]u8
         replacement.resize_undefined_to(capacity)
-        tail := self.storage.count - self.gap_end
+        tail    := self.storage.count - self.gap_end
         new_end := capacity - tail
-        replacement[.. self.gap_start] = self.storage[.. self.gap_start]
-        replacement[new_end ..] = self.storage[self.gap_end ..]
+
+        replacement[..self.gap_start] = self.storage[..self.gap_start]
+        replacement[new_end..] = self.storage[self.gap_end..]
         self.storage.free()
         self.storage = replacement
         self.gap_end = new_end
     }
+
 }
 
 impl TextRead for GapBuffer {
@@ -151,53 +155,61 @@ impl TextRead for GapBuffer {
 }
 
 impl TextEdit for GapBuffer {
-    pub replace :: fn (self: ^Self, range: TextRange, text: string) -> TextChange\EditError {
-        on range.start > range.end || range.end > self.length() => return InvalidRange!
-        on !self.boundary(range.start) || !self.boundary(range.end) => return SplitCharacter!
+
+    pub replace :: fn (self  : ^Self,
+                       range : TextRange,
+                       text  : string) -> TextChange\EditError {
+        on range.start > range.end ||
+            range.end > self.length() => return InvalidRange!
+        on !self.boundary(range.start) ||
+            !self.boundary(range.end) => return SplitCharacter!
         on text.utf8_validate() {
             _valid => {
             }
+
             _error! => return InvalidUtf8!
         }
         before := self.current_revision
-        on range.start == range.end && text.count == 0 => {
-            return {
-                range inserted_bytes: 0 before_revision: before after_revision: before
-            }
+        on range.start == range.end &&
+            text.count == 0 => return {
+            range
+            inserted_bytes  : 0
+            before_revision : before
+            after_revision  : before
         }
 
         -- Stabilise borrowed input before gap relocation or allocation. This also
         -- permits a caller to insert text borrowed from one of our read chunks.
-        input: [..]u8
+        input : [..]u8
         defer input.free()
         input.resize_undefined_to(text.count)
         input[..] = text.as([]u8)
-        removed := range.end - range.start
+        removed   := range.end - range.start
         available := self.gap_end - self.gap_start + removed
+
         on input.count > available => self.reserve_gap(input.count - removed)
         self.move_gap(range.start)
         self.gap_end += removed
-        self.storage[self.gap_start .. self.gap_start + input.count] = input[..]
+        self.storage[self.gap_start..self.gap_start + input.count] = input[..]
         self.gap_start += input.count
         self.current_revision += 1
         return {
             range
-            inserted_bytes: input.count
-            before_revision: before
-            after_revision: self.current_revision
+            inserted_bytes  : input.count
+            before_revision : before
+            after_revision  : self.current_revision
         }
     }
+
 }
 
 test {
+
     expect_text :: fn (buffer: ^GapBuffer, expected: string) -> void\EditError {
         bytes : [..]u8
         defer bytes.free()
         bytes.resize_undefined_to(buffer.length())
-        _ := buffer.copy_range({
-            start: 0 end: buffer.length()
-        }
-        , bytes[..])?
+        _ := buffer.copy_range({ start: 0 end: buffer.length() }, bytes[..])?
         assert bytes[..].as(string) == expected
     }
 
@@ -206,52 +218,31 @@ test {
         defer buffer.release()
         assert buffer.length() == 0
         assert buffer.revision() == 0
-        _ := buffer.replace({
-            start: 0 end: 0
-        }
-        , "alpha omega")?
-        _ := buffer.replace({
-            start: 6 end: 6
-        }
-        , "beta ")?
+        _ := buffer.replace({ start: 0 end: 0 }, "alpha omega")?
+        _ := buffer.replace({ start: 6 end: 6 }, "beta ")?
 
         expect_text(^buffer, "alpha beta omega")?
         before_gap := buffer.gap_start
-        chunks := buffer.chunks()
+        chunks     := buffer.chunks()
 
         assert chunks.before.count + chunks.after.count == buffer.length()
         expect_text(^buffer, "alpha beta omega")?
         assert buffer.gap_start == before_gap, "Reads must not move the gap"
 
-        change := buffer.replace({
-            start: 0 end: 6
-        }
-        , "")?
+        change := buffer.replace({ start: 0 end: 6 }, "")?
         assert change.before_revision == 2
         assert change.after_revision == 3
         assert change.inserted_bytes == 0
         expect_text(^buffer, "beta omega")?
-        _ := buffer.replace({
-            start: 5 end: 10
-        }
-        , "world")?
+        _ := buffer.replace({ start: 5 end: 10 }, "world")?
         expect_text(^buffer, "beta world")?
-        _ := buffer.replace({
-            start: 0 end: buffer.length()
-        }
-        , "")?
+        _ := buffer.replace({ start: 0 end: buffer.length() }, "")?
         expect_text(^buffer, "")?
 
-        _ := buffer.replace({
-            start: 0 end: 0
-        }
-        , "café\r\nlast")?
+        _ := buffer.replace({ start: 0 end: 0 }, "café\r\nlast")?
         expect_text(^buffer, "café\r\nlast")?
         revision := buffer.revision()
-        on buffer.replace({
-            start: 4 end: 4
-        }
-        , "x") {
+        on buffer.replace({ start: 4 end: 4 }, "x") {
             _change => {
                 assert no, "Must not split a UTF-8 character"
             }
@@ -260,10 +251,7 @@ test {
                 assert error == EditError.SplitCharacter
             }
         }
-        on buffer.replace({
-            start: 99 end: 99
-        }
-        , "x") {
+        on buffer.replace({ start: 99 end: 99 }, "x") {
             _change => {
                 assert no, "Must reject invalid ranges"
             }
@@ -273,10 +261,7 @@ test {
             }
         }
         invalid : [1]u8 = [0xff]
-        on buffer.replace({
-            start: 0 end: 0
-        }
-        , invalid.as(string)) {
+        on buffer.replace({ start: 0 end: 0 }, invalid.as(string)) {
             _change => {
                 assert no, "Must reject invalid UTF-8"
             }
@@ -287,55 +272,38 @@ test {
         }
         assert buffer.revision() == revision
         expect_text(^buffer, "café\r\nlast")?
-        unchanged := buffer.replace({
-            start: 0 end: 0
-        }
-        , "")?
+        unchanged := buffer.replace({ start: 0 end: 0 }, "")?
         assert unchanged.before_revision == unchanged.after_revision
 
         -- Force repeated growth and gap moves against a simple byte-array oracle.
         oracle : [..]u8
         defer oracle.free()
-        _ := buffer.replace({
-            start: 0 end: buffer.length()
-        }
-        , "")?
+        _ := buffer.replace({ start: 0 end: buffer.length() }, "")?
         for index in [0 .. 300] {
             position := on index % 2 == 0 {
-                yes => 0
-                else => buffer.length()
+                yes   => 0
+                else  => buffer.length()
             }
-            _ := buffer.replace({
-                start: position end: position
-            }
-            , "z")?
+            _ := buffer.replace({ start: position end: position }, "z")?
             oracle.push('z')
             expect_text(^buffer, oracle[..].as(string))?
         }
         for buffer.length() > 0 {
             position := buffer.length() / 2
-            _ := buffer.replace({
-                start: position end: position + 1
-            }
-            , "")?
-            _ := oracle.pop()
+            _        := buffer.replace({ start: position end: position + 1 }, "")?
+            _        := oracle.pop()
 
             expect_text(^buffer, oracle[..].as(string))?
         }
 
         -- Source text may borrow existing storage: mutation must stabilise it first.
-        _ := buffer.replace({
-            start: 0 end: 0
-        }
-        , "abc")?
+        _        := buffer.replace({ start: 0 end: 0 }, "abc")?
         borrowed := buffer.chunks().before.as(string)
-        _ := buffer.replace({
-            start: 0 end: 0
-        }
-        , borrowed)?
+        _        := buffer.replace({ start: 0 end: 0 }, borrowed)?
 
         expect_text(^buffer, "abcabc")?
     }
+
 }
 
 test "gap buffer position-explicit edits, growth, UTF-8 validation and borrowed input" {

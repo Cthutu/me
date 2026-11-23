@@ -317,6 +317,24 @@ The fix is retained on local Nerd `main` and its pushed agent branch. Direct
 coordination. ME's private compiler includes the validated fix.
 
 
+## Buffer popup and safe close — settled
+
+- Normal `,` opens a large popup with a top fuzzy query bar. Matching is
+  case-insensitive subsequence matching in typed-letter order, using Unicode 16
+  default full case folding. This model/layout/renderer is reusable for later lists.
+- Buffers stay in MRU order: current first, previous second, with the second row
+  initially selected (first for a lone buffer). Enter immediately chooses;
+  Escape cancels without switching. Empty results remain open; Enter is a no-op.
+- Arrow/page keys move the selection; query editing supports grapheme deletion
+  and caret navigation. The query is bounded at 4,096 bytes, not persisted.
+- MRU order persists in continuation v3, importing v1/v2 safely. Legacy snapshots
+  seed active-first then document order because no prior access order was stored.
+- Ctrl+W closes the **active** saved buffer, not a highlighted picker candidate.
+  Dismiss the picker and show an error on unsaved work. No implicit write/discard;
+  success focuses the previous surviving buffer or creates a fresh empty one.
+  Ctrl+W enters Normal, including failure; literal comma remains in Insert/prompts.
+- Asynchronous file discovery, an overlay stack and split routing are later work.
+
 ## Enhanced key releases
 
 The reported press/release cursor duplication was reproduced as a Nerd parser

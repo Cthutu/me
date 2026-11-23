@@ -50,6 +50,8 @@ pub Command :: enum {
     Paste
     Change
     Save
+    BufferPicker
+    CloseBuffer
     Prompt(u32)
     SearchNext(bool)
     Error(string)

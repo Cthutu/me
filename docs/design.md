@@ -315,6 +315,36 @@ Still investigate paste boundaries, clipboard support, Unicode/grapheme editing,
 subprocess communication, resizing, and failure recovery before promising exact
 behaviour.
 
+### First popup consumer: buffer switcher — agreed and implemented
+
+Normal `,` opens a capturing, workspace-relative popup occupying most of the
+terminal. A reusable owning fuzzy-list model keeps IDs, safe labels, annotations,
+query/caret, filtered indices, selection and scroll distinct from document text,
+view selection and undo. A shared bounded layout and generic renderer overlay
+it after the document/status. Opaque popup drawing clips existing complex-glyph
+overlays; tiny/resized terminals remain bounded. Search input stays at the top.
+
+Matching is Unicode 16 default full-case-folded codepoint subsequence matching,
+not substring-only search or score ranking. Paths retain MRU source order. Start
+with the current document first and the second entry selected (first if alone).
+Up/Down/Page keys navigate; Enter immediately accepts a valid candidate; no-match
+Enter is a no-op; Escape cancels. Letters, commas and digits edit the query,
+not Normal commands. Query editing is grapheme-aware and bounded at 4,096 bytes.
+
+Workspace access tracking is separate from document/view array order. All focus
+paths update it. Continuation v3 adds validated unique document IDs in access
+order; v1/v2 imports preserve content/history and seed restored-active-first order.
+Popup/query state is transient. This first consumer does not yet implement the
+proposed overlay stack, asynchronous discovery or pane destinations.
+
+Ctrl+W closes the active buffer only when saved, dismissing any buffer picker.
+It is not a close-highlighted-row shortcut. Unsaved/new/missing work errors without
+writing/discarding it; explicit `:kill!` remains the force path. Success focuses
+MRU surviving work or creates a fresh empty buffer. Ctrl+W enters Normal on both
+success/failure; legacy `:kill` retains its existing empty-buffer Insert behaviour.
+Key/text suppression follows the input stream across view changes/destruction,
+so an associated Enter/Ctrl+W text event cannot affect the destination buffer.
+
 ### Enhanced key actions — agreed
 
 Keyboard commands and ordinary UI handlers execute on press/repeat, never on
@@ -346,7 +376,7 @@ bounded decoded trace. Key names, actions, modifiers and numeric character/text
 values are safe to render; no terminal-supplied controls are replayed. Escape
 closes the view, Alt+Page Up/Down scroll, and reopening clears the trace. The
 existing message surface expands while diagnostics are active; this is not the
-queued popup/picker framework. Neither trace nor active mode is persisted.
+popup/picker framework. Neither trace nor active mode is persisted.
 
 Capability detection lives in Nerd, not an ME escape-sequence workaround. Partial
 Kitty flags must not overclaim reliable held/physical keys. A zero reply differs
