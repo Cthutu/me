@@ -363,10 +363,12 @@ clears it. Keep the top query full-width; hide preview on narrow/short terminals
 and give the list the full width. This first consumer does not yet implement the
 proposed overlay stack, asynchronous discovery or pane destinations.
 
-Ctrl+W closes the active buffer only when saved, dismissing any buffer picker.
-It is not a close-highlighted-row shortcut. Unsaved/new/missing work errors without
-writing/discarding it; explicit `:kill!` remains the force path. Success focuses
-MRU surviving work or creates a fresh empty buffer. Ctrl+W enters Normal on both
+Ctrl+W closes the highlighted buffer when the buffer picker is open, otherwise
+the active buffer, only when saved. No matches means no action. A close attempt
+dismisses the picker. Closing another buffer preserves the active buffer.
+Unsaved/new/missing work errors without writing/discarding it; explicit `:kill!`
+remains the force path. Closing the active buffer focuses MRU surviving work or
+creates a fresh empty buffer. Ctrl+W enters Normal on both
 success/failure; legacy `:kill` retains its existing empty-buffer Insert behaviour.
 Key/text suppression follows the input stream across view changes/destruction,
 so an associated Enter/Ctrl+W text event cannot affect the destination buffer.

@@ -33,7 +33,8 @@ refreshes. See the [README](../README.md) for usage and explicit limitations.
 - Normal comma opens the first reusable large fuzzy popup: Unicode full-case-folded
   subsequence matching, MRU buffer order, second-row initial selection and immediate
   Enter acceptance. Escape cancels; query/selection remain separate from text views.
-  Ctrl+W safely closes the active saved buffer, focuses MRU surviving work and
+  Ctrl+W safely closes the highlighted picker buffer (otherwise the active one),
+  preserves focus when closing another buffer, focuses MRU surviving work when needed and
   refuses unsaved work. Input-stream suppression survives switching/closing views.
 - Enhanced cursor/Home/End/tilde-key releases no longer execute commands. Nerd
   preserves CSI action subparameters; ME ignores decoded releases in ordinary
@@ -85,6 +86,20 @@ refreshes. See the [README](../README.md) for usage and explicit limitations.
   tested raw-terminal/alternate-screen restoration and SIGKILL checkpoint recovery.
 - Standard `just` recipes, compiler/module overrides, debug/release executables
   and a reproducible PTY latency probe.
+
+## Highlighted-buffer close adjustment (T3d)
+
+Ctrl+W in the buffer picker closes its highlighted saved buffer. Legacy and
+enhanced input share the selected-target path; no matches do nothing. A close
+attempt dismisses the picker, refuses unsaved work, and preserves active work
+when closing another buffer. Existing active-close MRU/last-buffer and paired
+text/release suppression rules remain in effect.
+
+Verification: formatting/type checking, **156 native tests** (44 ME + 112 imported),
+all **34 debug PTY groups**, all five release buffer-picker groups, Python
+compilation and diff checks passed. The additional native and PTY regressions
+cover target identity, dirty work, filtering/no matches and input suppression.
+Installation and installed selected-close smoke follow commit/push.
 
 ## Verification
 

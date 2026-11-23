@@ -203,7 +203,8 @@ completion still uses the existing message area, separate from the reusable popu
   Keep MRU result order, current first, second row selected initially. Enter chooses.
 - Escape cancels; Up/Down/Page keys select/scroll; query edits never edit documents.
   Keep input/focus, query, candidate selection and dismissal separate from buffers.
-- Ctrl+W closes the active saved buffer (not the highlighted row); otherwise show
+- Original delivery: Ctrl+W closes the active saved buffer; T3d below adds
+  highlighted-row closing. Otherwise show
   an error. No implicit save/discard; retain `:kill!` for explicit forced removal.
 - Persist validated MRU order in continuation v3 with v1/v2 import. Keep view IDs,
   history and typed-buffer fidelity independent; preserve literal comma in Insert.
@@ -261,6 +262,19 @@ buffers and displaying the first successful argument remains unchanged.
 - T3b/T3c verification: 155 native tests (43 project + 112 imported), all 33 PTY
   groups on debug/release, format/check/Python compilation/idempotence passed.
   Installed startup, CLI, preview/picker and help regressions follow push/install.
+
+### T3d — Close the highlighted buffer from the picker — done
+
+- Ctrl+W closes the highlighted buffer while the list is open; outside it, close
+  the active buffer. A query with no matches makes Ctrl+W a no-op.
+- Retain unsaved/new/missing-buffer refusal and dismissal on a close attempt.
+- Closing another buffer preserves active work; closing the active buffer uses
+  the existing MRU fallback, or a fresh empty buffer after the last close.
+- Cover legacy/enhanced input, associated text and release suppression, filtering,
+  dirty active/selected buffers and last-buffer fallback.
+- Verification: format/check, all 156 native tests, all 34 debug PTY groups,
+  all five release buffer-picker PTY groups, Python compilation and diff checks
+  passed. Release installation and installed selected-close smoke follow push.
 
 ### T4 — File picker
 

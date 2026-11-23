@@ -870,6 +870,39 @@ def buffer_picker(binary, folder):
         session.quit()
 
 
+def buffer_picker_close_selected(binary, folder):
+    for name in ["alpha.txt", "beta.txt", "gamma.txt"]:
+        (folder / name).write_bytes(name.encode())
+    with Session(binary, folder, "alpha.txt", "beta.txt", "gamma.txt") as session:
+        session.command("buffer 3")
+        session.send("iX")
+        session.normal()
+        session.send(",")
+        session.send(b"\x1b[119;5;23u\x1b[119;5:3u")
+        session.send(",")
+        shown = screen(session)
+        assert b"2/2" in shown and b"alpha.txt" not in shown, shown
+        session.send("gamma")
+        session.send(b"\x17")
+        assert b"unsaved" in screen(session), "selected dirty buffer was not protected"
+        session.send(",no-match")
+        session.send(b"\x17")
+        assert b"No matches" in screen(session), "empty picker closed a buffer"
+        session.send(b"\x1b", 0.15)
+        session.send(",beta")
+        session.send(b"\x17")
+        session.send(",")
+        assert b"1/1" in screen(session) and b"gamma.txt" in screen(session)
+        session.send(b"\x1b", 0.15)
+        session.send(b"\x13")
+        assert (folder / "gamma.txt").read_bytes() == b"Xgamma.txt"
+        session.send(",\x17")
+        session.send(",")
+        assert b"[unnamed]" in screen(session) and b"gamma.txt" not in screen(session)
+        session.send(b"\x1b", 0.15)
+        session.quit()
+
+
 def buffer_picker_preview(binary, folder):
     first = folder / "alpha.txt"
     second = folder / "beta.txt"
@@ -1484,7 +1517,7 @@ def main():
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
     checks = [cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
               search_replace_and_buffers, search_origins, slash_replacement, confirmation_recovery, byte_paths_and_checkpoint_failures,
-              second_instance, crash_and_signals, undo_caret, word_delete, buffer_picker, buffer_picker_preview, buffer_picker_recovery, buffer_picker_unicode_bytes, enhanced_key_actions, keyboard_diagnostics, hjkl_and_line_selection, duplicate_selection, command_completion, live_completion_filter, file_completion, home_paths, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
+              second_instance, crash_and_signals, undo_caret, word_delete, buffer_picker, buffer_picker_close_selected, buffer_picker_preview, buffer_picker_recovery, buffer_picker_unicode_bytes, enhanced_key_actions, keyboard_diagnostics, hjkl_and_line_selection, duplicate_selection, command_completion, live_completion_filter, file_completion, home_paths, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
     selected = [check for check in checks if args.filter in check.__name__]
     if not selected:
         parser.error(f"No PTY checks match {args.filter!r}")

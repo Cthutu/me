@@ -115,7 +115,7 @@ these letters remain literal text in Insert and prompts.
 | Ctrl+Z / Ctrl+R | Undo / redo |
 | Ctrl+S | Save active document; unnamed opens `:w ` |
 | `,` | Normal-only buffer picker; Enter switches, Escape cancels |
-| Ctrl+W | Close the active saved buffer; refuse unsaved work and enter Normal |
+| Ctrl+W | Close the highlighted buffer in the picker, otherwise the active buffer; refuse unsaved work |
 
 Only `i` preserves selection on Insert entry; other entry commands clear it.
 Ctrl-bound editing commands enter Normal even on failure/no-op. Ctrl navigation
@@ -166,10 +166,12 @@ buffer, that row is selected instead.
 - Access order survives continuation; accepting a buffer updates it. Cancelling
   or merely moving the selection does not. Each buffer keeps its own view/history.
 
-**Ctrl+W closes the active buffer, not a highlighted popup row.** It dismisses
-any buffer picker, refuses unsaved/new/missing work with an error, and never
-writes or discards it implicitly. Success focuses the most recent surviving
-buffer; closing the last one leaves a fresh empty buffer. Ctrl+W enters Normal,
+**Ctrl+W closes the highlighted buffer while the picker is open, otherwise the active buffer.**
+With no matches it does nothing. A close attempt dismisses the picker,
+refuses unsaved/new/missing work with an error, and never
+writes or discards it implicitly. Closing another buffer preserves the active
+buffer; closing the active one focuses the most recent survivor. Closing the last
+one leaves a fresh empty buffer. Ctrl+W enters Normal,
 including failure. `:kill`/`:kill!` remain available; `:kill!` is explicit discard.
 Comma remains literal in Insert and command/search prompts.
 

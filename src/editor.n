@@ -503,14 +503,17 @@ impl Editor {
             yes => 1 else => 0
         }
     }
-    pub close_buffer :: fn (self: ^Self, scratch: ^arena, force: bool = no, normalise: bool = no) -> void\string {
+    pub close_buffer :: fn (self: ^Self, scratch: ^arena, force: bool = no, normalise: bool = no, document_id: ?usize = nil) -> void\string {
         suppressed := self.workspace.active_view().keyboard.suppress_text
         self.workspace.active_view().keyboard.suppress_text = no
         self.suppress_character = self.suppress_character || suppressed
         on self.prompt_kind != 0 => self.prompt_cancel()
         self.picker.active = no
         on normalise => self.workspace.active_view().interaction.state = Interaction.Normal
-        self.workspace.kill_document(self.workspace.active_view().document_id, force)?
+        target := on document_id {
+            id => id else => self.workspace.active_view().document_id
+        }
+        self.workspace.kill_document(target, force)?
         on normalise => self.workspace.active_view().interaction.state = Interaction.Normal
         self.highlights = no
         self.active_match = nil
@@ -520,6 +523,15 @@ impl Editor {
             self.dirty = no
         }
         self.tell("Buffer killed")
+    }
+    pub close_picked_buffer :: fn (self: ^Self, scratch: ^arena) {
+        on self.picker.chosen() => [id] {
+            on self.close_buffer(scratch, force = no, normalise = yes, document_id = id) {
+                _success => {
+                }
+                error! => self.tell(error)
+            }
+        }
     }
     pub picker_key :: fn (self: ^Self, scratch: ^arena, key: TermKeyEvent) {
         handled := yes
@@ -547,11 +559,7 @@ impl Editor {
                 }
             }
             W => on (key.modifiers & TERM_MOD_CONTROL) != 0 {
-                yes => on self.close_buffer(scratch, force = no, normalise = yes) {
-                    _success => {
-                    }
-                    error! => self.tell(error)
-                }
+                yes => self.close_picked_buffer(scratch)
                 else => handled = no
             }
             else => handled = no
@@ -1248,11 +1256,7 @@ impl Editor {
         }
         on self.picker.active => {
             on rune == 23 => {
-                on self.close_buffer(scratch, force = no, normalise = yes) {
-                    _success => {
-                    }
-                    error! => self.tell(error)
-                }
+                self.close_picked_buffer(scratch)
                 return
             }
             on rune >= 32 && rune != 127 => {
@@ -2417,6 +2421,49 @@ test "buffer picker starts at previous access and Ctrl W closes only saved buffe
     assert editor.picker.active && editor.picker.matches.count == 0
     editor.key(^scratch, TermKeyEvent { scan_code: Escape action: Press ... })
     assert !editor.picker.active && editor.workspace.documents.count == 2
+}
+
+test "picker Ctrl W closes the chosen buffer and protects unsaved and unmatched work" {
+    scratch : arena
+    defer scratch.done()
+    editor : Editor
+    editor.workspace.lock_fd = -1
+    defer editor.release()
+    for name in ["/alpha.n", "/beta.n", "/gamma.n"] {
+        editor.workspace.add_empty()
+        own(^editor.workspace.active_document().path, name^)
+        editor.workspace.active_document().disk_exists = yes
+    }
+    editor.character(^scratch, 'x'.as(u32))
+    editor.open_buffer_picker(^scratch)
+    assert editor.picker.chosen() == 1
+    editor.key(^scratch,
+               TermKeyEvent { scan_code: W action: Release modifiers: TERM_MOD_CONTROL ... })
+    assert editor.workspace.documents.count == 3 && editor.picker.active
+    editor.key(^scratch,
+               TermKeyEvent { scan_code: W action: Press modifiers: TERM_MOD_CONTROL character: 23.as(u32) ... })
+    editor.character(^scratch, 23)
+    assert !editor.picker.active && editor.workspace.documents.count == 2
+    assert bytes_text(editor.workspace.documents[0].path) == "/alpha.n"
+    assert bytes_text(editor.workspace.active_document().path) == "/gamma.n"
+    assert editor.workspace.active_document().text.text() == "x"
+    assert editor.workspace.active_view().interaction.state == Interaction.Normal
+    editor.open_buffer_picker(^scratch)
+    editor.picker.insert("gamma")
+    editor.character(^scratch, 23)
+    assert !editor.picker.active && editor.workspace.documents.count == 2
+    assert editor.message.count > 0 && editor.workspace.active_document().text.text() == "x"
+    editor.open_buffer_picker(^scratch)
+    editor.picker.insert("no matches")
+    editor.key(^scratch,
+               TermKeyEvent { scan_code: W action: Press modifiers: TERM_MOD_CONTROL character: 23.as(u32) ... })
+    editor.character(^scratch, 23)
+    assert editor.picker.active && editor.workspace.documents.count == 2
+    editor.open_buffer_picker(^scratch)
+    editor.picker.insert("alpha")
+    editor.character(^scratch, 23)
+    assert !editor.picker.active && editor.workspace.documents.count == 1
+    assert bytes_text(editor.workspace.active_document().path) == "/gamma.n"
 }
 
 test "key releases leave navigation counts and message scrolling unchanged" {

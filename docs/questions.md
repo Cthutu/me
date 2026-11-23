@@ -338,9 +338,11 @@ coordination. ME's private compiler includes the validated fix.
   and caret navigation. The query is bounded at 4,096 bytes, not persisted.
 - MRU order persists in continuation v3, importing v1/v2 safely. Legacy snapshots
   seed active-first then document order because no prior access order was stored.
-- Ctrl+W closes the **active** saved buffer, not a highlighted picker candidate.
-  Dismiss the picker and show an error on unsaved work. No implicit write/discard;
-  success focuses the previous surviving buffer or creates a fresh empty one.
+- Ctrl+W closes the highlighted picker candidate, otherwise the active saved
+  buffer. No matches means no action. Closing another buffer preserves focus.
+  Dismiss the picker on a close attempt and show an error on unsaved work. No
+  implicit write/discard; closing the active buffer focuses the previous survivor
+  or creates a fresh empty one.
   Ctrl+W enters Normal, including failure; literal comma remains in Insert/prompts.
 - Right-hand preview follows the highlighted buffer's live unsaved text without
   switching it or changing caret/selection/history/MRU. Display from the top,
