@@ -23,6 +23,9 @@ refreshes. See the [README](../README.md) for usage and explicit limitations.
   Undo/redo restores optional before/after caret hints without undoing navigation
   or restoring selections. Snapshot v3 preserves v2 hints, imports v1/v2 history and persists buffer MRU;
   codec checks reject out-of-bounds or split-UTF-8 history carets.
+- Multiple CLI filenames load into buffers, displaying the first successful
+  path; restored work/identity/history are retained unless `-r` starts fresh.
+  Failed arguments do not stop later files, and failed resets preserve recovery.
 - Normal comma opens the first reusable large fuzzy popup: Unicode full-case-folded
   subsequence matching, MRU buffer order, second-row initial selection and immediate
   Enter acceptance. Escape cancels; query/selection remain separate from text views.
@@ -101,7 +104,7 @@ build, confirming no production-code or test-only-code leakage.
 ### Real terminal integration
 
 `python3 tests/terminal.py --binary _bin/me` and the equivalent release command
-passed all **30 scenario groups**, including buffer lifecycle, gutter styling,
+passed all **31 scenario groups**, including buffer lifecycle, gutter styling,
 selected-line duplication, word deletion, file opening and filename completion,
 on both debug and release builds:
 
@@ -173,6 +176,10 @@ on both debug and release builds:
 30. Full Unicode case folding (ß and sigma), raw/control-byte filename identity
     and safe popup rendering. Native UI checks cover opaque composite clipping,
     Unicode query glyphs and tiny/zero terminal geometry.
+31. Multiple CLI files load into buffers while displaying the first successful
+    argument. Existing aliases reuse buffers; missing paths remain unwritten.
+    Preserve recovered work; continue after open failures; failed all-path reset
+    preserves recovery. Cover spaces, home expansion, raw bytes and unknown flags.
 
 Normal/signal exits compare the actual PTY attributes against startup and check
 alternate-screen restoration. Tests use isolated temporary HOME/folders and do

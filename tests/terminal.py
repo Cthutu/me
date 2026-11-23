@@ -89,6 +89,76 @@ class Session:
         self.close()
 
 
+def cli_files(binary, folder):
+    first = folder / "first.txt"
+    second = folder / "second file.txt"
+    new = folder / "new.txt"
+    first.write_bytes(b"FIRST")
+    second.write_bytes(b"SECOND")
+    (folder / "alias").symlink_to(first.name)
+    with Session(binary, folder, "-r", first.name, second.name, "alias", first.name, new.name) as session:
+        session.send("iA")
+        session.send(b"\x13")
+        assert first.read_bytes() == b"AFIRST", "CLI did not display the first argument"
+        assert second.read_bytes() == b"SECOND" and not new.exists()
+        session.send(",")
+        assert b"3/3" in screen(session), "CLI aliases created duplicate buffers"
+        session.send("second\r")
+        session.send("iB")
+        session.send(b"\x13")
+        assert second.read_bytes() == b"BSECOND", "second CLI file was not loaded"
+        session.send(",new\r")
+        session.send("iN")
+        session.send(b"\x13")
+        assert new.read_bytes() == b"N", "missing CLI file was not a named buffer"
+        session.quit()
+    snapshot = next((folder / "home/.config/me").glob("*/snapshot"))
+    previous = snapshot.read_bytes()
+    (folder / "invalid.bin").write_bytes(b"\xff")
+    with Session(binary, folder, "-r", "invalid.bin", ".") as session:
+        assert session.process.poll() == 2, bytes(session.output)
+        assert b"not valid UTF-8" in session.output and b"non-regular" in session.output
+        assert termios.tcgetattr(session.master) == session.original_attributes
+    assert snapshot.read_bytes() == previous, "failed multi-file reset overwrote recovery"
+    with Session(binary, folder, second.name, first.name) as session:
+        session.send(b"\x1b[H")
+        session.send("iR")
+        session.send(b"\x13")
+        assert second.read_bytes() == b"RBSECOND", "restored buffers overrode first CLI argument"
+        session.send(",")
+        assert b"3/3" in screen(session), "CLI dropped recovered buffers or duplicated paths"
+        session.send(b"\x1b", 0.15)
+        session.quit()
+    # Try every argument despite failures, including when the first one fails.
+    with Session(binary, folder, "-r", ".", first.name, "invalid.bin", second.name) as session:
+        assert b"non-regular" in session.output and b"not valid UTF-8" in session.output
+        session.send(b"\x1b[H")
+        session.send("iS")
+        session.send(b"\x13")
+        assert first.read_bytes() == b"SAFIRST", "first successful CLI path was not displayed"
+        session.send(",")
+        assert b"2/2" in screen(session), "a failed argument stopped later files opening"
+        session.send(b"\x1b", 0.15)
+        session.quit()
+    home_file = folder / "home/home file.txt"
+    home_file.write_bytes(b"HOME")
+    raw = b"raw\xff.txt"
+    with open(os.fsencode(folder) + b"/" + raw, "wb") as stream:
+        stream.write(b"RAW")
+    with Session(binary, folder, "-r", "~/home file.txt", raw) as session:
+        session.send("iH")
+        session.send(b"\x13")
+        assert home_file.read_bytes() == b"HHOME"
+        session.send(",raw\riR")
+        session.send(b"\x13")
+        with open(os.fsencode(folder) + b"/" + raw, "rb") as stream:
+            assert stream.read() == b"RRAW", "CLI changed raw filename bytes"
+        session.quit()
+    rejected = subprocess.run([str(binary), first.name, "--unknown", second.name],
+                              cwd=folder, capture_output=True)
+    assert rejected.returncode == 2 and b"[filename ...]" in rejected.stderr
+
+
 def recovery(binary, folder):
     path = folder / "note.txt"
     with Session(binary, folder, "-r", "note.txt") as session:
@@ -1314,7 +1384,7 @@ def main():
     allowed = {"libc.so.6", "libm.so.6", "libgcc_s.so.1", "linux-vdso.so.1"}
     unexpected = {name for name in names if name not in allowed and not Path(name).name.startswith("ld-linux-")}
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
-    checks = [recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
+    checks = [cli_files, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
               search_replace_and_buffers, search_origins, slash_replacement, confirmation_recovery, byte_paths_and_checkpoint_failures,
               second_instance, crash_and_signals, undo_caret, word_delete, buffer_picker, buffer_picker_recovery, buffer_picker_unicode_bytes, enhanced_key_actions, keyboard_diagnostics, hjkl_and_line_selection, duplicate_selection, command_completion, live_completion_filter, file_completion, home_paths, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
     selected = [check for check in checks if args.filter in check.__name__]

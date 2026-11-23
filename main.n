@@ -7,24 +7,22 @@ use std.term
 use std.time
 
 main :: fn (args: []string) -> i32 {
-    reset    := no
-    filename := ""
+    reset := no
 
     for argument in args[1..] {
         on argument^ == "--help" => {
-            prn("ME — Matt's Editor\nUsage: me [-r] [filename]\n-r starts a fresh workspace. Normal quit preserves unsaved work.\n:q quit  :q! remove unsaved buffers  :w[!] [filename] save\n:kill[!] kills the active buffer (force with !).\n:keys shows keyboard capabilities and decoded events.\nCursor keys and Normal hjkl navigate; i enters Insert; Escape returns to Normal.\nCtrl+S save  Ctrl+Z undo  Ctrl+R redo  Ctrl+D duplicate line\nNormal , opens the buffer picker; Ctrl+W closes the active saved buffer.\nw/q select words/lines; y/x/v copy/cut/paste; c changes selection.\n/ and ? search; n/p select next/previous matches.")
+            prn("ME — Matt's Editor\nUsage: me [-r] [filename ...]\nFiles open in separate buffers; the first successful path is displayed.\n-r starts a fresh workspace. Normal quit preserves unsaved work.\n:q quit  :q! remove unsaved buffers  :w[!] [filename] save\n:kill[!] kills the active buffer (force with !).\n:keys shows keyboard capabilities and decoded events.\nCursor keys and Normal hjkl navigate; i enters Insert; Escape returns to Normal.\nCtrl+S save  Ctrl+Z undo  Ctrl+R redo  Ctrl+D duplicate line\nNormal , opens the buffer picker; Ctrl+W closes the active saved buffer.\nw/q select words/lines; y/x/v copy/cut/paste; c changes selection.\n/ and ? search; n/p select next/previous matches.")
             return 0
         }
         on argument^ == "-r" {
             yes => reset = yes
 
             else => {
-                on filename.count > 0 ||
-                    (argument.count > 0 && argument^[0] == '-') => {
-                    eprn("\x1b[31mME: expected me [-r] [filename]\x1b[0m")
+                on argument.count > 0 &&
+                    argument^[0] == '-' => {
+                    eprn("\x1b[31mME: expected me [-r] [filename ...]\x1b[0m")
                     return 2
                 }
-                filename = argument^
             }
         }
     }
@@ -44,17 +42,26 @@ main :: fn (args: []string) -> i32 {
 
         message! => terminal.editor.tell(message)
     }
-    on filename.count > 0 => {
-        on terminal.editor.workspace.open_file(^terminal.scratch, filename) {
+    first_view  : ?usize = nil
+    open_failed          := no
+
+    for filename in args[1..] {
+        on filename.count == 0 || filename^ == "-r" => again
+        on terminal.editor.workspace.open_file(^terminal.scratch, filename^) {
             _success => {
+                on first_view == nil => first_view = terminal.editor.workspace.surface.view_id
             }
 
             error! => {
-                eprn($"\x1b[31mME: {display_text(^terminal.scratch, filename, single_line = yes)}: {error}\x1b[0m")
-                on terminal.editor.workspace.documents.count == 0 => return 2
+                eprn($"\x1b[31mME: {display_text(^terminal.scratch, filename^, single_line = yes)}: {error}\x1b[0m")
+                open_failed = yes
                 terminal.editor.tell(error)
             }
         }
+    }
+    on open_failed && terminal.editor.workspace.documents.count == 0 => return 2
+    on first_view => [id] {
+        terminal.editor.workspace.focus_view(id)
     }
     on terminal.editor.workspace.views.count == 0 => terminal.editor.workspace.add_empty()
     on terminal.signals_start() {

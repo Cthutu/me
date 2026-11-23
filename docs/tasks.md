@@ -218,6 +218,19 @@ completion still uses the existing message area, separate from the reusable popu
   on debug/release, format/check/Python compilation and Unicode regeneration
   idempotence. Installed picker/recovery/Unicode-byte-path checks follow push/install.
 
+### T3a — Multiple CLI files — done
+
+- Accept `me [-r] [filename ...]`: load all paths into buffers and display the
+  first successful filename. Keep restored work unless reset was requested.
+- Reuse existing buffers/inode aliases and retain history/view state. Keep missing
+  files unwritten until explicit save. Continue after individual open failures;
+  exit 2 only if no buffers remain, preserving any old recovery snapshot.
+- Keep existing option rejection, `-r`, home expansion and byte-safe paths.
+- Verification: 154 native tests (42 project + 112 imported); 31 PTY groups on
+  debug/release. New CLI checks cover first-file display, picker access, aliases,
+  missing files, recovery, partial/all failures, spaces/home/raw bytes and options.
+- Installed multi-file CLI regression/help checks follow commit/push/install.
+
 ### T4 — File picker
 
 - Discover and filter file candidates without blocking normal input.

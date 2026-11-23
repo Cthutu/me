@@ -78,7 +78,11 @@ Also settled:
 
 - Persistence failures remain indicated; normal quit refuses unsafe loss.
 - External changes: flag conflict for edited buffers; reload unedited buffers.
-- Restore then open/focus CLI paths; `me -r file.n` resets the workspace instead.
+- Restore then open CLI paths in separate buffers and display the first successful
+  argument: `me file1 file2` displays `file1`. Existing identities reuse buffers;
+  other recovered work remains. Try later paths after failures; if all fail, retain
+  recovered buffers or exit 2 if none exist, without replacing recovery. `-r`
+  starts fresh, including with several filenames.
 - Undo history survives restarts unless reset with `-r`.
 - Latest correction: `:q!` removes all unsaved buffers entirely, including
   recovered work. Saved unchanged buffers/layout survive. Disk files are untouched.
@@ -263,9 +267,10 @@ Remaining:
 
 ## Remaining first-milestone scope and selection details
 
-1. Agree CLI behaviour: no argument, nonexistent file path, one versus multiple
-   paths, and any initial-position arguments. MS1 opens files via the command
-   line, not an interactive file picker; panes are not an MS1 requirement.
+1. CLI no-argument/nonexistent-path policies are settled above. Multiple paths
+   are now agreed and implemented: separate buffers, first successful path
+   displayed. Initial-position arguments remain unimplemented. MS1 opens files
+   via the command line, not an interactive file picker; panes are not required.
 2. Agree the Notepad-equivalent checklist: file operations, navigation, selection,
    clipboard, search/replace, undo/redo, and any exclusions. Startup is Insert
    only for an empty buffer, Normal otherwise. Explicit repeat waits until a

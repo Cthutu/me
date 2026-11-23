@@ -14,7 +14,7 @@ not for the editor at runtime. No external terminal library is used.
 
 ```sh
 just build
-just run [filename]
+just run [filename ...]
 just release                  # _bin/me-release
 just install                  # release build → ~/.local/bin/me
 just check
@@ -53,14 +53,22 @@ user installation and validated private compiler. Generated outputs live in
 ```sh
 NERD=/path/to/nerd NERD_LIB_PATH=/path/to/mods just build
 _bin/me --help
-_bin/me [-r] [filename]
+_bin/me [-r] [filename ...]
 ```
 
 No filename restores this startup folder's workspace, or opens an empty buffer.
-A filename restores first, then opens/focuses that path. A nonexistent path is a
-new named buffer; it is not created until explicitly saved. `-r` starts fresh,
-without confirmation; bare `-r` opens an empty buffer. MS1 accepts one CLI path.
-A failed reset/open does not overwrite the prior recovery snapshot.
+Filenames restore first, then open in separate buffers: `me file1 file2`
+loads both and **displays `file1`**. Open the Normal `,` buffer picker to switch.
+Existing paths/aliases reuse their buffers and retain view/history; CLI arguments
+do not discard other recovered buffers. A nonexistent path is a new named buffer;
+it is not created until explicitly saved. `-r` starts fresh, without confirmation;
+bare `-r` opens an empty buffer.
+
+Failed paths report errors without stopping later arguments. The first successful
+path is displayed; if all fail, a restored workspace stays open, or startup exits
+with status 2 when no buffers remain. A failed reset/open does not overwrite the
+prior recovery snapshot. Unknown options are still rejected; prefix a filename
+starting with `-` with `./`.
 
 ## Editing
 

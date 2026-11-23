@@ -315,6 +315,19 @@ Still investigate paste boundaries, clipboard support, Unicode/grapheme editing,
 subprocess communication, resizing, and failure recovery before promising exact
 behaviour.
 
+### Multiple-file CLI — agreed and implemented
+
+`me [-r] [filename ...]` opens all filename arguments into buffers and displays
+its first successful path. Restore continuation first unless `-r` starts fresh;
+CLI paths reuse existing file identity/view/history without dropping unrelated
+recovered work. Open in argument order, then refocus the first successful view.
+The normal workspace access tracker records these real focus changes; the popup
+remains MRU-ordered, not an argument-order-only list. Missing files stay named,
+unwritten buffers until explicit save. Report failed paths and continue trying
+later ones; if all fail, keep restored buffers open or exit 2 with no buffers,
+without overwriting recovery. Unknown flags remain errors; no initial-position
+syntax or new file-picker policy is introduced.
+
 ### First popup consumer: buffer switcher — agreed and implemented
 
 Normal `,` opens a capturing, workspace-relative popup occupying most of the
@@ -1166,7 +1179,7 @@ are distinguished from the explicit user agreements above and can be refined
 through hands-on feedback. See the [README](../README.md) for the working keymap
 and command reference, and [MS1 progress](ms1-progress.md) for verified gates.
 
-- **Scope and scaffold:** one mounted text view/pane, zero or one CLI filename,
+- **Scope and scaffold:** one mounted text view/pane, zero or more CLI filenames,
   no initial-position CLI syntax. Dot-segment resolution is left to Linux so
   symlink/`..` paths select the correct file; existing aliases reuse inode identity.
   A nonexistent path is a new named document,
