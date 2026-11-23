@@ -94,12 +94,12 @@ these letters remain literal text in Insert and prompts.
 | --- | --- |
 | Cursor keys | Grapheme/line navigation |
 | `h` / `j` / `k` / `l` | Normal-only left / down / up / right; same movement as arrows |
-| Ctrl+Left/Right | Word movement |
+| Ctrl+Left/Right or Ctrl+H/L | Word movement |
 | Home / End | First non-whitespace, then line start / line end |
 | Ctrl+Home/End | Document edges |
 | Page Up/Down | Visible-page movement |
 | Ctrl+Page Up/Down | Paragraph movement |
-| Ctrl+Up/Down | Scroll without moving the caret |
+| Ctrl+Up/Down or Ctrl+K/J | Scroll without moving the caret |
 | `i` | Insert, preserving selection |
 | `a` / `A` | Insert after character / at line end |
 | `I` | Insert at first non-whitespace |
@@ -121,6 +121,13 @@ preserves state. Each terminal character event, deletion, paste and duplicate is
 undo operation. Undo/redo clears selection and restores the operation's before/after
 caret, rather than replaying subsequent navigation. Older history without caret
 hints falls back to the start of the affected edit.
+
+Ctrl+H/L move by word and Ctrl+J/K scroll down/up, matching Ctrl+arrows in
+Normal and Insert. Normal counts and Shift selection extension follow the same
+rules as the corresponding arrows. These letter shortcuts require enhanced
+keyboard reports; key releases are ignored and repeats repeat the movement.
+In pickers, Ctrl+J/K select rows and Ctrl+H/L move the query caret, just like
+the corresponding modified arrows.
 
 Legacy byte `0x08` (Ctrl+H), used by WezTerm for Ctrl+Backspace, performs
 word deletion too. Byte `0x7f` remains ordinary Backspace. Terminals sending

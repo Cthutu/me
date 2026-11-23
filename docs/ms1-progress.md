@@ -134,6 +134,26 @@ All **36 debug and 36 release PTY groups** passed on these builds, along with
 Python compilation and diff checks. The release is installed with `just install`;
 the focused installed picker checks exercise both new PTY groups.
 
+## Ctrl+HJKL navigation (T4a)
+
+Enhanced Ctrl+H/L mirror word movement and Ctrl+J/K mirror scroll-only movement,
+including Normal counts, Shift semantics, repeats and Normal/Insert preservation.
+A shared scan-code mapping also gives picker popups their existing arrow actions:
+J/K select rows and H/L move the query caret. Associated text is suppressed and
+release events do not execute. Legacy Backspace/Enter bytes retain their previous
+meaning; these aliases require distinguishable enhanced keyboard reports.
+
+Native coverage exercises all four aliases with counts, Shift, associated text,
+release and repeat events. The new PTY group checks actual word movement,
+Insert preservation, selection replacement, counted scrolling with an unmoved
+caret and popup row selection. Installed Nerd remains `c80d7775` from
+`remove-linux-libc`; no compiler change is required for this adjustment.
+
+Verification: `just format`, `just check`, all **160 native tests** (48 ME + 112
+imported), all **37 debug PTY groups**, `just release`, the focused release
+Ctrl+HJKL PTY group, Python compilation and diff checks passed. Installation uses
+`just install` after commit/push, followed by the installed Ctrl+HJKL smoke.
+
 ## Verification
 
 This section records the original MS1 baseline; the latest T3d/T4 evidence is

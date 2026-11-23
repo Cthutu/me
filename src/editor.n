@@ -621,7 +621,7 @@ impl Editor {
     }
     pub picker_key :: fn (self: ^Self, scratch: ^arena, key: TermKeyEvent) {
         handled := yes
-        on key.scan_code {
+        on navigation_scan_code(key) {
             ArrowUp => self.picker.move_selection(yes)
             ArrowDown => self.picker.move_selection(no)
             PageUp => self.picker.move_selection(yes, count = self.picker.rows)

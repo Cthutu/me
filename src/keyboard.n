@@ -1,6 +1,19 @@
 use std.term
 use view
 
+-- Share physical Ctrl-letter aliases with popup navigation; legacy control
+-- bytes retain their existing Backspace/Enter interpretation in std.term.
+pub navigation_scan_code :: fn (key: TermKeyEvent) -> TermScanCode {
+    on (key.modifiers & TERM_MOD_CONTROL) == 0 => return key.scan_code
+    return on key.scan_code {
+        H     => TermScanCode.ArrowLeft
+        J     => TermScanCode.ArrowDown
+        K     => TermScanCode.ArrowUp
+        L     => TermScanCode.ArrowRight
+        else  => key.scan_code
+    }
+}
+
 pub Keyboard :: plex {
     count         usize
     suppress_text bool
@@ -59,7 +72,10 @@ impl Keyboard {
                 }
             }
         }
-        direction: ?Direction = on key.scan_code {
+        navigation   := navigation_scan_code(key)
+        control_hjkl := navigation != key.scan_code
+
+        direction: ?Direction = on navigation {
             ArrowLeft => on ctrl {
                 yes   => Direction.WordBack
                 else  => Direction.Left
@@ -97,6 +113,9 @@ impl Keyboard {
             else => nil
         }
         on direction => [value] {
+            on control_hjkl => {
+                self.suppress_text = key.character != nil
+            }
             counted := self.count > 0
             amount  := self.take_count()
 
@@ -370,4 +389,65 @@ test "Normal hjkl emit counted arrow-equivalent moves and q selects lines withou
         }
     }
     assert keyboard.count == 0
+}
+
+test "Ctrl HJKL mirror modified arrows with counts, Shift and associated text suppression" {
+    keyboard   : Keyboard
+    keys       : [4]TermScanCode = [H, J, K, L]
+    directions : [4]Direction    = [WordBack, ScrollDown, ScrollUp, WordForward]
+    characters : [4]u32          = [8, 10, 11, 12]
+
+    for index in [0 .. 4] {
+        for shifted in [no, yes] {
+            keyboard.count = 3
+            modifiers: u32 = on shifted^ {
+                yes   => (TERM_MOD_CONTROL | TERM_MOD_SHIFT).as(u32)
+                else  => TERM_MOD_CONTROL.as(u32)
+            }
+            event := TermKeyEvent {
+                scan_code: keys[index]
+                modifiers
+                character : characters[index]
+                action    : Release
+                ...
+            }
+
+            assert keyboard.key(event) == nil && keyboard.count == 3
+            event.action = Press
+            on keyboard.key(event) {
+                command => on command {
+                    Move { direction, count, extend } => {
+                        assert direction == directions[index] && count == 3 && extend == shifted^
+                    }
+
+                    else => {
+                        assert no
+                    }
+                }
+
+                else => {
+                    assert no
+                }
+            }
+            assert keyboard.count == 0
+            assert keyboard.character(characters[index], Interaction.Insert) == nil
+            event.action = Repeat
+            event.character = nil
+            on keyboard.key(event) {
+                command => on command {
+                    Move { count, direction: _, extend: _ } => {
+                        assert count == 1
+                    }
+
+                    else => {
+                        assert no
+                    }
+                }
+
+                else => {
+                    assert no
+                }
+            }
+        }
+    }
 }

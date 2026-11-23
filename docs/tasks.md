@@ -304,6 +304,16 @@ ELF shared-library dependencies or interpreter. Release installation uses
 `just install`; the focused installed picker checks cover both new PTY groups.
 
 
+### T4a — Ctrl+HJKL navigation — done
+
+- Ctrl+H/L mirror Ctrl+Left/Right word movement; Ctrl+J/K mirror Ctrl+Down/Up
+  scrolling. Preserve interaction mode and existing count/Shift behaviour.
+- Use enhanced key reports; retain ambiguous legacy Backspace/Enter behaviour.
+- Suppress associated text and ignore releases while retaining repeats.
+- Verified formatting/type checking, 160 native tests (48 ME + 112 imported),
+  all 37 debug PTY groups and the focused release Ctrl+HJKL group, plus Python
+  compilation and diff checks. Installation uses the tested release build.
+
 ### T5 — Split-pane UI
 
 - Support pane creation, focus and closing, with independent views of shared text.

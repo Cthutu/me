@@ -1324,6 +1324,51 @@ def hjkl_and_line_selection(binary, folder):
         session.quit()
 
 
+def control_hjkl(binary, folder):
+    path = folder / "control-hjkl.txt"
+    tail = b"".join(f"line-{index:03}\n".encode() for index in range(1, 71))
+    path.write_bytes(b"one two three\n" + tail)
+    with Session(binary, folder, "-r", path.name) as session:
+        session.send("2")
+        session.send(b"\x1b[108;5;12u\x1b[108;5:3u")
+        session.send("iX")
+        session.send(b"\x1b[104;5;8u\x1b[104;5:3u")
+        session.send("Y")  # Ctrl+H preserves Insert and does not delete a word
+        session.send(b"\x13")
+        assert path.read_bytes() == b"one two YXthree\n" + tail
+        session.send(b"\x1b[1;5H")
+        session.send(b"\x1b[108;6;12u\x1b[108;6:3u")
+        session.send("iR")
+        session.send(b"\x13")
+        assert path.read_bytes() == b"Rtwo YXthree\n" + tail, "Ctrl+Shift+L did not extend selection"
+        session.send(b"\x1b[1;5H")
+        session.send("3")
+        session.send(b"\x1b[106;5;10u\x1b[106;5:2;10u\x1b[106;5:3u")
+        shown = screen(session)
+        assert b"line-004" in shown.splitlines()[0], shown
+        session.send(b"\x1b[107;5;11u\x1b[107;5:3u")
+        assert b"line-003" in screen(session).splitlines()[0]
+        session.send("iQ")  # scrolling left the caret on the first line
+        session.send(b"\x13")
+        assert path.read_bytes() == b"QRtwo YXthree\n" + tail, "scrolling moved the caret or inserted a control character"
+        other = folder / "other.txt"
+        other.write_bytes(b"other")
+        session.command("e other.txt")
+        session.send(",")
+        session.send(b"\x1b[107;5;11u\x1b[107;5:3u")
+        session.send("\r")
+        session.send("iB")
+        session.send(b"\x13")
+        assert other.read_bytes() == b"Bother", "Ctrl+K did not select the previous popup row"
+        session.send(",")
+        session.send(b"\x1b[107;5u\x1b[106;5;10u\x1b[106;5:3u")
+        session.send("\r")
+        session.send("iS")
+        session.send(b"\x13")
+        assert path.read_bytes() == b"QSRtwo YXthree\n" + tail, ("Ctrl+J did not select the next popup row", path.read_bytes()[:35], other.read_bytes(), screen(session))
+        session.quit()
+
+
 def duplicate_selection(binary, folder):
     path = folder / "duplicate.txt"
     block = b"one\r\ntwo\n"
@@ -1694,7 +1739,7 @@ def main():
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
     checks = [file_picker, file_picker_stale_and_cancel, cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
               search_replace_and_buffers, search_origins, slash_replacement, confirmation_recovery, byte_paths_and_checkpoint_failures,
-              second_instance, crash_and_signals, undo_caret, word_delete, buffer_picker, buffer_picker_close_selected, buffer_picker_preview, buffer_picker_recovery, buffer_picker_unicode_bytes, enhanced_key_actions, keyboard_diagnostics, hjkl_and_line_selection, duplicate_selection, command_completion, live_completion_filter, file_completion, home_paths, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
+              second_instance, crash_and_signals, undo_caret, word_delete, buffer_picker, buffer_picker_close_selected, buffer_picker_preview, buffer_picker_recovery, buffer_picker_unicode_bytes, enhanced_key_actions, keyboard_diagnostics, hjkl_and_line_selection, control_hjkl, duplicate_selection, command_completion, live_completion_filter, file_completion, home_paths, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
     selected = [check for check in checks if args.filter in check.__name__]
     if not selected:
         parser.error(f"No PTY checks match {args.filter!r}")

@@ -188,6 +188,10 @@ Remaining:
   extension for caret navigation. Up/Down retain a preferred column.
 - Ctrl+Page Up/Down navigate paragraphs; facets can redefine this, e.g. Nerd
   bindings. Ctrl+Up/Down scroll the view one line. These preserve interaction state.
+- Ctrl+H/L mirror Ctrl+Left/Right word movement; Ctrl+J/K mirror Ctrl+Down/Up
+  scroll-only movement. Enhanced reports distinguish these aliases from legacy
+  Backspace/Enter bytes. Counts, Shift and interaction-state preservation follow
+  the existing arrow paths; paired text and release events must not act twice.
 - Default paragraphs are non-blank runs separated by blank/whitespace-only lines.
 - Scroll-only navigation can leave the caret off-screen. Caret movement or text
   insertion reveals it again. Normal numeric-prefix entry and opening/typing in

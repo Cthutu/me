@@ -942,15 +942,23 @@ navigation assigns `l` to right movement and moves line selection to `q`.
 | --- | --- |
 | Left/Right | Move one character |
 | Up/Down | Move one line, retaining the preferred column |
-| Ctrl+Left/Right | Move by word |
+| Ctrl+Left/Right or Ctrl+H/L | Move by word |
 | Home | Move to first non-whitespace; when already there, move to column zero |
 | End | Move to line end |
 | Ctrl+Home/End | Move to document start/end |
 | Page Up/Down | Move by one visible page |
 | Ctrl+Page Up/Down | Move by paragraph |
-| Ctrl+Up/Down | Scroll the view by one line |
+| Ctrl+Up/Down or Ctrl+K/J | Scroll the view by one line |
 | Shift + navigation | Extend selection for caret-moving navigation |
 
+- Explicitly agreed Ctrl+H/J/K/L aliases mirror Ctrl+Left/Down/Up/Right:
+  H/L move by word; J/K scroll without moving the caret. They preserve Normal
+  or Insert, support Normal counts and use existing Shift selection semantics.
+  Recognise enhanced physical key/modifier reports, suppress paired text events,
+  ignore releases and honour repeats. Legacy `0x08` keeps word deletion and
+  legacy newline keeps Enter; ambiguous control bytes are not reinterpreted.
+  In picker popups the same aliases use existing arrow semantics: J/K select
+  rows and H/L move the query caret. Paired text remains suppressed there too.
 - Home uses smart-home behaviour: first non-whitespace, then column zero on
   another press when already at that position. This supersedes the earlier
   absolute-column-zero rule. `I` still enters Insert at first non-whitespace.
