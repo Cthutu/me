@@ -322,8 +322,9 @@ that historical run has no diagnostic proof. Logs remain under `_tmp/`.
 
 The fix is retained on local Nerd `main` and its pushed agent branch. Direct
 `~/nerd just install` succeeded from the unchanged `remove-linux-libc` checkout
-`174a4576`; integration of this fix into that other agent's branch still awaits
-coordination. ME's private compiler includes the validated fix.
+`174a4576` at that stage. Matt later authorised merging validated ME fixes into
+that branch; integration `c80d7775` passed the combined gate and is installed
+from `~/nerd` on `remove-linux-libc`. Ordinary ME builds use installed Nerd.
 
 
 ## Buffer popup and safe close — settled
@@ -395,3 +396,13 @@ command entry and keeping an open list filtering while typing/deleting; one or
 zero matches do not dismiss it. Same-directory filtering reuses a snapshot.
 Current completion choices are documented in `docs/tasks.md`; the broader MS2
 picker's roots, matching, discovery and popup contracts remain separate decisions.
+
+
+## File picker delivery defaults
+
+T4 uses the startup folder and the existing Unicode subsequence matcher. Matt
+agreed to include hidden and ignored files, follow file and directory symlinks
+with cycle detection, and introduce a Normal-state Space leader. Space Space
+opens files; after two seconds the first Space shows known keys. `:files` is
+also available. Other roots, indexing, file previews, split destinations and an
+overlay stack remain separate choices. See design §26 and README for details.

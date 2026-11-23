@@ -101,9 +101,43 @@ Verification: formatting/type checking, **156 native tests** (44 ME + 112 import
 all **34 debug PTY groups**, all five release buffer-picker groups, Python
 compilation and diff checks passed. The additional native and PTY regressions
 cover target identity, dirty work, filtering/no matches and input suppression.
-Installation and installed selected-close smoke follow commit/push.
+Changes were pushed and installed at `b5be63e`; installed selected-close PTYs passed.
+
+## File discovery and Space leader (T4)
+
+Normal Space starts a leader sequence. Its known-key menu appears after two
+seconds; Space Space opens the file picker immediately. Escape or an unknown
+key cancels the sequence. Spaces remain literal in Insert and prompts; enhanced
+key releases/repeats cannot accidentally advance the leader.
+
+The picker scans the startup folder in a cancellable child process and applies
+bounded incremental Unicode subsequence filtering. Hidden and ignored files are
+included. File and directory symlinks are followed, including outside the startup
+folder; opened-directory device/inode ancestry detects cycles. Broken links and
+special files are omitted. Existing buffers are reused through normal path/inode
+identity. Enter revalidates stale candidates; errors retain the popup. Escape
+preserves the originating editing state. The file list has no content preview
+and Ctrl+W has no action there.
+
+Native regressions cover incremental filtering, bounded work, partial transport
+frames/EOF and leader input precedence. PTY groups cover delayed/immediate leader
+invocation, cancellation, enhanced releases, hidden/ignored names, Unicode,
+external directory aliases/cycles, inode reuse, stale/special files, byte-safe
+names, resize, unreadable directories, stopped-worker input/cancellation, reaping
+and descriptor ownership. Exact limits and contracts are in design §26.
+
+Installed Nerd `c80d7775` on `remove-linux-libc` passes `just format`, `just check`,
+all **159 native tests** (47 ME across 17 modules + 112 imported), `just build`
+and `just release`. Both ME profiles have no ELF `NEEDED` dependencies or
+`INTERP` segment. Installed compiler bytes and modules match `~/nerd` exactly.
+All **36 debug and 36 release PTY groups** passed on these builds, along with
+Python compilation and diff checks. The release is installed with `just install`;
+the focused installed picker checks exercise both new PTY groups.
 
 ## Verification
+
+This section records the original MS1 baseline; the latest T3d/T4 evidence is
+above.
 
 ### Headless
 
@@ -233,7 +267,7 @@ hard real-time guarantee. Complex-grapheme overlays add one simulation step.
 Document projection/index rebuilding remains correctness-first, not a claim
 about very large-file scalability.
 
-## Nerd fixes — twelve completed
+## Nerd fixes — fourteen completed
 
 All compiler changes used dedicated worktrees. Each fix passed the unified full
 gate (**72 passed, 0 failed, 2 platform skips**), formatting and isolated installed
@@ -254,20 +288,26 @@ the latest record-field context/layout gate includes all earlier fixes.
 | `98883071` | Reacquire local bindings after generic inference grows semantic tables |
 | `5535aaf9` | Preserve empty-string quotes at the formatter wrap boundary |
 | `46c711eb` | Accept slice-assignment CST targets and retain structured formatting |
+| `30b09d20` | Preserve long source test labels in the fallback formatter |
+| `7dc86d12` | Keep recursive/default-call parameter bindings out of caller locals |
 
-Fixes are committed, pushed on their own `agent` branches, and integrated into
-**local Nerd `main` at `46c711eb`**, not pushed directly to remote `main`. Their
-merged worktrees and local temporary branches have been removed. Other agents'
-worktrees/checkouts are untouched. `_tools/` contains the isolated compiler and
-modules. The validated `93c8a38a` compiler passed isolated and user-installed
-regression checks. The user subsequently clarified that normal installation must
-run directly in `~/nerd`, not an installation-only worktree. That recipe has now
-installed its current `remove-linux-libc` checkout at `174a4576`, including matching
-modules and editor support. This is distinct from local `main`/ME's private
-`46c711eb` toolchain/modules; no branch switch or merge was performed. Integration
-of the latest local-binding/protocol/formatter changes into that other agent's branch
-awaits coordination. Installation from
-`~/nerd` is required after each fully validated compiler fix.
+Fixes are committed and pushed on their own `agent` branches. With Matt's explicit
+approval, local Nerd `main` was merged with the active Linux libc-removal work in
+a dedicated worktree. The combined gate passed **75 tests, 0 failures, 2 platform
+skips**. Integration `c80d7775` preserves both lines of work and updates the new
+Linux native-link call to pass the existing referenced-library policy argument.
+
+The shared `~/nerd` checkout remains on **`remove-linux-libc` at `c80d7775`**;
+`just install` runs directly there to install the compiler and matching modules.
+The integration is pushed to `agent/integrate/me-file-picker` and
+`agent/remove-linux-libc`. Local Nerd `main` includes it; **remote main has not
+been advanced**. ME's private `.env` compiler/module override is removed: ordinary
+`just` commands now use installed `nerd`. Completed clean worktrees and merged
+local temporary branches are removed after retention and process checks.
+
+The subsections below retain the installation evidence at the time of each fix.
+Where they mention an earlier private compiler or pending integration, the current
+installed status above supersedes that historical split.
 
 ### Picker-triggered formatter fixes
 
@@ -350,3 +390,22 @@ spurious compiler patch remains.
   external writer; this is documented rather than claimed as transactional.
 - Provisional implementation answers are in design §24, not presented as newly
   agreed user requirements. Further UX changes remain open to feedback.
+
+### T4 compiler regressions
+
+`30b09d20` fixes fallback formatting of long test labels; structured formatting
+already preserved them. `7dc86d12` fixes LLVM lowering that rebound recursive
+callee parameters into the caller, causing incorrect values and release-mode
+SSA dominance failures. Omitted defaults now use temporary binding tables;
+explicit calls do not seed default bindings. Dense regressions cover recursion,
+conditional string slices and dependent defaults.
+
+Both fixes passed the full Nerd gate (72 passed, 0 failed, 2 platform skips),
+formatting and the required `just install` directly in `~/nerd`. They are backed
+up on `agent/fix/format-fallback-test-label` and
+`agent/fix/me-file-picker-toolchain`; local Nerd main was then `7dc86d12`. Remote main
+has not been advanced. At those direct installations the shared checkout was on
+`remove-linux-libc` at `174a4576`. Matt then authorised integration with that
+branch. The combined integration
+`c80d7775` passed 75 tests with 2 platform skips and is installed directly from
+`~/nerd` on `remove-linux-libc`, with matching modules.

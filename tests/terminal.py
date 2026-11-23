@@ -870,6 +870,180 @@ def buffer_picker(binary, folder):
         session.quit()
 
 
+def await_file_picker(session, *, timeout=8):
+    finish = time.monotonic() + timeout
+    while time.monotonic() < finish:
+        shown = screen(session)
+        if b"Files" in shown and b"scanning" not in shown and b"filtering" not in shown:
+            return shown
+        session.drain(0.05)
+    raise AssertionError(("file discovery did not finish", screen(session)))
+
+
+def file_picker(binary, folder):
+    with tempfile.TemporaryDirectory(prefix="me-linked-") as linked_name:
+        (folder / "src").mkdir()
+        (folder / "src" / "AlphaBeta.n").write_bytes(b"ALPHA_FILE")
+        (folder / "src" / "Straße.n").write_bytes(b"UNICODE_FILE")
+        (folder / "src" / "drop.tmp").write_bytes(b"IGNORED_FILE")
+        (folder / "src" / "keep.tmp").write_bytes(b"KEPT_FILE")
+        (folder / "src" / ".gitignore").write_text("!keep.tmp\n")
+        (folder / "build").mkdir()
+        (folder / "build" / "output.n").write_bytes(b"BUILD_FILE")
+        (folder / ".hidden.n").write_bytes(b"HIDDEN_FILE")
+        (folder / ".gitignore").write_text("*.tmp\nbuild/\n")
+        (folder / "alias.n").symlink_to("src/AlphaBeta.n")
+        (folder / "cycle").symlink_to(".", target_is_directory=True)
+        linked = Path(linked_name)
+        (linked / "external.n").write_bytes(b"EXTERNAL_FILE")
+        (linked / "back").symlink_to(folder, target_is_directory=True)
+        (folder / "linked").symlink_to(linked, target_is_directory=True)
+        (folder / "broken").symlink_to("absent")
+        os.mkfifo(folder / "special")
+        raw = os.fsencode(folder) + b"/raw-\xff\x1b.n"
+        with open(raw, "wb") as stream:
+            stream.write(b"RAW_FILE")
+        base = folder / "base.txt"
+        base.write_bytes(b"base")
+        with Session(binary, folder, base.name) as session:
+            session.send("iUNSAVED")
+            session.normal()
+            session.send(" ")
+            session.drain(0.2)
+            assert b"Space menu" not in screen(session)
+            session.drain(2.1)
+            assert b"Space menu" in screen(session) and b"Open file" in screen(session)
+            session.send(" ")
+            shown = await_file_picker(session)
+            assert b"Files" in shown and b"AlphaBeta.n" in shown and b"keep.tmp" in shown, shown
+            for included in [b"drop.tmp", b"output.n", b".hidden.n", b".gitignore"]:
+                assert included in shown, (included, shown)
+            for excluded in [b"cycle/", b"broken", b"special"]:
+                assert excluded not in shown, (excluded, shown)
+            fcntl.ioctl(session.master, termios.TIOCSWINSZ, struct.pack("HHHH", 8, 20, 0, 0))
+            session.drain(0.1)
+            fcntl.ioctl(session.master, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+            session.drain(0.1)
+            session.send("src/abn")
+            session.drain(0.2)
+            assert b"1/" in screen(session), screen(session)
+            session.send(b"\x1b", 0.15)
+            session.send("iX")  # cancellation preserved the originating caret
+            session.send(b"\x13")
+            assert base.read_bytes() == b"UNSAVEDXbase"
+            session.command("files")
+            await_file_picker(session)
+            session.send("strasse")
+            session.drain(0.2)
+            session.send("\r")
+            assert b"Files" not in screen(session)
+            session.send("iY")
+            session.send(b"\x13")
+            assert (folder / "src" / "Straße.n").read_bytes() == b"YUNICODE_FILE"
+            session.send(b"\x1b[32u\x1b[32;1:3u\x1b[32u\x1b[32;1:3u")
+            await_file_picker(session)
+            session.send("alias.n")
+            session.drain(0.2)
+            session.send("\r")
+            session.send("iZ")
+            session.send(b"\x13")
+            assert (folder / "src" / "AlphaBeta.n").read_bytes() == b"ZALPHA_FILE"
+            session.command("files")
+            await_file_picker(session)
+            session.send("src/alphabeta")
+            session.drain(0.2)
+            session.send("\r")
+            session.send(",")
+            assert b"3/3" in screen(session), "file picker duplicated an already-open inode alias"
+            session.send(b"\x1b", 0.15)
+            session.send(" ")
+            session.send(b"\x1b", 0.15)
+            assert b"Space menu" not in screen(session)
+            session.send("  ")
+            await_file_picker(session)
+            session.send("linked/external")
+            session.drain(0.2)
+            assert b"1/" in screen(session), screen(session)
+            session.send("\r")
+            session.send("iE")
+            session.send(b"\x13")
+            assert (linked / "external.n").read_bytes() == b"EEXTERNAL_FILE"
+            session.command("files")
+            await_file_picker(session)
+            session.send("raw-")
+            session.drain(0.2)
+            session.send("\r")
+            session.send("iB")
+            session.send(b"\x13")
+            with open(raw, "rb") as stream:
+                assert stream.read() == b"BRAW_FILE"
+            session.quit()
+
+
+def file_picker_stale_and_cancel(binary, folder):
+    base = folder / "base.txt"
+    base.write_bytes(b"base")
+    gone = folder / "vanished.n"
+    gone.write_bytes(b"gone")
+    with Session(binary, folder, base.name) as session:
+        session.command("files")
+        await_file_picker(session)
+        session.send("vanished")
+        session.drain(0.15)
+        gone.unlink()
+        session.send("\r")
+        shown = screen(session)
+        assert b"Files" in shown and b"no longer exists" in shown, shown
+        assert not gone.exists()
+        os.mkfifo(gone)
+        session.send("\r")
+        assert b"no longer a regular file" in screen(session)
+        session.send(b"\x17")  # file candidates must never be treated as buffer IDs
+        assert b"Files" in screen(session)
+        session.send(b"\x1b", 0.15)
+        session.send("iX")
+        session.send(b"\x13")
+        assert base.read_bytes() == b"Xbase"
+        session.quit()
+    unreadable = folder / "unreadable"
+    unreadable.mkdir(mode=0)
+    try:
+        with Session(binary, folder, base.name) as session:
+            session.send("  ")
+            shown = await_file_picker(session)
+            assert b"incomplete" in shown and b"Cannot read" in shown, shown
+            session.send(b"\x1b", 0.15)
+            session.quit()
+    finally:
+        unreadable.chmod(0o755)
+    (folder / "large").mkdir()
+    for index in range(5000):
+        (folder / "large" / f"candidate-{index:05}.n").touch()
+    with Session(binary, folder, base.name) as session:
+        before = len(list(Path(f"/proc/{session.process.pid}/fd").iterdir()))
+        for _ in range(3):
+            session.send("  ", 0.04)
+            children_path = Path(f"/proc/{session.process.pid}/task/{session.process.pid}/children")
+            children = [int(value) for value in children_path.read_text().split()]
+            assert children, "discovery did not start a cancellable worker"
+            for child in children:
+                os.kill(child, signal.SIGSTOP)
+            start = time.monotonic()
+            session.send("quick-query", 0.05)
+            assert b"quick-query" in screen(session), "typing blocked on discovery"
+            session.send(b"\x1b", 0.15)
+            assert b"Files" not in screen(session), "Escape failed to dismiss discovery"
+            session.drain(0.15)
+            assert time.monotonic() - start < 1.5
+            assert not children_path.read_text().strip(), "cancelled worker was not reaped"
+        after = len(list(Path(f"/proc/{session.process.pid}/fd").iterdir()))
+        assert before == after, ("discovery descriptor leak", before, after)
+        session.send("iR")
+        session.send(b"\x13")
+        assert base.read_bytes() == b"RXbase"
+        session.quit()
+
+
 def buffer_picker_close_selected(binary, folder):
     for name in ["alpha.txt", "beta.txt", "gamma.txt"]:
         (folder / name).write_bytes(name.encode())
@@ -1518,7 +1692,7 @@ def main():
     allowed = {"libc.so.6", "libm.so.6", "libgcc_s.so.1", "linux-vdso.so.1"}
     unexpected = {name for name in names if name not in allowed and not Path(name).name.startswith("ld-linux-")}
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
-    checks = [cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
+    checks = [file_picker, file_picker_stale_and_cancel, cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
               search_replace_and_buffers, search_origins, slash_replacement, confirmation_recovery, byte_paths_and_checkpoint_failures,
               second_instance, crash_and_signals, undo_caret, word_delete, buffer_picker, buffer_picker_close_selected, buffer_picker_preview, buffer_picker_recovery, buffer_picker_unicode_bytes, enhanced_key_actions, keyboard_diagnostics, hjkl_and_line_selection, duplicate_selection, command_completion, live_completion_filter, file_completion, home_paths, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
     selected = [check for check in checks if args.filter in check.__name__]

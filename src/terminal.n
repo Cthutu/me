@@ -160,6 +160,7 @@ impl Terminal {
                 error! => self.editor.tell(error)
             }
         }
+        self.editor.poll_file_picker()
         current := now()
         on elapsed(self.last_poll, current) >= from_ms(250) => {
             self.editor.tick(^self.scratch)
@@ -358,7 +359,7 @@ impl Terminal {
             yes   => bottom - list_y
             else  => 0
         }
-        list_width := on inner >= 48 && rows >= 2 {
+        list_width := on !self.editor.picking_files && inner >= 48 && rows >= 2 {
             yes   => inner * 2 / 5
             else  => inner
         }
@@ -476,8 +477,11 @@ impl Terminal {
                                inner - list_width - 1,
                                rows)
         }
-        on footer => self.text(left, bottom, "Enter choose · Esc cancel · "
-            +"Ctrl+W close active", MUTED, GUTTER_PAPER, inner)
+        hint := on self.editor.picking_files {
+            yes   => "Enter open · Esc cancel"
+            else  => "Enter choose · Esc cancel · Ctrl+W close selected"
+        }
+        on footer => self.text(left, bottom, hint, MUTED, GUTTER_PAPER, inner)
     }
 
     pub paint :: fn (self: ^Self, width: usize, height: usize) {
@@ -842,8 +846,10 @@ impl Terminal {
         }
         on editor.picker.active => {
             preview : ?^Document = nil
-            on editor.picker.chosen() => [id] {
-                on id < editor.workspace.documents.count => preview = ^editor.workspace.documents[id].text
+            on !editor.picking_files => {
+                on editor.picker.chosen() => [id] {
+                    on id < editor.workspace.documents.count => preview = ^editor.workspace.documents[id].text
+                }
             }
             self.paint_picker(^editor.picker, preview)
         }

@@ -1,0 +1,365 @@
+use native
+use os.linux
+use picker
+use std.text
+
+-- Discovery runs in a cancellable child, never in the terminal event loop.
+-- NUL-delimited frames preserve Linux filename bytes. Only the parent owns UI.
+MAX_FILE_CANDIDATES :: 32768
+MAX_FILE_PATH       :: 4096
+O_DIRECTORY         :: 0x10000
+O_NONBLOCK          :: 0x800
+
+send_frame :: fn (fd: i32, kind: u8, payload: string) -> bool {
+    header : [1]u8 = [kind]
+    zero   : [1]u8
+
+    on sys_write(fd, header.data, 1) != 1 => return no
+    offset : usize = 0
+    for offset < payload.count {
+        count := sys_write(fd, payload.data + offset, payload.count - offset)
+        on count < 0 && last_error() == EINTR => again
+        on count <= 0 => return no
+        offset += count.as(usize)
+    }
+    return sys_write(fd, zero.data, 1) == 1
+}
+
+DirectoryIdentity :: plex {
+    device u64
+    inode  u64
+}
+
+Walker :: plex {
+    output     i32
+    visited    usize
+    candidates usize
+    path_bytes usize
+    ancestors  [..]DirectoryIdentity
+}
+
+impl Walker {
+
+    directory :: fn (self     : ^Self,
+                     root     : string,
+                     relative : string,
+                     depth    : usize) -> void\string {
+        on depth > 128 => return "File discovery exceeds 128 directory levels"!
+        storage : arena
+        defer storage.done()
+        directory := storage.pr($"{root}/{relative}")
+        zero      := storage.pr($"{directory}\0")
+        fd        := sys_open(zero.data.as(^i8), O_RDONLY | O_DIRECTORY | O_CLOEXEC, 0)
+
+        on fd < 0 => return "Cannot read a file-picker directory; results are "
+            +"incomplete"!
+        defer {
+            _ := sys_close(fd)
+        }
+        identity : Stat
+        on sys_newfstatat(fd, c".", ^identity, 0) < 0 => return "Cannot "
+            +"identify a file-picker directory"!
+        for ancestor in self.ancestors {
+            on ancestor.device == identity.dev &&
+                ancestor.inode == identity.ino => return
+        }
+        self.ancestors.push(DirectoryIdentity { device: identity.dev inode: identity.ino })
+        defer self.ancestors.resize_undefined_to(self.ancestors.count - 1)
+        entry_storage : arena
+        defer entry_storage.done()
+        buffer : [32768]u8
+        for {
+            count := syscall(SYS_GETDENTS64, fd.as(u64), buffer.data.as(usize).as(u64), buffer.count.as(u64), 0, 0, 0).as(i64)
+            on count < 0 && last_error() == EINTR => again
+            on count < 0 => return "Cannot enumerate a file-picker directory"!
+            on count == 0 => break
+            offset : usize = 0
+            for offset < count.as(usize) {
+                on count.as(usize) - offset < 20 => return "Invalid directory "
+                    +"entry"!
+                length := buffer[offset + 16].as(usize) | (buffer[offset + 17].as(usize) << 8)
+                on length < 20 ||
+                    length > count.as(usize) - offset => return "Invalid "
+                    +"directory entry"!
+                end := offset + 19
+                for end < offset + length && buffer[end] != 0 {
+                    end += 1
+                }
+                on end == offset + length => return "Invalid directory name"!
+                name := buffer[offset + 19..end].as(string)
+
+                offset += length
+                self.visited += 1
+                on self.visited > 1000000 => return "File discovery exceeds "
+                    +"one million entries"!
+                on name.count == 0 || name == "." || name == ".." => again
+                entry_storage.reset()
+                path := entry_storage.pr($"{relative}{name}")
+                on root.count + path.count + 1 > MAX_FILE_PATH => return "File "
+                    +"discovery path exceeds 4096 bytes"!
+                info       : Stat
+                entry_name        := entry_storage.pr($"{name}\0")
+
+                on sys_newfstatat(fd, entry_name.data.as(^i8), ^info, AT_SYMLINK_NOFOLLOW) < 0 => again
+                on (info.mode & S_IFMT) == S_IFLNK => {
+                    on sys_newfstatat(fd, entry_name.data.as(^i8), ^info, 0) < 0 => again
+                }
+                on info.mode & S_IFMT {
+                    S_IFDIR => {
+                        self.directory(root, entry_storage.pr($"{path}/"), depth + 1)?
+                        again
+                    }
+
+                    S_IFREG => {
+                    }
+
+                    else => again
+                }
+                on self.candidates >= MAX_FILE_CANDIDATES ||
+                    self.path_bytes + path.count > 64 * 1024 * 1024 => return "File discovery limit reached; results are incomplete"!
+                on !send_frame(self.output, 'F'.as(u8), path) => return "File "
+                    +"discovery cancelled"!
+                self.candidates += 1
+                self.path_bytes += path.count
+            }
+        }
+    }
+
+}
+
+pub FileDiscovery :: plex {
+    process  i32
+    reader   i32
+    running  bool
+    complete bool
+    failed   bool
+    pending  [..]u8
+    paths    [..]string
+    storage  arena
+    retired  [..]i32
+}
+
+impl FileDiscovery {
+
+    pub reap :: fn (self: ^Self) {
+        kept : usize = 0
+        for process in self.retired {
+            status : i32
+            waited       := sys_waitpid(process^, ^status, 1)
+
+            on waited == 0 ||
+                (waited < 0 && last_error() == EINTR) => {
+                self.retired[kept] = process^
+                kept += 1
+            }
+        }
+        self.retired.resize_undefined_to(kept)
+    }
+
+    pub cancel :: fn (self: ^Self) {
+        on self.process > 0 => {
+            _ := syscall(SYS_KILL, self.process.as(u64), 9, 0, 0, 0, 0)
+            self.retired.push(self.process)
+            self.process = 0
+        }
+        on self.running => {
+            _ := sys_close(self.reader)
+        }
+        self.running = no
+        self.pending.clear()
+        self.reap()
+    }
+
+    pub release :: fn (self: ^Self) {
+        self.cancel()
+        self.pending.free()
+        self.paths.free()
+        self.storage.done()
+        self.retired.free()
+    }
+
+    pub start :: fn (self: ^Self, root: string) -> void\string {
+        self.cancel()
+        self.paths.clear()
+        self.storage.reset()
+        self.complete = no
+        self.failed = no
+        on self.retired.count >= 16 => return "Previous file discovery is "
+            +"still stopping"!
+        descriptors : [2]i32
+        on sys_pipe2(descriptors.data, O_CLOEXEC) < 0 => return "Cannot create "
+            +"file discovery pipe"!
+        parent  := syscall(SYS_GETPID, 0, 0, 0, 0, 0, 0)
+        process := sys_fork()
+
+        on process == 0 => {
+            _ := sys_close(descriptors[0])
+            -- Kill this helper if the editor dies, including the fork/prctl race.
+            _ := syscall(SYS_PRCTL, 1, 9, 0, 0, 0, 0)
+            on syscall(SYS_GETPPID, 0, 0, 0, 0, 0, 0) != parent => {
+                sys_exit(0)
+                return
+            }
+            worker := Walker { output: descriptors[1] ... }
+            on worker.directory(root, "", 0) {
+                _success => {
+                    _ := send_frame(worker.output, 'D'.as(u8), "")
+                }
+
+                error! => {
+                    _ := send_frame(worker.output, 'E'.as(u8), error)
+                }
+            }
+            sys_exit(0)
+            return
+        }
+        _ := sys_close(descriptors[1])
+        on process < 0 => {
+            _ := sys_close(descriptors[0])
+            return "Cannot start file discovery"!
+        }
+        self.process = process
+        self.reader = descriptors[0]
+        self.running = yes
+        on sys_fcntl(self.reader, 4, O_NONBLOCK) < 0 => {
+            self.cancel()
+            return "Cannot make file discovery non-blocking"!
+        }
+    }
+
+    -- Each simulation step receives at most 8 KiB and publishes 256 paths.
+    pub poll :: fn (self: ^Self, list: ^FuzzyPicker) -> void\string {
+        self.reap()
+        on !self.running => return
+        buffer    : [8192]u8
+        has_frame            := no
+
+        for byte in self.pending {
+            on byte^ == 0 => has_frame = yes
+        }
+        on !has_frame => {
+            count := sys_read(self.reader, buffer.data, buffer.count)
+            on count > 0 => {
+                start := self.pending.count
+                self.pending.resize_undefined_to(start + count.as(usize))
+                self.pending[start..] = buffer[..count.as(usize)]
+            }
+            on count == 0 => {
+                self.cancel()
+                on !self.complete => {
+                    self.failed = yes
+                    return "File discovery stopped unexpectedly; results are incomplete"!
+                }
+                return
+            }
+            on count < 0 &&
+                last_error() != EAGAIN &&
+                last_error() != EINTR => {
+                self.cancel()
+                self.failed = yes
+                return "Cannot receive file discovery results"!
+            }
+        }
+        consumed : usize = 0
+        frames   : usize = 0
+
+        for consumed < self.pending.count && frames < 256 {
+            end := consumed + 1
+            for end < self.pending.count && self.pending[end] != 0 {
+                end += 1
+            }
+            on end == self.pending.count => break
+            kind    := self.pending[consumed]
+            payload := self.pending[consumed + 1..end].as(string)
+
+            on kind {
+                'F' => {
+                    on payload.count == 0 ||
+                        payload.count > MAX_FILE_PATH ||
+                        self.paths.count >= MAX_FILE_CANDIDATES => {
+                        self.failed = yes
+                        self.cancel()
+                        return "Invalid file discovery results"!
+                    }
+                    path := self.storage.pr(payload)
+                    self.paths.push(path)
+                    list.add(self.paths.count - 1, path)
+                }
+
+                'D' => self.complete = yes
+
+                'E' => {
+                    error := self.storage.pr(payload)
+                    self.failed = yes
+                    self.complete = yes
+                    self.cancel()
+                    return error!
+                }
+
+                else => {
+                    self.failed = yes
+                    self.cancel()
+                    return "Invalid file discovery frame"!
+                }
+            }
+            consumed = end + 1
+            frames   += 1
+        }
+        on consumed > 0 => {
+            for index in [consumed .. self.pending.count] {
+                self.pending[index - consumed] = self.pending[index]
+            }
+            self.pending.resize_undefined_to(self.pending.count - consumed)
+        }
+    }
+
+}
+
+test "discovery frames preserve partial filenames and drain buffered paths before EOF" {
+    descriptors : [2]i32
+    assert sys_pipe2(descriptors.data, O_CLOEXEC | O_NONBLOCK) == 0
+    discovery : FileDiscovery
+    discovery.reader = descriptors[0]
+    discovery.running = yes
+    defer discovery.release()
+    list : FuzzyPicker
+    defer list.release()
+    list.start("Files")
+    list.incremental = yes
+    raw      : [7]u8 = ['r', 'a', 'w', 0xff, 0x1b, '.', 'n']
+    fragment         := "Fspace name"
+
+    assert sys_write(descriptors[1], fragment.data, fragment.count) == fragment.count.as(isize)
+    on discovery.poll(^list) {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    assert discovery.paths.count == 0
+    zero : [1]u8
+    assert sys_write(descriptors[1], zero.data, 1) == 1
+    for _index in [0 .. 320] {
+        assert send_frame(descriptors[1], 'F'.as(u8), raw[..].as(string))
+    }
+    assert send_frame(descriptors[1], 'D'.as(u8), "")
+    _ := sys_close(descriptors[1])
+    for discovery.running {
+        on discovery.poll(^list) {
+            _success => {
+            }
+
+            _error! => {
+                assert no
+            }
+        }
+        list.filter_step(512)
+    }
+    assert discovery.complete && !discovery.failed
+    assert discovery.paths.count == 321 && list.entries.count == 321
+    assert discovery.paths[0] == "space name" && discovery.paths[320] == raw[..].as(string)
+
+    assert list.matches.count == 321
+}

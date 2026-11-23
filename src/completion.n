@@ -21,6 +21,7 @@ COMMAND_NAMES :: [
     "buffer",
     "buffers",
     "e",
+    "files",
     "keys",
     "kill",
     "kill!",

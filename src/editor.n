@@ -2,9 +2,11 @@ use buffer
 use characters
 use completion
 use document
+use file_picker
 use key_diagnostics
 use keyboard
 use native
+use os.linux
 use picker
 use positions
 use replacement
@@ -35,6 +37,11 @@ pub Editor :: plex {
     confirmation       ReplaceConfirmation
     diagnostics        KeyDiagnostics
     picker             FuzzyPicker
+    files              FileDiscovery
+    leader             bool
+    leader_shown       bool
+    leader_started     Instant
+    picking_files      bool
     suppress_character bool
     search_decoded     [..]u8
     clipboard          Clipboard
@@ -60,6 +67,7 @@ impl Editor {
         self.completion.release()
         self.confirmation.release()
         self.diagnostics.release()
+        self.files.release()
         self.picker.release()
         self.search_decoded.free()
         self.clipboard.bytes.free()
@@ -480,6 +488,8 @@ impl Editor {
         }
     }
     pub open_buffer_picker :: fn (self: ^Self, scratch: ^arena) {
+        self.files.cancel()
+        self.picking_files = no
         self.workspace.record_access()
         self.picker.start("Buffers")
         active := self.workspace.active_view().document_id
@@ -502,6 +512,64 @@ impl Editor {
         self.picker.selected = on self.picker.matches.count > 1 {
             yes => 1 else => 0
         }
+    }
+    pub open_file_picker :: fn (self: ^Self) -> void\string {
+        self.files.cancel()
+        self.picking_files = yes
+        self.picker.start("Files · scanning")
+        self.picker.incremental = yes
+        self.message.clear()
+        on self.files.start(bytes_text(self.workspace.folder)) {
+            _success => {
+            }
+            error! => {
+                self.files.failed = yes
+                self.picker.title = "Files · discovery failed"
+                return error!
+            }
+        }
+    }
+    pub poll_file_picker :: fn (self: ^Self) {
+        self.files.reap()
+        on !self.picking_files => return
+        on !self.picker.active => {
+            self.files.cancel()
+            self.picking_files = no
+            return
+        }
+        on self.files.poll(^self.picker) {
+            _success => {
+            }
+            error! => self.tell(error)
+        }
+        self.picker.filter_step(512)
+        self.picker.title = on {
+            self.files.failed => "Files · incomplete"
+            self.files.running => "Files · scanning"
+            self.picker.scanned < self.picker.entries.count => "Files · "
+                +"filtering"
+            else => "Files"
+        }
+    }
+    pub accept_picked_file :: fn (self: ^Self, scratch: ^arena, id: usize) -> void\string {
+        on id >= self.files.paths.count => return "No such file candidate"!
+        path := scratch.pr($"{bytes_text(self.workspace.folder)}/{self.files.paths[id]}")
+        on metadata(scratch, path) {
+            info => {
+                on (info.mode & S_IFMT) != S_IFREG => return "Selected file is "
+                    +"no longer a regular file"!
+            }
+            else => return "Selected file no longer exists"!
+        }
+        self.workspace.open_file(scratch, path)?
+        self.workspace.active_view().interaction.state = Interaction.Normal
+        self.files.cancel()
+        self.picker.active = no
+        self.picking_files = no
+        self.highlights = no
+        self.active_match = nil
+        self.changed()
+        self.message.clear()
     }
     pub close_buffer :: fn (self: ^Self, scratch: ^arena, force: bool = no, normalise: bool = no, document_id: ?usize = nil) -> void\string {
         suppressed := self.workspace.active_view().keyboard.suppress_text
@@ -565,19 +633,32 @@ impl Editor {
             Backspace => self.picker.erase(yes)
             -- Legacy DEL is Backspace, matching the text keyboard's policy.
             Delete => self.picker.erase(key.character == 127.as(u32))
-            Escape => self.picker.active = no
+            Escape => {
+                self.picker.active = no
+                self.files.cancel()
+                self.picking_files = no
+            }
             Enter => on self.picker.chosen() => [id] {
-                on self.workspace.focus_document(id) => {
-                    self.workspace.active_view().interaction.state = Interaction.Normal
-                    self.highlights = no
-                    self.active_match = nil
-                    self.changed()
-                    self.message.clear()
-                    self.picker.active = no
+                on self.picking_files {
+                    yes => on self.accept_picked_file(scratch, id) {
+                        _success => {
+                        }
+                        error! => self.tell(error)
+                    }
+                    else => on self.workspace.focus_document(id) => {
+                        self.workspace.active_view().interaction.state = Interaction.Normal
+                        self.highlights = no
+                        self.active_match = nil
+                        self.changed()
+                        self.message.clear()
+                        self.picker.active = no
+                    }
                 }
             }
             W => on (key.modifiers & TERM_MOD_CONTROL) != 0 {
-                yes => self.close_picked_buffer(scratch)
+                yes => {
+                    on !self.picking_files => self.close_picked_buffer(scratch)
+                }
                 else => handled = no
             }
             else => handled = no
@@ -695,6 +776,10 @@ impl Editor {
             self.active_match = nil
             self.changed()
             self.message.clear()
+            return
+        }
+        on verb == "files" => {
+            self.open_file_picker()?
             return
         }
         on verb == "buffers" => {
@@ -840,6 +925,10 @@ impl Editor {
         on command {
             BufferPicker => {
                 self.open_buffer_picker(scratch)
+                return
+            }
+            FilePicker => {
+                on self.prompt_kind == 0 => self.open_file_picker()?
                 return
             }
             CloseBuffer => {
@@ -1201,6 +1290,17 @@ impl Editor {
             self.changed()
         }
     }
+    pub cancel_leader :: fn (self: ^Self) {
+        self.leader = no
+        on self.leader_shown => self.message.clear()
+        self.leader_shown = no
+    }
+    pub poll_leader :: fn (self: ^Self, current: Instant) {
+        on self.leader && !self.leader_shown && elapsed(self.leader_started, current) >= from_ms(2000) => {
+            self.tell("Space menu\nSpace  Open file\nEsc    Cancel")
+            self.leader_shown = yes
+        }
+    }
     pub key :: fn (self: ^Self, scratch: ^arena, key: TermKeyEvent) {
         on self.diagnostics.active => {
             on (key.modifiers & TERM_MOD_ALT) != 0 && key.action != TermKeyAction.Release => {
@@ -1232,6 +1332,21 @@ impl Editor {
         }
         -- Diagnostics must observe releases; ordinary UI/command handlers must not.
         on key.action == TermKeyAction.Release => return
+        on key.scan_code == TermScanCode.Space && key.modifiers == 0 && self.prompt_kind == 0 && !self.picker.active && !self.confirmation.active && self.workspace.active_view().interaction.state == Interaction.Normal => {
+            on key.action == TermKeyAction.Repeat => {
+                on key.character != nil => self.suppress_character = yes
+                return
+            }
+            on key.character == nil => {
+                self.character(scratch, 32)
+                return
+            }
+        }
+        on self.leader && (key.character == nil || key.modifiers != 0 || key.scan_code == TermScanCode.Escape) => {
+            self.cancel_leader()
+            self.suppress_character = key.character != nil
+            return
+        }
         on self.picker.active => {
             self.picker_key(scratch, key)
             return
@@ -1274,7 +1389,7 @@ impl Editor {
         }
         on self.picker.active => {
             on rune == 23 => {
-                self.close_picked_buffer(scratch)
+                on !self.picking_files => self.close_picked_buffer(scratch)
                 return
             }
             on rune >= 32 && rune != 127 => {
@@ -1297,7 +1412,31 @@ impl Editor {
             }
             return
         }
+        on self.leader => {
+            self.cancel_leader()
+            on rune == ' '.as(u32) {
+                yes => on self.open_file_picker() {
+                    _success => {
+                    }
+                    error! => self.tell(error)
+                }
+                else => on rune != 27 => self.tell("Unknown Space key; press "
+                    +"Space, then Space to open a file")
+            }
+            return
+        }
         text_view := self.workspace.active_view()
+        on rune == ' '.as(u32) && self.prompt_kind == 0 && text_view.interaction.state == Interaction.Normal => {
+            on text_view.keyboard.count != 0 => {
+                text_view.keyboard.count = 0
+                self.tell("Command does not accept a count")
+                return
+            }
+            self.leader = yes
+            self.leader_shown = no
+            self.leader_started = now()
+            return
+        }
         suppressed := text_view.keyboard.suppress_text
         state := text_view.interaction.state
         on text_view.keyboard.character(rune, on self.prompt_kind != 0 {
@@ -1346,6 +1485,7 @@ impl Editor {
         }
         on before != after => self.changed()
         current := now()
+        self.poll_leader(current)
         on self.dirty && self.workspace.persistent && elapsed(self.checkpoint_at, current) >= from_ms(1000) && (elapsed(self.changed_at, current) >= from_ms(400) || elapsed(self.checkpoint_at, current) >= from_ms(2000)) => {
             on self.workspace.checkpoint(scratch) {
                 _success => self.dirty = no error! => self.tell(error)
@@ -1526,7 +1666,7 @@ test {
         own(^editor.workspace.folder, "/no-such-completion-folder")
         editor.prompt_open(':'.as(u32))
         editor.execute(^scratch, Command.Tab)?
-        assert editor.completion.active && editor.completion.items.count == 12
+        assert editor.completion.active && editor.completion.items.count == 13
         assert bytes_text(editor.prompt) == ""
         editor.prompt_insert("e")
         assert bytes_text(editor.prompt) == "e"
@@ -2578,4 +2718,30 @@ test "keyboard diagnostics capture commands without edits and Escape leaves no s
     editor.character(^scratch, 'i'.as(u32))
     editor.character(^scratch, 'z'.as(u32))
     assert editor.workspace.active_document().text.text() == "z"
+}
+
+test "Space leader waits for help, cancels and leaves Insert and prompts literal" {
+    scratch : arena
+    defer scratch.done()
+    editor : Editor
+    editor.workspace.lock_fd = -1
+    defer editor.release()
+    editor.workspace.add_empty()
+    editor.workspace.active_view().interaction.state = Interaction.Normal
+    editor.character(^scratch, 32)
+    assert editor.leader && !editor.leader_shown
+    editor.poll_leader(editor.leader_started)
+    assert !editor.leader_shown
+    editor.character(^scratch, 'i'.as(u32))
+    assert !editor.leader && editor.workspace.active_view().interaction.state == Interaction.Normal
+    editor.character(^scratch, 32)
+    editor.key(^scratch,
+               TermKeyEvent { scan_code: ArrowRight action: Press ... })
+    assert !editor.leader && editor.workspace.active_view().interaction.selection.active == 0
+    editor.character(^scratch, 'i'.as(u32))
+    editor.character(^scratch, 32)
+    assert !editor.leader && editor.workspace.active_document().text.text() == " "
+    editor.prompt_open(':'.as(u32), initial = "e")
+    editor.character(^scratch, 32)
+    assert !editor.leader && bytes_text(editor.prompt) == "e "
 }

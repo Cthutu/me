@@ -4,7 +4,8 @@ ME is a modal Linux terminal editor written in **Nerd**, using `std.term`.
 MS1 is implemented and debug/release regression-tested, providing precise,
 Notepad-level text editing with persistent continuation,
 shared buffer history, and independent view state. One pane is provided; pane
-management, facets and language services are future work.
+management, facets and language services are future work. The MS2 file picker
+adds cancellable discovery under the startup folder.
 
 ## Build and run
 
@@ -42,13 +43,9 @@ The 1,093 generated Unicode conformance vectors occupy a marked test section in
 code or tests. The separate `tests/terminal.py` runner exercises real processes
 and terminal input on debug/release executables.
 
-The default compiler is installed `nerd`. Override `NERD` and `NERD_LIB_PATH` to
-use an isolated compiler/modules pair. An ignored local `.env` currently selects
-`_tools/nerd` and `_tools/mods`, containing the tested Nerd fixes; the shared Nerd
-checkout remains on the other agent's branch; see
-[toolchain status](docs/ms1-progress.md#nerd-fixes--twelve-completed) for the distinct
-user installation and validated private compiler. Generated outputs live in
-`_bin`, `_obj` and `_tmp`; `just clean` leaves compiler overrides alone.
+Builds use the installed `nerd` and its matching installed modules. Generated
+outputs live in `_bin`, `_obj` and `_tmp`; `just clean` removes those outputs.
+See [toolchain status](docs/ms1-progress.md) for compiler fixes and validation.
 
 ```sh
 NERD=/path/to/nerd NERD_LIB_PATH=/path/to/mods just build
@@ -115,6 +112,7 @@ these letters remain literal text in Insert and prompts.
 | Ctrl+Z / Ctrl+R | Undo / redo |
 | Ctrl+S | Save active document; unnamed opens `:w ` |
 | `,` | Normal-only buffer picker; Enter switches, Escape cancels |
+| Normal Space Space / `:files` | Open files; hold after the first Space for the key menu |
 | Ctrl+W | Close the highlighted buffer in the picker, otherwise the active buffer; refuse unsaved work |
 
 Only `i` preserves selection on Insert entry; other entry commands clear it.
@@ -187,6 +185,44 @@ The owning fuzzy-list model, popup layout and renderer are reusable. This first
 consumer does not implement asynchronous file discovery, an overlay stack or
 split-pane focus routing.
 
+## File picker
+
+**Space Space** in Normal, or **`:files`**, opens a workspace-wide file list
+rooted at the editor's startup folder. It opens immediately while discovery runs
+separately. Type to filter using the buffer picker's Unicode case-insensitive
+ordered subsequence matching, including directory components. Results arrive in
+filesystem traversal order, without fuzzy score sorting. Up/Down and Page Up/Down
+select; Left/Right/Home/End, Backspace and Delete edit the query.
+
+**Enter** opens the selected existing regular file or focuses its existing buffer,
+including inode aliases, without discarding other work. It dismisses the picker
+on success; a disappeared/non-regular/unreadable/invalid-content candidate reports
+an error and leaves it open. **Escape** cancels discovery and preserves the
+originating buffer, caret, selection, scroll and editing mode. Query edits clear
+old matches immediately; Enter with no current match does nothing. Ctrl+W has no
+action in the file picker. File contents are not previewed during discovery.
+
+Space starts a leader sequence in Normal. After two seconds, the message area
+shows its known keys: Space opens files and Escape cancels. The second Space
+works immediately, without waiting for the menu. Unknown keys cancel the
+sequence without executing an editing command. Spaces remain ordinary text in
+Insert and prompts. Enhanced key releases and held-Space repeats do not invoke
+commands.
+
+Discovery includes hidden names and files excluded by `.gitignore`; no ignore
+rules are applied. Symlinks to files and directories are followed. Each opened
+directory's device/inode identity is checked against its current ancestry, so
+cycles are skipped while distinct aliases remain discoverable. Links can lead
+outside the startup folder. Broken links and special objects are omitted.
+Raw Linux filename bytes are retained; only display labels are sanitised.
+Opening the picker again starts a fresh scan.
+
+Discovery and filtering use bounded batches. A scan is capped at 32,768 candidates;
+unreadable directories or other discovery limits explicitly mark the list
+**incomplete** and show an error. Available results remain usable.
+Cancellation also works while the discovery helper is blocked; it never waits for
+filesystem traversal to finish before returning input to the editor.
+
 ## Search and replacement
 
 - `/term` searches forwards; `?term` backwards, literally and case-sensitively.
@@ -250,6 +286,7 @@ capability reporting, not detection of every terminal-specific protocol.
 | Command | Behaviour |
 | --- | --- |
 | `:keys` | Inspect keyboard protocol/capabilities and decoded key events; Escape closes |
+| `:files` | Discover/filter files below the startup folder and open a selection |
 | `:e path` | Open/create a file-backed buffer, or focus its existing buffer without discarding other work |
 | `:w` | Save active document; unchanged existing files are not written |
 | `:ww` | Force a write, but do not bypass external conflicts |

@@ -11,7 +11,7 @@ library. Runtime code uses Nerd/Linux syscalls, without added external libraries
 | Unicode word/whitespace classification | No general letter/digit/whitespace predicates found in `std.text` | Generated category/White_Space tables; local word runs and paragraph/indentation boundaries |
 | Full-grapheme framebuffer cells | `std.term` cells hold one scalar, and private scalar-width accounting is incomplete | `src/terminal.n` bridges only complex/mismatched-width glyphs after retained-cell presentation; PTY tests cover combining/ZWJ rendering, resize and idle output. Prefer a native glyph-cell contract upstream rather than retaining this bridge indefinitely |
 | Byte-safe display strings | Linux paths can be non-UTF-8 and contain terminal controls; document text has a different validation contract | `native.display_text`, live invalid-byte filename save/recovery test |
-| Byte-safe directory enumeration | `std.files` exposes path metadata but no directory-entry iterator in the inspected API | `src/completion.n` uses Linux `getdents64`, validates record boundaries, closes descriptors on all exits, handles EINTR, bounds discovery, caches a byte-safe directory snapshot for pure query filtering, and preserves filename bytes; native/PTY tests cover dotfiles, symlink directories, whitespace/control/invalid-byte names and symlink-plus-`..` resolution. Generic async enumeration remains future work |
+| Byte-safe directory enumeration | `std.files` exposes path metadata but no directory-entry iterator in the inspected API | `src/completion.n` uses Linux `getdents64`, validates record boundaries, closes descriptors on all exits, handles EINTR, bounds discovery, caches a byte-safe directory snapshot for pure query filtering, and preserves filename bytes; native/PTY tests cover dotfiles, symlink directories, whitespace/control/invalid-byte names and symlink-plus-`..` resolution. T4 adds cancellable recursive discovery in `src/file_picker.n`, using a child process/non-blocking byte pipe and bounded UI publication/filtering; stopped-worker PTYs verify responsive cancellation and reaping. This is local-first application machinery pending evaluation for a generic enumeration service |
 | Durable atomic replacement | `std.files` lacks a complete same-directory exclusive temporary/flush/rename contract | `src/native.n`; follows live symlink targets, preserves owner/mode/ACLs/xattrs, rechecks identity/content, flushes file and directory; native and PTY fidelity/permission/long-name tests |
 | File identity/change snapshots | `std.files` metadata does not expose the whole identity/timestamp comparison needed here | `native.metadata`/`same_file_state`, `Workspace.poll_files`; Linux stat plus two-sample polling; live reload/conflict/deletion/reappearance tests |
 | Process environment and startup folder | No suitable high-level environment/CWD helpers found in the inspected API | `/proc/self/environ` and `getcwd` wrappers in `src/native.n`; exercised through actual startup/continuation |
@@ -90,3 +90,13 @@ revision and verification in [MS1 progress](ms1-progress.md).
 Compiler bugs are **not** library candidates. Completed compiler fixes used
 dedicated Nerd worktrees and full gates before integration into local `main`; see
 [MS1 progress](ms1-progress.md).
+
+
+## Cancellable discovery — local candidate
+
+`src/file_picker.n` separates blocking filesystem traversal from the terminal
+loop with a syscall-only child, per-scan pipe, explicit cancellation/reaping,
+parent-death handling and bounded transport. `src/picker.n` adds incremental
+query filtering while preserving the synchronous buffer consumer. Tests cover
+partial frames/EOF, new query invalidation, stopped-worker cancellation,
+descriptor ownership, directory-link cycles and exact invalid/control-byte filenames.

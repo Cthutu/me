@@ -1301,3 +1301,51 @@ recording, system clipboard, configuration, or language-service APIs.
   implementation mechanism. Keep unresolved choices explicit before building.
 - Track accepted tasks and actual status in `docs/tasks.md` and the single
   agreed-task panel. Do not restore the removed progress/design/feature panels.
+
+
+## 26. File picker (T4)
+
+T4 implements the agreed non-blocking discovery/filter/open/cancel direction,
+using the startup folder and the buffer picker's case-insensitive subsequence
+matching. The input and discovery policies below are agreed; split panes and an
+overlay stack remain separate queued work.
+
+- Normal Space Space and `:files` open the existing generic popup; comma retains
+  the buffer list. Space starts a leader sequence with a known-key menu after
+  two seconds; a second Space works immediately. Escape cancels; unknown keys
+  cancel without running an editing command. Insert/prompts retain literal spaces;
+  releases and Space repeats do not advance the sequence.
+- Search includes relative directory components. Results retain traversal/source
+  order; there is no fuzzy score sorting, index, external Git process or library.
+- Include hidden and ignored files, as explicitly requested. Follow both file
+  and directory symlinks, including targets outside the startup folder. Compare
+  device/inode identities of opened directories against the current ancestry
+  to stop cycles; distinct non-cyclic aliases are retained. Broken links and
+  non-regular objects are omitted.
+- Enter revalidates existence/type, then uses normal workspace opening/reuse.
+  Success closes the popup and enters Normal. Failure keeps it open with an
+  error; merely browsing never reads file contents or changes views/history.
+- Escape cancels promptly and preserves the originating interaction state.
+  Ctrl+W has no action here. Query editing clears stale matches before another
+  Enter can choose them. Reopening starts fresh; empty results remain open.
+
+`src/file_picker.n` owns a Linux child process per scan. The child performs
+filesystem traversal and streams NUL-delimited byte paths; the UI owns all
+candidate/query/view state. Cancellation closes the pipe and kills the helper,
+reaping without a blocking join. A parent-death signal prevents an abandoned
+helper after editor termination. Each scan gets a new pipe/storage, so cancelled
+results cannot enter a later popup. At most sixteen still-stopping children are
+retained; another scan is refused explicitly until they can be reaped.
+
+The parent receives at most 8 KiB and publishes at most 256 paths per simulation
+step. Generic `FuzzyPicker` incremental filtering scans at most 512 candidates and stops after 64 KiB
+of folded candidate labels per step and restarts on query edits. Buffer filtering remains synchronous and keeps
+its existing MRU selection rules. File lists use the full popup width without
+filesystem content preview. Existing buffer previews remain unchanged.
+
+Bounds: 32,768 candidates, 64 MiB of path bytes, one million visited entries,
+128 directory levels and 4,096-byte paths.
+Errors and exceeded limits visibly mark results incomplete instead of implying a
+complete scan. Enumeration order is not a stable sorting contract. Revalidation
+uses normal Linux pathname operations, not a filesystem transaction against
+concurrent writers.

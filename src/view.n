@@ -51,6 +51,7 @@ pub Command :: enum {
     Change
     Save
     BufferPicker
+    FilePicker
     CloseBuffer
     Prompt(u32)
     SearchNext(bool)

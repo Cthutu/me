@@ -74,6 +74,8 @@ pub FuzzyPicker :: plex {
     top          usize
     rows         usize
     active       bool
+    incremental  bool
+    scanned      usize
 }
 
 impl FuzzyPicker {
@@ -98,6 +100,8 @@ impl FuzzyPicker {
         self.selected = 0
         self.top = 0
         self.rows = 10
+        self.incremental = no
+        self.scanned = 0
     }
 
     pub add :: fn (self       : ^Self,
@@ -127,14 +131,30 @@ impl FuzzyPicker {
         self.matches.clear()
         self.selected = 0
         self.top = 0
+        self.scanned = 0
         fold_text(^self.folded_query, bytes_text(self.query))
-        for index, entry in self.entries {
+        on !self.incremental => self.filter_step(self.entries.count, previous = previous)
+    }
+
+    -- Incremental consumers restart on query edits, dropping old matches before
+    -- another frame can accept them. Newly discovered entries join the same scan.
+    pub filter_step :: fn (self: ^Self, limit: usize, previous: ?usize = nil) {
+        end := self.scanned + limit
+        on end > self.entries.count => end = self.entries.count
+        work : usize = 0
+        for self.scanned < end {
+            index := self.scanned
+            entry := self.entries[index]
+
+            self.scanned += 1
+            work += entry.folded.count
             on fuzzy_subsequence(entry.folded, bytes_text(self.folded_query)) => {
                 self.matches.push(index)
                 on previous => [id] {
                     on entry.id == id => self.selected = self.matches.count - 1
                 }
             }
+            on self.incremental && work >= 65536 => break
         }
     }
 
@@ -254,4 +274,42 @@ test "popup bounds fit zero narrow and ordinary terminals" {
             assert box.y + box.height <= height^
         }
     }
+}
+
+test "incremental filtering drops stale matches and scans appended candidates in bounded steps" {
+    list : FuzzyPicker
+    defer list.release()
+    list.start("Files")
+    list.incremental = yes
+    list.add(0, "alpha.n")
+    list.add(1, "Straße.n")
+    list.add(2, "alpine.n")
+    list.filter_step(1)
+    assert list.matches.count == 1 && list.scanned == 1
+    list.insert("STRASSE")
+    assert list.chosen() == nil && list.scanned == 0
+    list.filter_step(1)
+    assert list.chosen() == nil && list.scanned == 1
+    list.filter_step(1)
+    assert list.chosen() == 1
+    list.add(3, "strasse-two.n")
+    list.filter_step(1)
+    assert list.matches.count == 1 && list.scanned == 3
+    list.filter_step(1)
+    assert list.matches.count == 2 && list.scanned == 4
+    list.insert("zz")
+    assert list.chosen() == nil
+    list.filter_step(64)
+    assert list.chosen() == nil && list.scanned == 4
+    list.start("Long paths")
+    list.incremental = yes
+    label : [2048]u8
+    for byte in label {
+        byte^ = 'a'.as(u8)
+    }
+    for index in [0.as(usize) .. 100] {
+        list.add(index, label[..].as(string))
+    }
+    list.filter_step(512)
+    assert list.scanned > 0 && list.scanned < list.entries.count
 }

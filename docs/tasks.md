@@ -193,7 +193,7 @@ fresh discovery on reopening, safe acceptance and no-match handling.
 ## Agreed MS2 work
 
 The following tasks were explicitly accepted after T1/T2. T3's detailed
-interaction is now agreed and implemented; T4–T6 remain queued. T2's filename
+interaction is now agreed and implemented; T4 is in progress; T5–T6 remain queued. T2's filename
 completion still uses the existing message area, separate from the reusable popup.
 
 ### T3 — Popup/picker foundation, buffer switcher and Ctrl+W — done
@@ -277,14 +277,32 @@ buffers and displaying the first successful argument remains unchanged.
   dirty active/selected buffers, retained query/selection and last-buffer fallback.
 - Verification: format/check, all 156 native tests, all 34 debug PTY groups,
   all five release buffer-picker PTY groups, Python compilation and diff checks
-  passed. Release installation and installed selected-close smoke follow push.
+  passed. Pushed and installed at `b5be63e`; installed selected-close smoke passed.
 
-### T4 — File picker
+### T4 — File picker and Space leader — done
 
 - Discover and filter file candidates without blocking normal input.
 - Support cancellation and opening/focusing a selected file.
 - Settle discovery roots, matching, hidden/ignored files and symlink policies.
 - Reuse T3; retain Linux filename fidelity and validate stale candidates.
+
+Agreed delivery: startup-folder root, Unicode case-insensitive subsequence
+matching, Normal Space Space/`:files`, all hidden/ignored files included, and
+file/directory symlinks followed with ancestry-based cycle detection. The Space
+leader shows its known-key menu after two seconds. Other roots, toggles and
+previewing unopened contents are separate choices.
+
+Discovery uses a cancellable child and non-blocking pipe; query filtering and
+candidate publication advance in bounded simulation batches. Reopening scans
+fresh; no-match/stale/error cases retain the popup. Existing buffers are reused,
+unsaved work survives cancellation/opening, and Ctrl+W never closes a file row.
+
+Verification: installed Nerd `c80d7775` on `remove-linux-libc`; formatting,
+checking, all 159 native tests (47 ME + 112 imported), all 36 debug and 36 release
+PTY groups, Python compilation and diff checks passed. Both ME profiles have no
+ELF shared-library dependencies or interpreter. Release installation uses
+`just install`; the focused installed picker checks cover both new PTY groups.
+
 
 ### T5 — Split-pane UI
 
