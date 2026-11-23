@@ -9,6 +9,9 @@ Maintain this one panel from [tasks.md](tasks.md) and verified results. Track on
 work explicitly agreed with the user. Keep optional proposals separate from
 committed tasks. Do not recreate the previous progress, design or feature panels.
 
+Show unfinished tasks before completed tasks on the panel. Keep unfinished tasks
+in their agreed queue order and preserve the relative order of completed tasks.
+
 Read the space/specification and use its current revision before updating.
 Status is hand-maintained, not an automatic local-file monitor. Record actual
 validation, commits, pushes and installation; do not equate a draft or a passing
