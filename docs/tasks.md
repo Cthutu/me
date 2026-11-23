@@ -137,6 +137,23 @@ fresh discovery on reopening, safe acceptance and no-match handling.
   and release, and formatting idempotence. Installed HJKL/q and help smoke run
   after committing/pushing and installing the release executable.
 
+## T2f — Keyboard diagnostics and std.term negotiation audit — done
+
+- Add `:keys` for capabilities and decoded key/action/modifier/text inspection;
+  test Ctrl+H versus Ctrl+Backspace without editing or saving. Escape closes;
+  Alt+Page Up/Down scroll. Keep bounded, safe, non-persistent event history.
+- Expose actual Kitty flags and probe completion in Nerd; distinguish zero,
+  negative and pending replies. Fix partial-flag capability overclaims and fully
+  consume private CSI replies. Keep negotiation in `std.term`, not local escapes.
+- Add native and actual-protocol PTY regression coverage, command completion and
+  docs. Dedicated Nerd worktree/full gates precede toolchain integration.
+- Nerd `7cd7e0ec` is pushed and retained on local main; its full gate passed
+  (72 passed, 2 platform skips). Required direct `~/nerd just install` passed from
+  unchanged libc-removal `174a4576`; coordinated integration there remains pending.
+- ME verification: 144 native tests (33 project + 111 imported), all 25 PTY groups
+  on debug/release, and focused status/DA/key/resize/scroll checks. Installed checks
+  run after push/install. No local protocol implementation was introduced.
+
 ## Agreed MS2 queue — not started
 
 The following tasks were explicitly accepted after T1/T2. This is the intended

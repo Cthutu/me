@@ -2,6 +2,7 @@ use buffer
 use characters
 use completion
 use document
+use key_diagnostics
 use keyboard
 use native
 use positions
@@ -31,6 +32,7 @@ pub Editor :: plex {
     workspace        Workspace
     completion       PromptCompletion
     confirmation     ReplaceConfirmation
+    diagnostics      KeyDiagnostics
     search_decoded   [..]u8
     clipboard        Clipboard
     prompt           [..]u8
@@ -54,6 +56,7 @@ impl Editor {
         self.workspace.release()
         self.completion.release()
         self.confirmation.release()
+        self.diagnostics.release()
         self.search_decoded.free()
         self.clipboard.bytes.free()
         self.prompt.free()
@@ -515,6 +518,12 @@ impl Editor {
         self.prompt_kind = 0
         self.prompt.clear()
         self.save_all_pending = no
+        on command == "keys" => {
+            self.diagnostics.start()
+            self.workspace.active_view().keyboard.suppress_text = no
+            self.tell(self.diagnostics.message(scratch))
+            return
+        }
         on command == "q" => {
             self.quit_safely(scratch)?
             return
@@ -1078,6 +1087,34 @@ impl Editor {
         }
     }
     pub key :: fn (self: ^Self, scratch: ^arena, key: TermKeyEvent) {
+        on self.diagnostics.active => {
+            on (key.modifiers & TERM_MOD_ALT) != 0 && key.action != TermKeyAction.Release => {
+                on key.scan_code {
+                    PageUp => {
+                        on self.message_scroll > 0 => self.message_scroll -= 1
+                        return
+                    }
+                    PageDown => {
+                        self.message_scroll += 1
+                        return
+                    }
+                    else => {
+                    }
+                }
+            }
+            on key.scan_code == TermScanCode.Escape && key.action != TermKeyAction.Release {
+                yes => {
+                    self.diagnostics.active = no
+                    self.workspace.active_view().keyboard.suppress_text = key.character != nil
+                    self.tell("Keyboard diagnostics closed")
+                }
+                else => {
+                    self.diagnostics.record(scratch, TermInputEvent.Key(key))
+                    self.tell(self.diagnostics.message(scratch))
+                }
+            }
+            return
+        }
         on self.confirmation.active => {
             on key.scan_code == TermScanCode.Escape && key.action != TermKeyAction.Release => self.finish_confirmation(scratch, "Stopped after")
             return
@@ -1104,6 +1141,11 @@ impl Editor {
         }
     }
     pub character :: fn (self: ^Self, scratch: ^arena, rune: u32) {
+        on self.diagnostics.active => {
+            self.diagnostics.record(scratch, TermInputEvent.Character(rune))
+            self.tell(self.diagnostics.message(scratch))
+            return
+        }
         on self.confirmation.active => {
             on self.confirm_replace(scratch, rune) {
                 _success => {
@@ -1341,7 +1383,7 @@ test {
         own(^editor.workspace.folder, "/no-such-completion-folder")
         editor.prompt_open(':'.as(u32))
         editor.execute(^scratch, Command.Tab)?
-        assert editor.completion.active && editor.completion.items.count == 11
+        assert editor.completion.active && editor.completion.items.count == 12
         assert bytes_text(editor.prompt) == ""
         editor.prompt_insert("e")
         assert bytes_text(editor.prompt) == "e"
@@ -2188,4 +2230,44 @@ test "hjkl preserve graphemes and preferred columns while q keeps linewise selec
         editor.character(^scratch, rune^.as(u32))
     }
     assert doc.text()[..5] == "qhjkl" && view.state == Interaction.Insert
+}
+
+test "keyboard diagnostics capture commands without edits and Escape leaves no suppressed input" {
+    scratch : arena
+    defer scratch.done()
+    editor : Editor
+    editor.workspace.lock_fd = -1
+    defer editor.release()
+    editor.workspace.add_empty()
+    editor.prompt_open(':'.as(u32), initial = "keys")
+    on editor.command_line(^scratch) {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    assert editor.diagnostics.active
+    editor.message_scroll = 3
+    editor.key(^scratch,
+               TermKeyEvent { scan_code: TermScanCode.PageUp action: TermKeyAction.Press modifiers: TERM_MOD_ALT ... })
+    assert editor.message_scroll == 2
+    editor.key(^scratch,
+               TermKeyEvent { scan_code: TermScanCode.H action: TermKeyAction.Press modifiers: TERM_MOD_CONTROL ... })
+    editor.key(^scratch,
+               TermKeyEvent { scan_code: TermScanCode.S action: TermKeyAction.Press modifiers: TERM_MOD_CONTROL character: 19.as(u32) ... })
+    editor.character(^scratch, 19)
+    for rune in "iqhjklx" {
+        editor.character(^scratch, rune^.as(u32))
+    }
+    assert editor.workspace.active_document().text.text() == ""
+    assert editor.workspace.active_document().text.history.count == 0 && !editor.quit
+    editor.key(^scratch,
+               TermKeyEvent { scan_code: TermScanCode.Escape action: TermKeyAction.Press character: 27.as(u32) ... })
+    editor.character(^scratch, 27)
+    assert !editor.diagnostics.active
+    editor.character(^scratch, 'i'.as(u32))
+    editor.character(^scratch, 'z'.as(u32))
+    assert editor.workspace.active_document().text.text() == "z"
 }

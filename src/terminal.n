@@ -1,6 +1,7 @@
 use characters
 use document
 use editor
+use key_diagnostics
 use native
 use os.linux
 use positions
@@ -263,7 +264,10 @@ impl Terminal {
                 else => 1
             }
         }
-        on message_height > height / 2 => message_height = height / 2
+        maximum_message_height := on editor.diagnostics.active {
+            yes => height - 1 else => height / 2
+        }
+        on message_height > maximum_message_height => message_height = maximum_message_height
         on message_height == 0 => message_height = 1
         rows := on height > message_height + 1 {
             yes => height - message_height - 1 else => 0
@@ -526,6 +530,7 @@ impl Terminal {
 pub input_hook :: fn (input: TermInput) {
     terminal := input.user_data.as(^Terminal)
     terminal.scratch.reset()
+    terminal.editor.diagnostics.capabilities = input.keyboard.capabilities
     for event in input.events {
         on event^ {
             Key(key)         => terminal.editor.key(^terminal.scratch, key)
@@ -538,6 +543,11 @@ pub input_hook :: fn (input: TermInput) {
             term_done()
             break
         }
+    }
+    on terminal.editor.diagnostics.active => {
+        scroll := terminal.editor.message_scroll
+        terminal.editor.tell(terminal.editor.diagnostics.message(^terminal.scratch))
+        terminal.editor.message_scroll = scroll
     }
 }
 
@@ -616,5 +626,12 @@ test "mode presentation uses contrasting green/red cursors and UTF-8 status badg
     assert terminal.cells[7 * 40].rune == ':'.as(u32)
     terminal.paint(1, 1)
     assert terminal.cells.count == 1
+    terminal.paint(0, 0)
+    terminal.editor.diagnostics.start()
+    terminal.editor.tell(terminal.editor.diagnostics.message(^terminal.scratch))
+    for rows in [1.as(usize), 2, 8] {
+        terminal.paint(20, rows^)
+        assert terminal.cells.count == 20 * rows^
+    }
     terminal.paint(0, 0)
 }

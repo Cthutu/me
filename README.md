@@ -154,10 +154,33 @@ selection inserts below; with a selection, paste replaces precisely that range.
   rejected; replacement text is not recursively searched. Identical old/new
   text reports no change. The `replace` command and `g` flag have been removed.
 
+## Keyboard diagnostics
+
+Run **`:keys`** to inspect the terminal's keyboard reporting. The diagnostic view
+shows the actual Kitty flags (including a valid zero reply), whether probing has
+completed, and reliable physical-key/release/modifier/associated-text capabilities.
+It retains the six most recent decoded key/text events, including key name,
+press/repeat/release, modifier bits and Ctrl/Shift/Alt, and decimal character/label
+codepoints. These are decoded events, **not a raw byte capture**.
+
+Press Ctrl+H, then Ctrl+Backspace. Enhanced input can show `H` and `Backspace`
+with Ctrl separately. Legacy byte `0x08` is explicitly labelled ambiguous;
+protocol support cannot undo terminal bindings that map both combinations to the
+same bytes. The view captures keys without editing/saving. **Escape** closes it;
+Alt+Page Up/Down scroll long output, including on narrow terminals. The trace is
+bounded in memory, cleared on reopening, and never saved to the workspace.
+
+No Kitty reply before the following Device Attributes reply means the current
+terminal/multiplexer path did not acknowledge Kitty reporting. With no response
+at all, probing remains pending and input uses conservative legacy capabilities;
+we do not infer lack of support from a timeout or `$TERM`. This is Kitty/native
+capability reporting, not detection of every terminal-specific protocol.
+
 ## Files and continuation
 
 | Command | Behaviour |
 | --- | --- |
+| `:keys` | Inspect keyboard protocol/capabilities and decoded key events; Escape closes |
 | `:e path` | Open/create a file-backed buffer, or focus its existing buffer without discarding other work |
 | `:w` | Save active document; unchanged existing files are not written |
 | `:ww` | Force a write, but do not bypass external conflicts |

@@ -1,0 +1,118 @@
+use native
+use search
+use std.term
+
+-- Only decoded metadata is displayed: never emit terminal-supplied controls.
+pub KeyDiagnostics :: plex {
+    active       bool
+    capabilities TermKeyboardCapabilities
+    trace        [..]u8
+    lines        usize
+    total        usize
+}
+
+yes_no :: fn (value: bool) =>
+    on value {
+        yes   => "yes"
+        else  => "no"
+    }
+
+codepoint_text :: fn (scratch: ^arena, value: ?u32) -> string {
+    return on value { code => scratch.pr($"{code}") else => "none" }
+}
+
+impl KeyDiagnostics {
+
+    pub release :: fn (self: ^Self) {
+        self.trace.free()
+    }
+
+    pub start :: fn (self: ^Self) {
+        self.active = yes
+        self.trace.clear()
+        self.lines = 0
+        self.total = 0
+    }
+
+    pub record :: fn (self: ^Self, scratch: ^arena, event: TermInputEvent) {
+        line := on event {
+            Key(key) => {
+                action := on key.action {
+                    Press    => "press"
+                    Repeat   => "repeat"
+                    Release  => "release"
+                }
+                modifiers := scratch.pr($"{key.modifiers} Ctrl={yes_no((key.modifiers & TERM_MOD_CONTROL) != 0)} Shift={yes_no((key.modifiers & TERM_MOD_SHIFT) != 0)} Alt={yes_no((key.modifiers & TERM_MOD_ALT) != 0)}")
+                legacy := on key.scan_code == TermScanCode.Backspace && key.modifiers == 0 && key.character == 8.as(u32) {
+                    yes   => "legacy 0x08: Ctrl+H / Ctrl+Backspace ambiguous; "
+                    else  => ""
+                }
+                break scratch.pr($"{legacy}Key {term_scan_code_name(key.scan_code)} {action} mods={modifiers} character={codepoint_text(scratch, key.character)} label={codepoint_text(scratch, key.label)}")
+            }
+
+            Character(code)  => scratch.pr($"Text codepoint={code}")
+            else             => ""
+        }
+        on line.count == 0 => return
+        on self.lines == 6 => {
+            cut : usize = 0
+            for cut < self.trace.count && self.trace[cut] != '\n' {
+                cut += 1
+            }
+            on cut < self.trace.count => cut += 1
+            remaining := self.trace.count - cut
+            for index in [0 .. remaining] {
+                self.trace[index] = self.trace[index + cut]
+            }
+            self.trace.resize_undefined_to(remaining)
+            self.lines -= 1
+        }
+        self.total += 1
+        for byte in line {
+            self.trace.push(byte^)
+        }
+        self.trace.push('\n')
+        self.lines += 1
+    }
+
+    pub message :: fn (self: ^Self, scratch: ^arena) -> string {
+        caps := self.capabilities
+        protocol := on caps.kitty_flags {
+            flags => scratch.pr($"Kitty reply flags={flags}")
+
+            else => on caps.physical_keys {
+                yes => "Native keyboard input"
+
+                else => on caps.query_complete {
+                    yes => "No Kitty reply; probe complete (legacy fallback)"
+
+                    else => "No Kitty reply yet; probe pending (legacy "
+                        +"fallback)"
+                }
+            }
+        }
+        return scratch.pr($"Keyboard diagnostics - Escape closes; no editing/saving.\nAlt+PageUp/Down scroll; decoded events, not raw bytes.\n{protocol}\nphysical={yes_no(caps.physical_keys)} releases={yes_no(caps.key_releases)} modifiers={yes_no(caps.modifiers)} associated-text={yes_no(caps.associated_text)}\nTest Ctrl+H and Ctrl+Backspace. Character/label/text values are decimal codepoints.\nRecent events ({self.total} total):\n{bytes_text(self.trace)}")
+    }
+
+}
+
+test "key diagnostics report negotiated state and bound safe decoded event history" {
+    scratch : arena
+    defer scratch.done()
+    diagnostics : KeyDiagnostics
+    defer diagnostics.release()
+    diagnostics.start()
+    diagnostics.record(^scratch,
+                       TermInputEvent.Key(TermKeyEvent { scan_code: TermScanCode.Backspace action: TermKeyAction.Press character: 8.as(u32) ... }))
+    assert find_literal(bytes_text(diagnostics.trace), "legacy 0x08", 0, no) != nil
+    diagnostics.capabilities.kitty_flags = 31.as(u32)
+    diagnostics.capabilities.query_complete = yes
+    diagnostics.capabilities.modifiers = yes
+    assert find_literal(diagnostics.message(^scratch), "Kitty reply flags=31", 0, no) != nil
+    for index in [0 .. 100] {
+        diagnostics.record(^scratch, TermInputEvent.Character(index.as(u32)))
+    }
+    assert diagnostics.lines == 6 && diagnostics.total == 101
+    assert diagnostics.trace.count < 512
+    assert find_literal(bytes_text(diagnostics.trace), "legacy 0x08", 0, no) == nil
+}

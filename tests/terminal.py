@@ -646,6 +646,70 @@ def word_delete(binary, folder):
             session.quit()
 
 
+def keyboard_diagnostics(binary, folder):
+    def screen(session):
+        # Reconstruct the ASCII diagnostic area; retained rendering may only
+        # write changed cells, not complete phrases or their separating spaces.
+        cells = [[" "] * 80 for _ in range(24)]
+        row = column = 0
+        for part in re.split(r"(\x1b\[[0-?]*[ -/]*[@-~])", session.output.decode("utf-8", "replace")):
+            if part.startswith("\x1b["):
+                if part[-1] in "Hf":
+                    values = part[2:-1].split(";")
+                    row = int(values[0] or "1") - 1
+                    column = int(values[1] or "1") - 1 if len(values) > 1 else 0
+                continue
+            for character in part:
+                if character == "\n":
+                    row, column = row + 1, 0
+                elif character == "\r":
+                    column = 0
+                elif ord(character) >= 32:
+                    if 0 <= row < 24 and 0 <= column < 80:
+                        cells[row][column] = character
+                    column += 1
+        return "\n".join("".join(line) for line in cells).encode()
+    path = folder / "keys.txt"
+    original = b"unchanged"
+    path.write_bytes(original)
+    with Session(binary, folder, "-r", path.name) as session:
+        assert b"\x1b[>31u\x1b[?u\x1b[c" in session.output, "keyboard/DA probes missing"
+        session.command("keys")
+        assert b"probe pending" in screen(session)
+        session.send(b"\x1b[?1;2c")
+        assert b"probe complete" in screen(session)
+        assert b"Text codepoint=49" not in screen(session), "DA parameters leaked into text events"
+        session.send(b"\x1b[?0u")
+        assert b"Kitty reply flags=0" in screen(session), "zero reply was confused with no reply"
+        session.send(b"\x1b[?7u")
+        assert b"Kitty reply flags=7" in screen(session)
+        assert b"physical=no releases=no modifiers=yes" in screen(session), "partial flags overclaimed held keys"
+        session.send(b"\x1b[?31u")
+        assert b"physical=yes releases=yes modifiers=yes" in screen(session)
+        session.send(b"\x1b[104;5u")
+        assert b"Key H press mods=4 Ctrl=yes" in screen(session)
+        session.send(b"\x1b[127;5u")
+        assert b"Key Backspace press mods=4 Ctrl=yes" in screen(session)
+        session.send(b"\x1b[104;5:3u")
+        assert b"Key H release" in screen(session)
+        session.send(b"\x13")
+        session.send("iqhjklx")
+        assert path.read_bytes() == original, "diagnostic keys edited or saved the buffer"
+        session.send(b"\x08")
+        assert b"legacy 0x08" in screen(session), "legacy Ctrl+H ambiguity was hidden"
+        fcntl.ioctl(session.master, termios.TIOCSWINSZ, struct.pack("HHHH", 8, 20, 0, 0))
+        session.drain(0.15)
+        session.send(b"\x1b[6;3~\x1b[5;3~")  # Alt+Page Down/Up scroll the diagnostic.
+        fcntl.ioctl(session.master, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+        session.drain(0.15)
+        session.send(b"\x1b", 0.15)
+        session.send("iZ")
+        session.send(b"\x13")
+        assert path.read_bytes() == b"Z" + original, "diagnostic exit swallowed the next key"
+        session.quit()
+        assert b"\x1b[<u" in session.output, "keyboard mode was not restored"
+
+
 def hjkl_and_line_selection(binary, folder):
     path = folder / "hjkl.txt"
     original = "a👩‍💻bc\nx\na👩‍💻bc"
@@ -962,7 +1026,7 @@ def main():
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
     checks = [recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
               search_replace_and_buffers, search_origins, slash_replacement, confirmation_recovery, byte_paths_and_checkpoint_failures,
-              second_instance, crash_and_signals, undo_caret, word_delete, hjkl_and_line_selection, duplicate_selection, command_completion, live_completion_filter, file_completion, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
+              second_instance, crash_and_signals, undo_caret, word_delete, keyboard_diagnostics, hjkl_and_line_selection, duplicate_selection, command_completion, live_completion_filter, file_completion, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
     selected = [check for check in checks if args.filter in check.__name__]
     if not selected:
         parser.error(f"No PTY checks match {args.filter!r}")

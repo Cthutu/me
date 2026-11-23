@@ -317,6 +317,17 @@ The fix is retained on local Nerd `main` and its pushed agent branch. Direct
 coordination. ME's private compiler includes the validated fix.
 
 
+## Keyboard diagnostics and protocol detection
+
+`:keys` was accepted for inspecting decoded keys and actual terminal capabilities.
+Nerd `7cd7e0ec` supplies raw optional Kitty flags and query completion, fixes partial
+flag overclaims, and consumes private CSI/DA replies without text leakage. The
+view captures without editing/saving; Escape closes and Alt+Page Up/Down scroll.
+Legacy `0x08` remains ambiguous; no supported protocol can reverse terminal-level
+key remapping. No response is pending, not a timeout-based unsupported verdict.
+The audit does not claim raw byte capture, every terminal-specific protocol, or
+resolution of the separate Escape-timeout/bracketed-paste gaps.
+
 ## Next: file opening, completion and MS2
 
 Agreed: `:e <path>` with filename Tab completion. The broader MS2 popup/buffer

@@ -19,6 +19,17 @@ library. Runtime code uses Nerd/Linux syscalls, without added external libraries
 | Safe process termination events | Terminal loop cleanup does not itself cover process termination signals | Linux `signalfd`/signal-mask integration in `src/terminal.n`; SIGTERM checkpoint and raw/alternate-screen restoration tested. No libc signal handlers or unsafe restorer stubs |
 | Validating persistent history codec | No editor-specific history format is expected in the library; generic bounded codec helpers may be reusable | `src/codec.n`, workspace envelope/checksum, native malformed/replay tests and PTY corrupted-snapshot retention |
 
+## Keyboard protocol audit — implemented in Nerd
+
+The user explicitly requested completing relevant `std.term` facilities rather
+than maintaining an ME workaround. Nerd now exposes actual Kitty reply flags
+and probe completion, handles the following DA response without leaking its
+parameters as text, and avoids overclaiming capabilities from partial flags.
+ME consumes those public fields in `:keys`; it neither negotiates the protocol
+nor decodes escape sequences itself. Missing responses remain pending, and raw
+byte access/other terminal-specific protocols are not implied. See the toolchain
+revision and verification in [MS1 progress](ms1-progress.md).
+
 ## Further investigated gaps, not locally solved
 
 - **Escape timeout resolution:** Linux `std.term` requests 25 ms but rounds it to
@@ -45,6 +56,6 @@ library. Runtime code uses Nerd/Linux syscalls, without added external libraries
   metadata, locks, codecs and durable-replacement primitives are likely library
   candidates. Cross-platform contracts would need separate design.
 
-Compiler bugs are **not** library candidates. Eight fixes were made in dedicated
-Nerd worktrees, fully gated and merged into local `main`; see
+Compiler bugs are **not** library candidates. Completed compiler fixes used
+dedicated Nerd worktrees and full gates before integration into local `main`; see
 [MS1 progress](ms1-progress.md).

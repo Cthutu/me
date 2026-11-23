@@ -23,6 +23,10 @@ refreshes. See the [README](../README.md) for usage and explicit limitations.
   Undo/redo restores optional before/after caret hints without undoing navigation
   or restoring selections. Snapshot v2 preserves hints and imports v1 history;
   codec checks reject out-of-bounds or split-UTF-8 history carets.
+- `:keys` keyboard diagnostics show actual Kitty flags/query completion, reliable
+  capabilities and a bounded six-event decoded trace. Keys do not edit/save;
+  Escape closes and Alt+Page Up/Down scroll. Private CSI replies are consumed by
+  Nerd; partial flags do not overclaim held keys. Legacy 0x08 ambiguity is explicit.
 - Normal HJKL movement aliases the arrows, including counts, graphemes, preferred
   columns and selection clearing. `q` selects lines, with counts/repeated extension;
   arrows remain available and these letters stay literal in Insert/prompts.
@@ -68,14 +72,14 @@ refreshes. See the [README](../README.md) for usage and explicit limitations.
 ### Headless
 
 `just check`, `just format`, Python tooling compilation and `just test` have
-passed. All **31 project-authored named tests are colocated across 14 source
+passed. All **33 project-authored named tests are colocated across 15 source
 modules**, with many assertions and all 1,093 official Unicode vectors in the
 marked test section of `src/characters.n`. All 24 test helper functions and
 additional test-only imports live in bare `test { ... }` sections. The 17 former
 standalone Nerd test files have been removed.
 
-`just test` uses the single `main.n` root: **140 tests passed**, comprising 31 ME
-tests and 109 imported library tests, discovered once rather than repeated per
+`just test` uses the single `main.n` root: **144 tests passed**, comprising 33 ME
+tests and 111 imported library tests, discovered once rather than repeated per
 test program. Inventory comparison verified that all 29 original named tests
 remain discoverable exactly once, and all 53 moved test/helper bodies were
 preserved before formatting. Unicode regeneration and a second formatting pass
@@ -85,7 +89,7 @@ build, confirming no production-code or test-only-code leakage.
 ### Real terminal integration
 
 `python3 tests/terminal.py --binary _bin/me` and the equivalent release command
-passed all **24 scenario groups**, including buffer lifecycle, gutter styling,
+passed all **25 scenario groups**, including buffer lifecycle, gutter styling,
 selected-line duplication, word deletion, file opening and filename completion,
 on both debug and release builds:
 
@@ -134,6 +138,10 @@ on both debug and release builds:
 24. Real-key counted HJKL movement across graphemes/short lines, `q` line
     selection with counts/repetition, linewise cutting and undo, and literal
     HJKL/q input in Insert and search prompts.
+25. Actual keyboard status/DA replies, pending/negative/zero/partial/full states,
+    distinct enhanced Ctrl+H and Ctrl+Backspace, release events, legacy ambiguity,
+    diagnostic input capture without edits/saves, scrolling/resize, clean Escape
+    exit and keyboard-mode restoration.
 
 Normal/signal exits compare the actual PTY attributes against startup and check
 alternate-screen restoration. Tests use isolated temporary HOME/folders and do
@@ -179,7 +187,7 @@ the latest record-field context/layout gate includes all earlier fixes.
 | `98883071` | Reacquire local bindings after generic inference grows semantic tables |
 
 Fixes are committed, pushed on their own `agent` branches, and integrated into
-**local Nerd `main` at `98883071`**, not pushed directly to remote `main`. Their
+**local Nerd `main` at `7cd7e0ec`**, not pushed directly to remote `main`. Their
 merged worktrees and local temporary branches have been removed. Other agents'
 worktrees/checkouts are untouched. `_tools/` contains the isolated compiler and
 modules. The validated `93c8a38a` compiler passed isolated and user-installed
@@ -187,9 +195,29 @@ regression checks. The user subsequently clarified that normal installation must
 run directly in `~/nerd`, not an installation-only worktree. That recipe has now
 installed its current `remove-linux-libc` checkout at `174a4576`, including matching
 modules and editor support. This is distinct from local `main`/ME's private
-`98883071` toolchain; no branch switch or merge was performed. Integration of the
-latest fix into that other agent's branch awaits coordination. Installation from
+`7cd7e0ec` toolchain/modules; no branch switch or merge was performed. Integration
+of the latest local-binding/protocol changes into that other agent's branch
+awaits coordination. Installation from
 `~/nerd` is required after each fully validated compiler fix.
+
+### Keyboard protocol library completion
+
+Nerd `7cd7e0ec` adds public `kitty_flags: ?u32` and `query_complete` capability
+fields, queries primary DA after Kitty status, consumes private CSI through its
+final byte, and requires appropriate all-key flags before claiming reliable
+physical-key/release/associated-text reporting. Native console input is complete
+immediately. Zero replies, pending/negative probes, malformed/overflow status and
+partial/full flags have native regression coverage; ME PTYs exercise real bytes.
+Updated CLI/LSP location fixtures retain exact definition/diagnostic coverage.
+
+The initial full gate exposed stale location expectations after adding public
+fields; those were corrected, then the complete gate passed: **72 passed, 0
+failed, 2 platform skips**. Formatting and the required direct `~/nerd just
+install` passed; that installation remains the unchanged libc-removal checkout
+`174a4576`, not this library revision. The feature commit is pushed on its agent
+branch and retained on local `main`; its clean completed worktree was removed.
+ME's private validated compiler/modules include it. The existing Escape-timeout
+and bracketed-paste gaps are not claimed fixed by this scoped protocol audit.
 
 The investigation initially described as “pointer slice assignment” was the
 implicit receiver normalisation bug above. Typed expression-function return

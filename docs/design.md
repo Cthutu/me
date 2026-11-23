@@ -315,6 +315,24 @@ Still investigate paste boundaries, clipboard support, Unicode/grapheme editing,
 subprocess communication, resizing, and failure recovery before promising exact
 behaviour.
 
+### Keyboard protocol diagnostics — agreed
+
+`:keys` captures keyboard input without editing or saving, showing actual
+`std.term` capabilities, Kitty reply flags, query completion and a six-event
+bounded decoded trace. Key names, actions, modifiers and numeric character/text
+values are safe to render; no terminal-supplied controls are replayed. Escape
+closes the view, Alt+Page Up/Down scroll, and reopening clears the trace. The
+existing message surface expands while diagnostics are active; this is not the
+queued popup/picker framework. Neither trace nor active mode is persisted.
+
+Capability detection lives in Nerd, not an ME escape-sequence workaround. Partial
+Kitty flags must not overclaim reliable held/physical keys. A zero reply differs
+from no reply; the following DA reply completes a negative probe. Missing replies
+leave legacy fallback pending rather than pretending a timeout proves absence.
+Terminal/multiplexer filtering and custom key remappings can still make Ctrl+H
+and Ctrl+Backspace indistinguishable. Diagnostics report decoded events, not raw
+bytes, and do not claim support detection for every terminal-specific protocol.
+
 ## 11. Project environment
 
 **Agreed:** standard Nerd project with `just` recipes.
