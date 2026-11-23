@@ -340,8 +340,9 @@ coordination. ME's private compiler includes the validated fix.
   seed active-first then document order because no prior access order was stored.
 - Ctrl+W closes the highlighted picker candidate, otherwise the active saved
   buffer. No matches means no action. Closing another buffer preserves focus.
-  Dismiss the picker on a close attempt and show an error on unsaved work. No
-  implicit write/discard; closing the active buffer focuses the previous survivor
+  Keep the picker open after closing or refusing unsaved work. Retain query/caret
+  and the same result row, clamped to the last survivor; no matches stays open.
+  No implicit write/discard; closing the active buffer focuses the previous survivor
   or creates a fresh empty one.
   Ctrl+W enters Normal, including failure; literal comma remains in Insert/prompts.
 - Right-hand preview follows the highlighted buffer's live unsaved text without

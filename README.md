@@ -167,9 +167,10 @@ buffer, that row is selected instead.
   or merely moving the selection does not. Each buffer keeps its own view/history.
 
 **Ctrl+W closes the highlighted buffer while the picker is open, otherwise the active buffer.**
-With no matches it does nothing. A close attempt dismisses the picker,
-refuses unsaved/new/missing work with an error, and never
-writes or discards it implicitly. Closing another buffer preserves the active
+With no matches it does nothing. The picker stays open after a close or refusal,
+retaining the query/caret and selecting the same result row (or the last remaining
+row). Closing the final match leaves the query open with no matches.
+Unsaved/new/missing work reports an error without writing or discarding it. Closing another buffer preserves the active
 buffer; closing the active one focuses the most recent survivor. Closing the last
 one leaves a fresh empty buffer. Ctrl+W enters Normal,
 including failure. `:kill`/`:kill!` remain available; `:kill!` is explicit discard.

@@ -91,8 +91,10 @@ refreshes. See the [README](../README.md) for usage and explicit limitations.
 
 Ctrl+W in the buffer picker closes its highlighted saved buffer. Legacy and
 enhanced input share the selected-target path; no matches do nothing. A close
-attempt dismisses the picker, refuses unsaved work, and preserves active work
-when closing another buffer. Existing active-close MRU/last-buffer and paired
+attempt keeps the picker open, refuses unsaved work, and preserves active work
+when closing another buffer. Query/caret and the selected row are retained,
+clamping to remaining matches. Candidate IDs and preview targets are rebuilt
+after removal; no-match results stay open. Existing active-close MRU/last-buffer and paired
 text/release suppression rules remain in effect.
 
 Verification: formatting/type checking, **156 native tests** (44 ME + 112 imported),

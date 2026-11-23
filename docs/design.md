@@ -364,8 +364,11 @@ and give the list the full width. This first consumer does not yet implement the
 proposed overlay stack, asynchronous discovery or pane destinations.
 
 Ctrl+W closes the highlighted buffer when the buffer picker is open, otherwise
-the active buffer, only when saved. No matches means no action. A close attempt
-dismisses the picker. Closing another buffer preserves the active buffer.
+the active buffer, only when saved. No matches means no action. Keep the picker
+open after success or refusal, retaining query/caret and selecting the same result
+row, clamped to the last remaining row. Rebuild candidate IDs/annotations/preview
+after removal; an empty result set stays open. Closing another buffer preserves
+the active buffer.
 Unsaved/new/missing work errors without writing/discarding it; explicit `:kill!`
 remains the force path. Closing the active buffer focuses MRU surviving work or
 creates a fresh empty buffer. Ctrl+W enters Normal on both

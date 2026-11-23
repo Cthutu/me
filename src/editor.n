@@ -526,11 +526,29 @@ impl Editor {
     }
     pub close_picked_buffer :: fn (self: ^Self, scratch: ^arena) {
         on self.picker.chosen() => [id] {
+            query := scratch.pr(bytes_text(self.picker.query))
+            caret := self.picker.caret
+            selected := self.picker.selected
+            top := self.picker.top
+            rows := self.picker.rows
             on self.close_buffer(scratch, force = no, normalise = yes, document_id = id) {
                 _success => {
                 }
                 error! => self.tell(error)
             }
+            -- Document IDs shift on removal, so rebuild candidates and preview
+            -- targets from the workspace rather than retaining stale entries.
+            self.open_buffer_picker(scratch)
+            self.picker.insert(query)
+            self.picker.caret = caret
+            self.picker.selected = on selected < self.picker.matches.count {
+                yes => selected
+                else => on self.picker.matches.count > 0 {
+                    yes => self.picker.matches.count - 1 else => 0
+                }
+            }
+            self.picker.top = top
+            self.picker.rows = rows
         }
     }
     pub picker_key :: fn (self: ^Self, scratch: ^arena, key: TermKeyEvent) {
@@ -2443,7 +2461,8 @@ test "picker Ctrl W closes the chosen buffer and protects unsaved and unmatched 
     editor.key(^scratch,
                TermKeyEvent { scan_code: W action: Press modifiers: TERM_MOD_CONTROL character: 23.as(u32) ... })
     editor.character(^scratch, 23)
-    assert !editor.picker.active && editor.workspace.documents.count == 2
+    assert editor.picker.active && editor.workspace.documents.count == 2
+    assert editor.picker.chosen() == 0 && editor.picker.selected == 1
     assert bytes_text(editor.workspace.documents[0].path) == "/alpha.n"
     assert bytes_text(editor.workspace.active_document().path) == "/gamma.n"
     assert editor.workspace.active_document().text.text() == "x"
@@ -2451,7 +2470,8 @@ test "picker Ctrl W closes the chosen buffer and protects unsaved and unmatched 
     editor.open_buffer_picker(^scratch)
     editor.picker.insert("gamma")
     editor.character(^scratch, 23)
-    assert !editor.picker.active && editor.workspace.documents.count == 2
+    assert editor.picker.active && editor.workspace.documents.count == 2
+    assert bytes_text(editor.picker.query) == "gamma" && editor.picker.caret == 5
     assert editor.message.count > 0 && editor.workspace.active_document().text.text() == "x"
     editor.open_buffer_picker(^scratch)
     editor.picker.insert("no matches")
@@ -2462,7 +2482,9 @@ test "picker Ctrl W closes the chosen buffer and protects unsaved and unmatched 
     editor.open_buffer_picker(^scratch)
     editor.picker.insert("alpha")
     editor.character(^scratch, 23)
-    assert !editor.picker.active && editor.workspace.documents.count == 1
+    assert editor.picker.active && editor.workspace.documents.count == 1
+    assert bytes_text(editor.picker.query) == "alpha" && editor.picker.matches.count == 0
+    assert editor.picker.caret == 5
     assert bytes_text(editor.workspace.active_document().path) == "/gamma.n"
 }
 

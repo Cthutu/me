@@ -267,11 +267,14 @@ buffers and displaying the first successful argument remains unchanged.
 
 - Ctrl+W closes the highlighted buffer while the list is open; outside it, close
   the active buffer. A query with no matches makes Ctrl+W a no-op.
-- Retain unsaved/new/missing-buffer refusal and dismissal on a close attempt.
+- Retain unsaved/new/missing-buffer refusal. The picker stays open on success
+  or refusal, preserving query/caret and the selected row clamped to remaining
+  matches. Rebuild candidate identities and preview after removal; empty results
+  remain open. This refines the initial T3d dismissal behaviour.
 - Closing another buffer preserves active work; closing the active buffer uses
   the existing MRU fallback, or a fresh empty buffer after the last close.
 - Cover legacy/enhanced input, associated text and release suppression, filtering,
-  dirty active/selected buffers and last-buffer fallback.
+  dirty active/selected buffers, retained query/selection and last-buffer fallback.
 - Verification: format/check, all 156 native tests, all 34 debug PTY groups,
   all five release buffer-picker PTY groups, Python compilation and diff checks
   passed. Release installation and installed selected-close smoke follow push.

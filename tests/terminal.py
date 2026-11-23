@@ -879,26 +879,29 @@ def buffer_picker_close_selected(binary, folder):
         session.normal()
         session.send(",")
         session.send(b"\x1b[119;5;23u\x1b[119;5:3u")
-        session.send(",")
         shown = screen(session)
-        assert b"2/2" in shown and b"alpha.txt" not in shown, shown
+        assert b"Buffers" in shown and b"2/2" in shown and b"alpha.txt" not in shown, shown
         session.send("gamma")
         session.send(b"\x17")
-        assert b"unsaved" in screen(session), "selected dirty buffer was not protected"
-        session.send(",no-match")
+        shown = screen(session)
+        assert b"unsaved" in shown and b"Buffers" in shown, "dirty refusal dismissed the picker"
+        session.send(b"\x7f" * 5)
+        session.send("no-match")
         session.send(b"\x17")
         assert b"No matches" in screen(session), "empty picker closed a buffer"
-        session.send(b"\x1b", 0.15)
-        session.send(",beta")
+        session.send(b"\x7f" * 8)
+        session.send("beta")
         session.send(b"\x17")
-        session.send(",")
+        shown = screen(session)
+        assert b"Buffers" in shown and b"No matches" in shown, "close lost the query or popup"
+        session.send(b"\x7f" * 4)
         assert b"1/1" in screen(session) and b"gamma.txt" in screen(session)
         session.send(b"\x1b", 0.15)
         session.send(b"\x13")
         assert (folder / "gamma.txt").read_bytes() == b"Xgamma.txt"
         session.send(",\x17")
-        session.send(",")
-        assert b"[unnamed]" in screen(session) and b"gamma.txt" not in screen(session)
+        shown = screen(session)
+        assert b"Buffers" in shown and b"[unnamed]" in shown and b"gamma.txt" not in shown
         session.send(b"\x1b", 0.15)
         session.quit()
 
