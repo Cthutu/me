@@ -407,7 +407,7 @@ picker's roots, matching, discovery and popup contracts remain separate decision
 T4 uses the startup folder and the existing Unicode subsequence matcher. Matt
 agreed to include hidden and ignored files, follow file and directory symlinks
 with cycle detection, and introduce a Normal-state Space leader. Space Space
-opens files; after two seconds the first Space shows known keys. `:files` is
+opens files; after one second the first Space shows known keys. `:files` is
 also available. Other roots, indexing, file previews, split destinations and an
 overlay stack remain separate choices. See design §26 and README for details.
 
@@ -415,7 +415,7 @@ overlay stack remain separate choices. See design §26 and README for details.
 ## Space menu overlay — settled
 
 - Replace the message-area hint with a bottom overlay, sliding upwards after
-  the existing two-second delay. Improve spacing, border, key labels and headings.
+  the one-second delay. Improve spacing, border, key labels and headings.
 - Preserve the underlying view geometry and messages; cancellation restores them.
 - Prepare grouped sequences with menu path headings and parent navigation.
 - Space b d was explicitly clarified as an example only. Do not add it, or other

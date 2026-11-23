@@ -1320,7 +1320,7 @@ overlay stack remain separate queued work.
 
 - Normal Space Space and `:files` open the existing generic popup; comma retains
   the buffer list. Space starts a leader sequence with a known-key menu after
-  two seconds, as a bottom overlay (see §27); a second Space works immediately. Escape cancels; unknown keys
+  one second, as a bottom overlay (see §27); a second Space works immediately. Escape cancels; unknown keys
   cancel without running an editing command. Insert/prompts retain literal spaces;
   releases and Space repeats do not advance the sequence.
 - Search includes relative directory components. Results retain traversal/source
@@ -1362,7 +1362,7 @@ concurrent writers.
 ## 27. Space menu presentation and nested-sequence foundation
 
 The agreed presentation is a bottom overlay which slides upwards after the
-existing two-second leader delay. Terminal row animation uses a 180 ms ease-out
+one-second leader delay. Terminal row animation uses a 180 ms ease-out
 and advances from elapsed monotonic time, without blocking input. The full-width
 surface has a separating border, coloured key labels, action names and an Escape
 hint. It clips on small terminals and does not resize text views, replace the

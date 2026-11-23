@@ -290,7 +290,7 @@ buffers and displaying the first successful argument remains unchanged.
 Agreed delivery: startup-folder root, Unicode case-insensitive subsequence
 matching, Normal Space Space/`:files`, all hidden/ignored files included, and
 file/directory symlinks followed with ancestry-based cycle detection. The Space
-leader shows its known-key menu after two seconds. Other roots, toggles and
+leader shows its known-key menu after one second. Other roots, toggles and
 previewing unopened contents are separate choices.
 
 Discovery uses a cancellable child and non-blocking pipe; query filtering and
@@ -318,13 +318,16 @@ ELF shared-library dependencies or interpreter. Release installation uses
 ### T4b — Sliding Space menu overlay — done
 
 - Show the Space menu as a styled overlay sliding up from the bottom, retaining
-  the two-second delay and immediate Space Space action.
+  the one-second delay and immediate Space Space action.
 - Preserve underlying views/messages and mask native/composite text underneath.
 - Prepare declarative grouped sequences, path headings and parent navigation.
 - Space b d remains an illustrative proposal, explicitly not an active binding.
 - Verified formatting/checking, 162 native tests (50 ME + 112 imported), all 38
   debug and 38 release PTY groups, Python compilation and diff checks. A rendered
   PTY preview was visually checked; release installation uses `just install`.
+- Follow-up: reduce the menu delay to one second. Native checks cover the
+  999/1,000 ms boundary; focused debug overlay/file-picker and release overlay
+  checks verify the updated timing.
 
 
 ### T5 — Split-pane UI

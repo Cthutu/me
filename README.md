@@ -209,7 +209,7 @@ originating buffer, caret, selection, scroll and editing mode. Query edits clear
 old matches immediately; Enter with no current match does nothing. Ctrl+W has no
 action in the file picker. File contents are not previewed during discovery.
 
-Space starts a leader sequence in Normal. After two seconds, a bordered menu
+Space starts a leader sequence in Normal. After one second, a bordered menu
 slides up over the bottom of the editor, with coloured key labels and action
 names. The slide takes 180 ms. It overlays the text without resizing the view or
 replacing messages. Escape closes it and reveals the editor underneath.

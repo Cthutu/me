@@ -158,7 +158,7 @@ Ctrl+HJKL PTY group, Python compilation and diff checks passed. Installation use
 
 The leader's delayed hint now uses a full-width bottom overlay with a border,
 coloured key labels, action names and cancellation hint. It slides upwards over
-180 ms after the existing two-second delay. Rendering leaves document view
+180 ms after the one-second delay. Rendering leaves document view
 geometry and the message area intact, masks composite graphemes underneath and
 restores the underlying editor on cancellation. Resizes and very small surfaces
 remain clipped.
@@ -180,6 +180,9 @@ Verification: formatting/type checking, **162 native tests** (50 ME across 18
 modules + 112 imported), all **38 debug and 38 release PTY groups**, Python
 compilation and diff checks passed. Release installation uses `just install`
 after commit/push, followed by the focused installed overlay smoke.
+The follow-up delay adjustment uses one second, with native assertions at
+999 ms and 1,000 ms. All 162 native tests and focused debug overlay/file-picker
+and release overlay checks validate the adjustment; the 180 ms slide is retained.
 
 ## Verification
 

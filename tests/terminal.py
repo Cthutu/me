@@ -911,7 +911,7 @@ def file_picker(binary, folder):
             session.send(" ")
             session.drain(0.2)
             assert b"Space menu" not in screen(session)
-            session.drain(2.1)
+            session.drain(1.1)
             assert b"Space menu" in screen(session) and b"Open file" in screen(session)
             session.send(" ")
             shown = await_file_picker(session)
@@ -1333,7 +1333,7 @@ def leader_overlay(binary, folder):
         session.send(" ")
         session.drain(0.15)
         assert b"Space menu" not in screen(session)
-        session.drain(2.1)
+        session.drain(1.1)
         shown = screen(session)
         assert b"Space menu" in shown and b"[ SPC ]" in shown and b"Open file" in shown, shown
         assert shown.splitlines()[:16] == before.splitlines()[:16], "menu resized or scrolled the document"

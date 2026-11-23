@@ -1299,7 +1299,7 @@ impl Editor {
         self.leader_prefix = ""
     }
     pub poll_leader :: fn (self: ^Self, current: Instant) {
-        on self.leader && !self.leader_shown && elapsed(self.leader_started, current) >= from_ms(2000) => {
+        on self.leader && !self.leader_shown && elapsed(self.leader_started, current) >= from_ms(1000) => {
             self.leader_shown = yes
             self.leader_revealed = current
         }
@@ -2776,9 +2776,12 @@ test "Space leader waits for help, cancels and leaves Insert and prompts literal
     editor.tell("Keep this message")
     editor.poll_leader(editor.leader_started)
     assert !editor.leader_shown
-    editor.poll_leader(editor.leader_started.add(from_ms(2000)))
+    editor.poll_leader(editor.leader_started.add(from_ms(999)))
+    assert !editor.leader_shown
+    editor.poll_leader(editor.leader_started.add(from_ms(1000)))
     assert editor.leader_shown && bytes_text(editor.message) == "Keep this "
         +"message"
+
     editor.leader_prefix = "g"
     editor.key(^scratch,
                TermKeyEvent { scan_code: Backspace action: Press character: 8.as(u32) ... })
