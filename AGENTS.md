@@ -67,6 +67,14 @@ external libraries or automatically modify the standard library for these gaps.
 
 ## Task completion and GitHub
 
+Push every commit promptly so it has a remote backup, including commits made in
+Nerd worktrees; do not wait for a later task or main-branch integration. A pushed
+feature/fix branch provides the backup without requiring an immediate merge into
+remote `main`. Advancing local `main` does not publish it: explicitly report the
+remote branch pushed and distinguish local integration from remote integration.
+If a push fails, report it and identify any local-only commits. Never force-push
+to resolve diverged history or silently merge another agent's active branch.
+
 After each completed task, run appropriate checks, commit the changes and push
 them to the configured GitHub remote, then run `just install` to update
 `~/.local/bin/me` with the latest release build. Report the commit/branch and any
