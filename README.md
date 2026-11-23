@@ -161,7 +161,9 @@ shows the actual Kitty flags (including a valid zero reply), whether probing has
 completed, and reliable physical-key/release/modifier/associated-text capabilities.
 It retains the six most recent decoded key/text events, including key name,
 press/repeat/release, modifier bits and Ctrl/Shift/Alt, and decimal character/label
-codepoints. These are decoded events, **not a raw byte capture**.
+codepoints. These are decoded events, **not a raw byte capture**. Outside
+diagnostics, releases do not move the caret or execute commands; held-key repeat
+events still work.
 
 Press Ctrl+H, then Ctrl+Backspace. Enhanced input can show `H` and `Backspace`
 with Ctrl separately. Legacy byte `0x08` is explicitly labelled ambiguous;

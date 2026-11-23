@@ -172,6 +172,24 @@ fresh discovery on reopening, safe acceptance and no-match handling.
   scenarios pass on debug/release. Formatting/checks and Python compilation pass;
   final installed home-path/completion checks run after commit/push/install.
 
+## T2h — Enhanced key releases must not execute commands — done
+
+- Reproduce reported double cursor movement with actual `CSI 1;1:1C` /
+  `CSI 1;1:3C` press/release bytes. Fix Nerd's shared CSI parser to retain event
+  types for cursor, Home/End and tilde keys, not only CSI-u. Keep legacy presses
+  and intentional key repeats working; do not work around parsing in ME.
+- Ignore decoded releases before ordinary editor UI handlers, including message
+  scrolling, while retaining releases in `:keys` diagnostics.
+- Colocated native regressions cover key/action/modifier decoding, navigation
+  counts, message scrolling and diagnostic capture. PTYs cover all four cursor
+  directions, repeats, Home/End, Shift selections, deletion, prompts and traces.
+- Nerd `40a30f21` pushed and retained on local main: full gate 72 passed with
+  2 platform skips; formatting, native rerun and direct Nerd install passed from
+  unchanged libc-removal `174a4576`. Coordinated integration there is still pending.
+- ME: 148 native tests (36 project + 112 imported), all 27 PTY groups on debug and
+  release, checks/format idempotence/Python compilation passed. Installed enhanced
+  navigation and diagnostic regressions run after commit/push/install.
+
 ## Agreed MS2 queue — not started
 
 The following tasks were explicitly accepted after T1/T2. This is the intended

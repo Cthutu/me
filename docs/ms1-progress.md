@@ -23,6 +23,10 @@ refreshes. See the [README](../README.md) for usage and explicit limitations.
   Undo/redo restores optional before/after caret hints without undoing navigation
   or restoring selections. Snapshot v2 preserves hints and imports v1 history;
   codec checks reject out-of-bounds or split-UTF-8 history carets.
+- Enhanced cursor/Home/End/tilde-key releases no longer execute commands. Nerd
+  preserves CSI action subparameters; ME ignores decoded releases in ordinary
+  handlers, including message scrolling. Repeats still navigate and diagnostics
+  retain releases for inspection.
 - Leading `~`/`~/` paths expand HOME consistently for opening, saving and filename
   completion. The prompt retains `~/`; bare `~` Tab adds `/` first. Preserve literal
   bytes, symlink/`..` semantics and explicit `./~` access. Invalid HOME errors safely.
@@ -75,14 +79,14 @@ refreshes. See the [README](../README.md) for usage and explicit limitations.
 ### Headless
 
 `just check`, `just format`, Python tooling compilation and `just test` have
-passed. All **35 project-authored named tests are colocated across 15 source
+passed. All **36 project-authored named tests are colocated across 15 source
 modules**, with many assertions and all 1,093 official Unicode vectors in the
 marked test section of `src/characters.n`. All 24 test helper functions and
 additional test-only imports live in bare `test { ... }` sections. The 17 former
 standalone Nerd test files have been removed.
 
-`just test` uses the single `main.n` root: **146 tests passed**, comprising 35 ME
-tests and 111 imported library tests, discovered once rather than repeated per
+`just test` uses the single `main.n` root: **148 tests passed**, comprising 36 ME
+tests and 112 imported library tests, discovered once rather than repeated per
 test program. Inventory comparison verified that all 29 original named tests
 remain discoverable exactly once, and all 53 moved test/helper bodies were
 preserved before formatting. Unicode regeneration and a second formatting pass
@@ -92,7 +96,7 @@ build, confirming no production-code or test-only-code leakage.
 ### Real terminal integration
 
 `python3 tests/terminal.py --binary _bin/me` and the equivalent release command
-passed all **26 scenario groups**, including buffer lifecycle, gutter styling,
+passed all **27 scenario groups**, including buffer lifecycle, gutter styling,
 selected-line duplication, word deletion, file opening and filename completion,
 on both debug and release builds:
 
@@ -151,6 +155,10 @@ on both debug and release builds:
     cwd tilde paths, named-user-like literal filenames and symlink/`..` resolution.
     Native tests cover missing/relative HOME, root/trailing separators and raw
     non-UTF-8 home/suffix bytes, plus safe completion of literal tilde entries.
+27. Enhanced cursor press/release pairs move once in every direction; repeat
+    events still move. Home/End, Shift selections, delete releases and prompt
+    editing use real CSI reports. Diagnostic traces retain cursor repeat/release;
+    native editor checks cover counts and release-free message scrolling.
 
 Normal/signal exits compare the actual PTY attributes against startup and check
 alternate-screen restoration. Tests use isolated temporary HOME/folders and do
@@ -196,7 +204,7 @@ the latest record-field context/layout gate includes all earlier fixes.
 | `98883071` | Reacquire local bindings after generic inference grows semantic tables |
 
 Fixes are committed, pushed on their own `agent` branches, and integrated into
-**local Nerd `main` at `7cd7e0ec`**, not pushed directly to remote `main`. Their
+**local Nerd `main` at `40a30f21`**, not pushed directly to remote `main`. Their
 merged worktrees and local temporary branches have been removed. Other agents'
 worktrees/checkouts are untouched. `_tools/` contains the isolated compiler and
 modules. The validated `93c8a38a` compiler passed isolated and user-installed
@@ -204,10 +212,28 @@ regression checks. The user subsequently clarified that normal installation must
 run directly in `~/nerd`, not an installation-only worktree. That recipe has now
 installed its current `remove-linux-libc` checkout at `174a4576`, including matching
 modules and editor support. This is distinct from local `main`/ME's private
-`7cd7e0ec` toolchain/modules; no branch switch or merge was performed. Integration
+`40a30f21` toolchain/modules; no branch switch or merge was performed. Integration
 of the latest local-binding/protocol changes into that other agent's branch
 awaits coordination. Installation from
 `~/nerd` is required after each fully validated compiler fix.
+
+### CSI key-action library fix
+
+Nerd `40a30f21` fixes traditional CSI cursor/Home/End/tilde reports losing their
+press/repeat/release action subparameter. The parser now shares CSI-u action
+extraction; missing action remains a legacy press. Its new native regression
+fails on the old parser and passes with the fix (109 terminal/imported tests).
+ME's actual-key reproducer inserted at column two instead of one before the fix;
+all four directions, repeats, selection, deletion and prompt movement are covered.
+ME also guards ordinary UI handlers against decoded releases, while `:keys`
+continues to show them. No ME escape-parsing workaround was introduced.
+
+Full Nerd gate: **72 passed, 0 failed, 2 platform skips**; formatting/native rerun
+and required direct `~/nerd just install` passed. The user-installed checkout is
+still unchanged libc-removal `174a4576`; the fix is pushed on its agent branch,
+retained on local `main` and included in ME's private compiler/modules. Integration
+into the other agent's branch remains coordinated work. The clean completed
+worktree is removed after retaining the commit and checking active processes.
 
 ### Keyboard protocol library completion
 

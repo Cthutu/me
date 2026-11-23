@@ -19,6 +19,15 @@ library. Runtime code uses Nerd/Linux syscalls, without added external libraries
 | Safe process termination events | Terminal loop cleanup does not itself cover process termination signals | Linux `signalfd`/signal-mask integration in `src/terminal.n`; SIGTERM checkpoint and raw/alternate-screen restoration tested. No libc signal handlers or unsafe restorer stubs |
 | Validating persistent history codec | No editor-specific history format is expected in the library; generic bounded codec helpers may be reusable | `src/codec.n`, workspace envelope/checksum, native malformed/replay tests and PTY corrupted-snapshot retention |
 
+## CSI cursor-key actions — fixed in Nerd
+
+Traditional CSI cursor/Home/End/tilde reports accepted modifier subparameters but
+discarded event types, so enhanced key release reports became fresh presses.
+Nerd now shares action decoding with CSI-u and preserves press/repeat/release in
+its key events. ME ignores decoded releases in ordinary UI handlers but retains
+all actions in diagnostics. This is a library bug fix, not local escape parsing;
+see the revision and full-gate evidence in [MS1 progress](ms1-progress.md).
+
 ## Home-relative path expansion — local candidate
 
 `src/native.n` provides `expand_home_path` over the existing environment reader:

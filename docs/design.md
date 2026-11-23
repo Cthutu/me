@@ -315,6 +315,15 @@ Still investigate paste boundaries, clipboard support, Unicode/grapheme editing,
 subprocess communication, resizing, and failure recovery before promising exact
 behaviour.
 
+### Enhanced key actions — agreed
+
+Keyboard commands and ordinary UI handlers execute on press/repeat, never on
+release. Diagnostic capture is the exception: `:keys` retains releases for
+inspection. This applies to message scrolling as well as buffer/prompt movement.
+Nerd's parser must preserve event-type subparameters for traditional CSI cursor,
+Home/End and tilde-key encodings, not just CSI-u; a missing event type remains a
+legacy press. ME must not infer actions or filter escape-sequence bytes itself.
+
 ### Home-relative file paths — agreed
 
 File opening, saving and filename completion expand a complete leading `~` or

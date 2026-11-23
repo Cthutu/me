@@ -1115,8 +1115,10 @@ impl Editor {
             }
             return
         }
+        -- Diagnostics must observe releases; ordinary UI/command handlers must not.
+        on key.action == TermKeyAction.Release => return
         on self.confirmation.active => {
-            on key.scan_code == TermScanCode.Escape && key.action != TermKeyAction.Release => self.finish_confirmation(scratch, "Stopped after")
+            on key.scan_code == TermScanCode.Escape => self.finish_confirmation(scratch, "Stopped after")
             return
         }
         on self.message.count > 0 && self.prompt_kind == 0 && (key.modifiers & TERM_MOD_ALT) != 0 => {
@@ -2230,6 +2232,58 @@ test "hjkl preserve graphemes and preferred columns while q keeps linewise selec
         editor.character(^scratch, rune^.as(u32))
     }
     assert doc.text()[..5] == "qhjkl" && view.state == Interaction.Insert
+}
+
+test "key releases leave navigation counts and message scrolling unchanged" {
+    scratch : arena
+    defer scratch.done()
+    editor : Editor
+    editor.workspace.lock_fd = -1
+    defer editor.release()
+    editor.workspace.add_empty()
+    on editor.workspace.active_document().text.load("abcd") {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    view := editor.workspace.active_view()
+    view.interaction.state = Interaction.Normal
+    editor.key(^scratch,
+               TermKeyEvent { scan_code: ArrowRight action: Press ... })
+    assert view.interaction.selection.active == 1
+    editor.key(^scratch,
+               TermKeyEvent { scan_code: ArrowRight action: Release ... })
+    assert view.interaction.selection.active == 1
+    editor.key(^scratch,
+               TermKeyEvent { scan_code: ArrowRight action: Repeat ... })
+    assert view.interaction.selection.active == 2
+    view.keyboard.count = 2
+    editor.key(^scratch,
+               TermKeyEvent { scan_code: ArrowLeft action: Release ... })
+    assert view.keyboard.count == 2 && view.interaction.selection.active == 2
+    editor.key(^scratch,
+               TermKeyEvent { scan_code: ArrowLeft action: Press ... })
+    assert view.keyboard.count == 0 && view.interaction.selection.active == 0
+    editor.tell("line one\nline two\nline three")
+    editor.message_scroll = 2
+    editor.key(^scratch,
+               TermKeyEvent { scan_code: PageDown action: Release modifiers: TERM_MOD_ALT ... })
+    assert editor.message_scroll == 2
+    editor.key(^scratch,
+               TermKeyEvent { scan_code: PageDown action: Press modifiers: TERM_MOD_ALT ... })
+    editor.key(^scratch,
+               TermKeyEvent { scan_code: PageDown action: Repeat modifiers: TERM_MOD_ALT ... })
+    assert editor.message_scroll == 4
+    editor.key(^scratch,
+               TermKeyEvent { scan_code: PageUp action: Release modifiers: TERM_MOD_ALT ... })
+    assert editor.message_scroll == 4
+    editor.diagnostics.start()
+    editor.key(^scratch,
+               TermKeyEvent { scan_code: ArrowRight action: Release ... })
+    assert editor.diagnostics.active && editor.diagnostics.total == 1
 }
 
 test "keyboard diagnostics capture commands without edits and Escape leaves no suppressed input" {

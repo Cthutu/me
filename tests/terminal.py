@@ -646,6 +646,71 @@ def word_delete(binary, folder):
             session.quit()
 
 
+def enhanced_key_actions(binary, folder):
+    target = folder / "arrows.txt"
+    target.write_bytes(b"abcd\nEFGH\nijkl\nMNOP\n")
+    prompt_target = folder / "promp-t"
+    prompt_target.write_bytes(b"prompt")
+    with Session(binary, folder, "-r", "arrows.txt") as session:
+        session.send("i")
+        session.send(b"\x1b[1;1:1C\x1b[1;1:3C")
+        session.send("X")
+        session.send(b"\x13")
+        assert target.read_bytes() == b"aXbcd\nEFGH\nijkl\nMNOP\n", target.read_bytes()
+
+        session.send(b"\x1b[1;5:1H\x1b[1;5:3H")
+        session.send("i")
+        session.send(b"\x1b[1;1:1B\x1b[1;1:3B")
+        session.send("D")
+        session.send(b"\x13")
+        assert target.read_bytes() == b"aXbcd\nDEFGH\nijkl\nMNOP\n"
+
+        session.send(b"\x1b[1;5:1H\x1b[1;5:3H")
+        session.send("i")
+        session.send(b"\x1b[1;1:1B\x1b[1;1:2B\x1b[1;1:3B")
+        session.send("R")
+        session.send(b"\x13")
+        assert target.read_bytes() == b"aXbcd\nDEFGH\nRijkl\nMNOP\n"
+
+        session.send(b"\x1b[1;5:1F\x1b[1;5:3F")
+        session.send("i")
+        session.send(b"\x1b[1;1:1A\x1b[1;1:3A")
+        session.send("U")
+        session.send(b"\x13")
+        assert target.read_bytes() == b"aXbcd\nDEFGH\nRijkl\nUMNOP\n"
+
+        session.send(b"\x1b[1;5:1H\x1b[1;5:3H")
+        session.send("i")
+        session.send(b"\x1b[1;1:1F\x1b[1;1:3F\x1b[1;1:1D\x1b[1;1:3D")
+        session.send("L")
+        session.send(b"\x13")
+        expected = b"aXbcLd\nDEFGH\nRijkl\nUMNOP\n"
+        assert target.read_bytes() == expected
+
+        session.send(b"\x1b[1;5:1H\x1b[1;5:3H")
+        session.send(b"\x1b[1;2:1C\x1b[1;2:3C")  # Shift+Right selects one character
+        session.send(b"\x1b[127;5:1u\x1b[127;5:3u")
+        session.send(b"\x13")
+        assert target.read_bytes() == expected[1:]
+        session.send(b"\x1a\x13")
+        assert target.read_bytes() == expected
+
+        session.send(b"\x1b[1;5:1H\x1b[1;5:3H")
+        session.send("i")
+        session.send(b"\x1b[3;1:1~\x1b[3;1:3~")
+        session.send(b"\x13")
+        assert target.read_bytes() == expected[1:]
+
+        session.send(":e prompt")
+        session.send(b"\x1b[1;1:1D\x1b[1;1:3D")
+        session.send("-\r")
+        session.send("iT")
+        session.send(b"\x13")
+        assert prompt_target.read_bytes() == b"Tprompt"
+        assert not (folder / "prom-pt").exists()
+        session.quit()
+
+
 def keyboard_diagnostics(binary, folder):
     def screen(session):
         # Reconstruct the ASCII diagnostic area; retained rendering may only
@@ -697,6 +762,9 @@ def keyboard_diagnostics(binary, folder):
         assert path.read_bytes() == original, "diagnostic keys edited or saved the buffer"
         session.send(b"\x08")
         assert b"legacy 0x08" in screen(session), "legacy Ctrl+H ambiguity was hidden"
+        session.send(b"\x1b[1;1:1C\x1b[1;1:2C\x1b[1;1:3C")
+        assert b"Right release" in screen(session), "cursor release was not diagnosed"
+        assert b"Right repeat" in screen(session), "cursor repeat was not diagnosed"
         fcntl.ioctl(session.master, termios.TIOCSWINSZ, struct.pack("HHHH", 8, 20, 0, 0))
         session.drain(0.15)
         session.send(b"\x1b[6;3~\x1b[5;3~")  # Alt+Page Down/Up scroll the diagnostic.
@@ -1112,7 +1180,7 @@ def main():
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
     checks = [recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
               search_replace_and_buffers, search_origins, slash_replacement, confirmation_recovery, byte_paths_and_checkpoint_failures,
-              second_instance, crash_and_signals, undo_caret, word_delete, keyboard_diagnostics, hjkl_and_line_selection, duplicate_selection, command_completion, live_completion_filter, file_completion, home_paths, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
+              second_instance, crash_and_signals, undo_caret, word_delete, enhanced_key_actions, keyboard_diagnostics, hjkl_and_line_selection, duplicate_selection, command_completion, live_completion_filter, file_completion, home_paths, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
     selected = [check for check in checks if args.filter in check.__name__]
     if not selected:
         parser.error(f"No PTY checks match {args.filter!r}")

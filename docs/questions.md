@@ -317,6 +317,14 @@ The fix is retained on local Nerd `main` and its pushed agent branch. Direct
 coordination. ME's private compiler includes the validated fix.
 
 
+## Enhanced key releases
+
+The reported press/release cursor duplication was reproduced as a Nerd parser
+bug: traditional CSI cursor/Home/End/tilde keys lost their action subparameter,
+while CSI-u retained it. Decode press/repeat/release uniformly in Nerd. Ordinary
+ME handlers ignore decoded releases, including Alt+Page scrolling; diagnostic
+capture keeps them visible. Repeats remain intentional navigation events.
+
 ## Home-relative paths
 
 The reported `:e ~/.wezterm.lua` and `:e ~/.we<Tab>` failures supersede the original
