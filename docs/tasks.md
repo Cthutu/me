@@ -193,8 +193,8 @@ fresh discovery on reopening, safe acceptance and no-match handling.
 ## Agreed MS2 work
 
 The following tasks were explicitly accepted after T1/T2. T3's detailed
-interaction is now agreed and implemented; T4/T4a/T4b are complete; T5–T6 remain
-queued. T2's filename
+interaction is now agreed and implemented; T4/T4a/T4b and T5 are complete; T6
+remains queued. T2's filename
 completion still uses the existing message area, separate from the reusable popup.
 
 ### T3 — Popup/picker foundation, buffer switcher and Ctrl+W — done
@@ -330,7 +330,7 @@ ELF shared-library dependencies or interpreter. Release installation uses
   checks verify the updated timing.
 
 
-### T5 — Split-pane UI — queued; controls and behaviour agreed
+### T5 — Split-pane UI — done
 
 - Support pane creation, focus and closing, with independent views of shared text.
 - Keep shared buffer history and semantic position adjustment across views.
@@ -345,7 +345,17 @@ ELF shared-library dependencies or interpreter. Release installation uses
   cancellation or failure preserves the layout. Space Space stays as it is.
 - Document initial ratios, minimum sizes, neighbour ties and resize policy while
   implementing. See design §28 and questions for the agreed scope.
-- This design is recorded; the pane UI and bindings remain unimplemented.
+- Implemented as a bounded split tree with one view per leaf and global overlays.
+  Continuation v4 retains tree/focus/views; versions 1–3 migrate to a single pane.
+  Buffer deletion rebinds affected panes without collapsing the layout.
+- Initial policy: equal splits, one-cell dividers, 12 columns by 4 rows minimum,
+  at most 16 panes. Small terminals retain the tree and show the focused pane.
+  Directional ties use facing-edge distance, physical centre and stable slot.
+- Verified 166 native tests (54 ME + 112 imported), all 40 debug and 40 release
+  PTY groups, format/type checking, Python compilation, diff checks and a rendered
+  three-pane preview. The final relative-status-path refinement has native and
+  focused debug/release pane coverage. Required release installation follows
+  commit/push, with both pane groups checked against the installed executable.
 
 ### T6 — Explicit repeat recording and playback
 

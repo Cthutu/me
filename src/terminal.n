@@ -5,6 +5,7 @@ use key_diagnostics
 use leader_menu
 use native
 use os.linux
+use panes
 use picker
 use positions
 use std.term
@@ -36,23 +37,25 @@ Glyph :: plex {
 -- this bridge bounded to complex glyphs; a native glyph-cell API is a library
 -- candidate, not a reason to replace the terminal backend.
 pub Terminal :: plex {
-    editor              Editor
-    scratch             arena
-    cells               [..]Cell
-    previous_cells      [..]Cell
-    glyphs              [..]Glyph
-    previous_glyphs     [..]Glyph
-    glyph_arena         arena
-    previous_arena      arena
-    glyph_storage       ^arena
-    width               usize
-    height              usize
-    frames              usize
-    last_poll           Instant
-    previous_caret_line usize
-    signal_fd           i32
-    signal_mask         u64
-    signals_active      bool
+    editor          Editor
+    scratch         arena
+    cells           [..]Cell
+    previous_cells  [..]Cell
+    glyphs          [..]Glyph
+    previous_glyphs [..]Glyph
+    glyph_arena     arena
+    previous_arena  arena
+    glyph_storage   ^arena
+    width           usize
+    height          usize
+    frames          usize
+    last_poll       Instant
+    origin_x        usize
+    origin_y        usize
+    canvas_width    usize
+    signal_fd       i32
+    signal_mask     u64
+    signals_active  bool
 }
 
 INK          :: 0xd8dee9.as(Colour)
@@ -182,7 +185,7 @@ impl Terminal {
                ink   : Colour,
                paper : Colour) {
         on x < self.width &&
-            y < self.height => self.cells[y * self.width + x] = Cell {
+            y < self.height => self.cells[(y + self.origin_y) * self.canvas_width + x + self.origin_x] = Cell {
             rune
             ink
             paper
@@ -255,9 +258,9 @@ impl Terminal {
         }
         on composite => {
             self.glyphs.push(Glyph {
-                x
-                y
-                text: self.glyph_storage.pr(cluster)
+                x    : x + self.origin_x
+                y    : y + self.origin_y
+                text : self.glyph_storage.pr(cluster)
                 ink
                 paper
                 pending: yes
@@ -286,7 +289,8 @@ impl Terminal {
                 column : usize = 0
                 text           := document.text()
 
-                for offset < end && column < width {
+                for offset < end &&
+                    column < width {
                     next  := next_character(text, offset)
                     cells := character_width(text, offset, column)
 
@@ -497,9 +501,12 @@ impl Terminal {
         for entry in LEADER_ENTRIES {
             on leader_child(entry^, prefix) => choices += 1
         }
-        columns := on self.width >= 64 { yes => 2.as(usize) else => 1 }
-        rows    := (choices + columns - 1) / columns
-        full    := rows + 6
+        columns := on self.width >= 64 {
+            yes   => 2.as(usize)
+            else  => 1
+        }
+        rows := (choices + columns - 1) / columns
+        full := rows + 6
 
         on full > self.height => full = self.height
         visible := leader_slide_rows(full, elapsed(self.editor.leader_revealed, current).to_ms())
@@ -520,7 +527,10 @@ impl Terminal {
             }
         }
         compact := self.height < rows + 6
-        padding := on self.width >= 8 { yes => 2.as(usize) else => 0 }
+        padding := on self.width >= 8 {
+            yes   => 2.as(usize)
+            else  => 0
+        }
         inner   := self.width - padding * 2
         title_y := top
         entry_y := top + 1
@@ -545,7 +555,11 @@ impl Terminal {
             x          := padding + column * (inner / columns)
             cell_width := inner / columns
             key        := entry.sequence[prefix.count..]
-            cap        := on key == " " { yes => "[ SPC ]" else => self.scratch.pr($"[  {key}  ]") }
+
+            cap := on key == " " {
+                yes   => "[ SPC ]"
+                else  => self.scratch.pr($"[  {key}  ]")
+            }
 
             self.text(x, row, cap, MENU_KEY, MENU_CAP, cell_width)
             on cell_width > 9 => {
@@ -566,31 +580,22 @@ impl Terminal {
         }
     }
 
-    pub paint :: fn (self: ^Self, width: usize, height: usize) {
-        self.scratch.reset()
-        on width == 0 || height == 0 => return
-        resized := width != self.width || height != self.height
+    paint_pane :: fn (self    : ^Self,
+                      view_id : usize,
+                      rect    : PaneRect,
+                      active  : bool,
+                      resized : bool) {
+        on rect.width == 0 || rect.height == 0 => return
+        width        := rect.width
+        height       := rect.height
+        saved_height := self.height
+
         self.width = width
         self.height = height
-        self.frames += 1
-        old_glyphs := self.previous_glyphs
-        self.previous_glyphs = self.glyphs
-        self.glyphs = old_glyphs
-        self.glyphs.clear()
-        self.glyph_storage = on self.frames % 2 == 0 {
-            yes   => ^self.glyph_arena
-            else  => ^self.previous_arena
-        }
-        self.glyph_storage.reset()
-        old_cells := self.previous_cells
-        self.previous_cells = self.cells
-        self.cells = old_cells
-        self.cells.resize_undefined_to(width * height)
-        for cell in self.cells {
-            cell^ = Cell { rune: ' '.as(u32) ink: INK paper: PAPER ... }
-        }
+        self.origin_x = rect.x
+        self.origin_y = rect.y
         editor    := ^self.editor
-        text_view := editor.workspace.active_view()
+        text_view := ^editor.workspace.views[view_id]
         view      := ^text_view.interaction
         inserting := view.state == Interaction.Insert
 
@@ -598,42 +603,17 @@ impl Terminal {
             yes   => INSERT_CARET
             else  => NORMAL_CARET
         }
-        status_paper := on inserting {
-            yes   => INSERT_PAPER
-            else  => NORMAL_PAPER
+        status_paper := on !active {
+            yes => GUTTER_PAPER
+
+            else => on inserting { yes => INSERT_PAPER else => NORMAL_PAPER }
         }
-        entry      := editor.workspace.active_document()
+        entry      := ^editor.workspace.documents[text_view.document_id]
         doc        := ^entry.text
         caret_line := doc.line_at(view.selection.active)
-        message    := display_text(^self.scratch, bytes_text(editor.message))
-        messages   := message_rows(message, width)
 
-        defer messages.free()
-        message_lines := messages.count
-        message_height := on editor.completion.active {
-            yes => on editor.completion.items.count > 0 {
-                yes => editor.completion.items.count + 1
-
-                else => on message.count > 0 {
-                    yes   => message_lines + 1
-                    else  => 2
-                }
-            }
-
-            else => on message.count > 0 {
-                yes => message_lines + (on editor.prompt_kind != 0 { yes => 1 else => 0 })
-
-                else => 1
-            }
-        }
-        maximum_message_height := on editor.diagnostics.active {
+        rows := on height > 1 {
             yes   => height - 1
-            else  => height / 2
-        }
-        on message_height > maximum_message_height => message_height = maximum_message_height
-        on message_height == 0 => message_height = 1
-        rows := on height > message_height + 1 {
-            yes   => height - message_height - 1
             else  => 0
         }
         previously_visible := caret_line >= view.top && caret_line < view.top + view.rows
@@ -661,8 +641,8 @@ impl Terminal {
             else  => 0
         }
         view.columns = width - gutter
-        on caret_line != self.previous_caret_line => view.horizontal = 0
-        self.previous_caret_line = caret_line
+        on caret_line != text_view.previous_caret_line => view.horizontal = 0
+        text_view.previous_caret_line = caret_line
         on view.reveal => {
             on caret_line < view.top => view.top = caret_line
             on caret_line >= view.top + view.rows => view.top = caret_line - view.rows + 1
@@ -723,7 +703,8 @@ impl Terminal {
             -- Find visible-line occurrences independently; include a match
             -- beginning on an earlier line and continuing into this one.
             match_position : usize = 0
-            on editor.highlights &&
+            on active &&
+                editor.highlights &&
                 query.count > 0 => {
                 match_position = on position > query.count {
                     yes   => position - query.count
@@ -738,7 +719,8 @@ impl Terminal {
                 paper := PAPER
                 ink   := INK
 
-                on editor.highlights &&
+                on active &&
+                    editor.highlights &&
                     query.count > 0 => {
                     for match_position < next &&
                         match_position + query.count <= doc.text().count {
@@ -749,7 +731,8 @@ impl Terminal {
                 }
                 on position < view.selection.end() &&
                     next > view.selection.start() => paper = SELECT
-                on editor.prompt_kind == 0 &&
+                on active &&
+                    editor.prompt_kind == 0 &&
                     view.selection.active >= position &&
                     view.selection.active < next => {
                     paper = caret_paper
@@ -768,13 +751,14 @@ impl Terminal {
                 position = next
                 on column >= horizontal + view.columns => break
             }
-            on editor.prompt_kind == 0 &&
+            on active &&
+                editor.prompt_kind == 0 &&
                 view.selection.active == end &&
                 column >= horizontal &&
                 column - horizontal < view.columns => self.set(gutter + column - horizontal, row, ' '.as(u32), PAPER, caret_paper)
         }
-        on height > message_height => {
-            status_y := height - message_height - 1
+        on height > 0 => {
+            status_y := height - 1
             for x in [0.as(usize) .. width] {
                 self.set(x, status_y, ' '.as(u32), INK, status_paper)
             }
@@ -791,6 +775,11 @@ impl Terminal {
                 yes   => "[unnamed]"
                 else  => bytes_text(entry.path)
             }
+            folder := bytes_text(editor.workspace.folder)
+            on folder.count > 0 &&
+                path.count > folder.count &&
+                path[..folder.count] == folder &&
+                path[folder.count] == '/' => path = path[folder.count + 1..]
             modified := on entry.modified() {
                 yes   => " ●"
                 else  => ""
@@ -818,6 +807,120 @@ impl Terminal {
             status := self.scratch.pr($"{persistence}{conflict}{missing}{modified} │ {caret_line + 1}:{display_column(doc.text(), doc.line_start(caret_line), view.selection.active) + 1}{count} │ {text_view.document_id + 1}/{editor.workspace.documents.count} │ {path}")
             self.text(0, status_y, badge, PAPER, caret_paper, width)
             on width > badge_width => self.text(badge_width, status_y, status, INK, status_paper, width - badge_width)
+        }
+        self.width = self.canvas_width
+        self.height = saved_height
+        self.origin_x = 0
+        self.origin_y = 0
+    }
+
+    pub paint :: fn (self: ^Self, width: usize, height: usize) {
+        self.scratch.reset()
+        on width == 0 || height == 0 => return
+        resized := width != self.width || height != self.height
+        self.width = width
+        self.height = height
+        self.canvas_width = width
+        self.origin_x = 0
+        self.origin_y = 0
+        self.frames += 1
+        old_glyphs := self.previous_glyphs
+        self.previous_glyphs = self.glyphs
+        self.glyphs = old_glyphs
+        self.glyphs.clear()
+        self.glyph_storage = on self.frames % 2 == 0 {
+            yes   => ^self.glyph_arena
+            else  => ^self.previous_arena
+        }
+        self.glyph_storage.reset()
+        old_cells := self.previous_cells
+        self.previous_cells = self.cells
+        self.cells = old_cells
+        self.cells.resize_undefined_to(width * height)
+        for cell in self.cells {
+            cell^ = Cell { rune: ' '.as(u32) ink: INK paper: PAPER ... }
+        }
+        editor := ^self.editor
+        caret_paper := on editor.workspace.active_view().interaction.state == Interaction.Insert {
+            yes   => INSERT_CARET
+            else  => NORMAL_CARET
+        }
+        message  := display_text(^self.scratch, bytes_text(editor.message))
+        messages := message_rows(message, width)
+
+        defer messages.free()
+        message_lines := messages.count
+        message_height := on editor.completion.active {
+            yes => on editor.completion.items.count > 0 {
+                yes => editor.completion.items.count + 1
+
+                else => on message.count > 0 {
+                    yes   => message_lines + 1
+                    else  => 2
+                }
+            }
+
+            else => on message.count > 0 {
+                yes => message_lines + (on editor.prompt_kind != 0 { yes => 1 else => 0 })
+
+                else => 1
+            }
+        }
+        maximum_message_height := on editor.diagnostics.active {
+            yes   => height - 1
+            else  => height / 2
+        }
+        on message_height > maximum_message_height => message_height = maximum_message_height
+        on message_height == 0 => message_height = 1
+        available := on height > message_height {
+            yes   => height - message_height
+            else  => 0
+        }
+        workspace := ^editor.workspace
+        workspace.panes.ensure(workspace.surface.view_id)
+        workspace.panes.arrange(width, available)
+        on workspace.panes.compact {
+            yes => self.paint_pane(workspace.surface.view_id, PaneRect {
+                width
+                height: available
+                ...
+            }, yes, resized)
+
+            else => {
+                for id, node in workspace.panes.nodes {
+                    on !node.used => again
+                    on node.split {
+                        yes => {
+                            a := workspace.panes.nodes[node.first].rect
+                            r := node.rect
+
+                            on node.vertical {
+                                yes => {
+                                    for y in [r.y .. r.y + r.height] {
+                                        self.set(a.x + a.width,
+                                                 y,
+                                                 '│'.as(u32),
+                                                 MENU_EDGE,
+                                                 PAPER)
+                                    }
+                                }
+
+                                else => {
+                                    for x in [r.x .. r.x + r.width] {
+                                        self.set(x,
+                                                 a.y + a.height,
+                                                 '─'.as(u32),
+                                                 MENU_EDGE,
+                                                 PAPER)
+                                    }
+                                }
+                            }
+                        }
+
+                        else => self.paint_pane(node.view_id, node.rect, id == workspace.panes.focused, resized)
+                    }
+                }
+            }
         }
         bottom := height - message_height
         on editor.prompt_kind != 0 {
@@ -1223,9 +1326,9 @@ test "leader overlay is opaque and clipped without changing view geometry or mes
     assert view.rows == rows && view.top == top && view.selection.active == caret
     assert bytes_text(terminal.editor.message) == "Existing message"
     for glyph in terminal.glyphs {
-        assert glyph.y < 17
+        assert glyph.y < 15
     }
-    assert terminal.cells[18 * 80 + 2].rune == 'S'.as(u32)
+    assert terminal.cells[16 * 80 + 2].rune == 'S'.as(u32)
     terminal.editor.cancel_leader()
     terminal.paint(80, 24)
     assert view.rows == rows && bytes_text(terminal.editor.message) == "Existin"
@@ -1240,4 +1343,76 @@ test "leader overlay is opaque and clipped without changing view geometry or mes
             assert glyph.x < size^ && glyph.y < size^
         }
     }
+}
+
+test "pane rendering offsets Unicode glyphs, shows only the active caret and survives tiny resizes" {
+    terminal : Terminal
+    terminal.signal_fd = -1
+    terminal.editor.workspace.lock_fd = -1
+    defer terminal.release()
+    terminal.editor.workspace.add_empty()
+    own(^terminal.editor.workspace.folder, "/pane")
+    own(^terminal.editor.workspace.active_document().path, "/pane/demo.n")
+    on terminal.editor.workspace.active_document().text.load("a界👩‍💻\nsecond") {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    terminal.editor.workspace.active_view().interaction.state = Interaction.Normal
+    terminal.paint(80, 24)
+    on terminal.editor.workspace.split_pane(SplitAxis.Vertical) {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+    terminal.paint(80, 24)
+    assert terminal.cells[39].rune == '│'.as(u32)
+    assert terminal.cells[3].rune == 'a'.as(u32) && terminal.cells[43].rune == 'a'.as(u32)
+    assert terminal.cells[3].paper == PAPER && terminal.cells[43].paper == NORMAL_CARET
+    filename := no
+    for x in [0.as(usize) .. 34] {
+        on terminal.cells[22 * 80 + x].rune == 'd'.as(u32) &&
+            terminal.cells[22 * 80 + x + 5].rune == 'n'.as(u32) => filename = yes
+    }
+    assert filename, "Pane status must retain the relative filename"
+    left  := no
+    right := no
+
+    for glyph in terminal.glyphs {
+        on glyph.text == "👩‍💻" => {
+            on glyph.x < 39 {
+                yes   => left = yes
+                else  => right = yes
+            }
+        }
+    }
+    assert left && right
+    for size in [1.as(usize), 2, 4, 8] {
+        terminal.paint(size^, size^)
+        assert terminal.editor.workspace.panes.compact
+        for glyph in terminal.glyphs {
+            assert glyph.x < size^ && glyph.y < size^
+        }
+    }
+    terminal.paint(80, 24)
+    assert !terminal.editor.workspace.panes.compact
+    assert terminal.cells[39].rune == '│'.as(u32)
+    terminal.editor.workspace.close_pane()
+    on terminal.editor.workspace.split_pane(SplitAxis.Horizontal) {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+    terminal.paint(80, 24)
+    assert terminal.cells[11 * 80].rune == '─'.as(u32)
+    assert terminal.cells[12 * 80 + 3].rune == 'a'.as(u32)
 }

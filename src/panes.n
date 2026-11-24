@@ -1,0 +1,296 @@
+use view
+
+pub PaneRect :: plex {
+    x      usize
+    y      usize
+    width  usize
+    height usize
+}
+
+pub SplitAxis :: enum {
+    Horizontal
+    Vertical
+    Automatic
+}
+
+pub PaneNode :: plex {
+    used     bool
+    split    bool
+    vertical bool
+    parent   usize
+    first    usize
+    second   usize
+    view_id  usize
+    rect     PaneRect
+}
+
+-- A bounded binary tree retains equal split ratios across terminal resizes.
+pub PaneLayout :: plex {
+    nodes   [..]PaneNode
+    focused usize
+    compact bool
+}
+
+impl PaneLayout {
+
+    pub ensure :: fn (self: ^Self, view_id: usize) {
+        on self.nodes.count == 0 => self.nodes.push(PaneNode {
+            used: yes
+            view_id
+            rect: { width: 80 height: 23 ... }
+            ...
+        })
+    }
+
+    pub mounted :: fn (self: ^Self, view_id: usize) -> bool {
+        for node in self.nodes {
+            on node.used && !node.split && node.view_id == view_id => return yes
+        }
+        return no
+    }
+
+    minimum :: fn (self: ^Self, id: usize) -> PaneRect {
+        node := self.nodes[id]
+        on !node.split => return { width: 12 height: 4 ... }
+        a := self.minimum(node.first)
+        b := self.minimum(node.second)
+
+        return on node.vertical {
+            yes => PaneRect {
+                width  : a.width + b.width + 1
+                height : on a.height > b.height {
+                    yes   => a.height
+                    else  => b.height
+                }
+                ...
+            }
+
+            else => PaneRect {
+                width  : on a.width > b.width { yes => a.width else => b.width }
+                height : a.height + b.height + 1
+                ...
+            }
+        }
+    }
+
+    arrange_node :: fn (self: ^Self, id: usize, rect: PaneRect) {
+        self.nodes[id].rect = rect
+        node := self.nodes[id]
+        on !node.split => return
+        a    := rect
+        b    := rect
+        low  := self.minimum(node.first)
+        high := self.minimum(node.second)
+
+        on node.vertical {
+            yes => {
+                a.width = (rect.width - 1) / 2
+                on a.width < low.width => a.width = low.width
+                on rect.width - 1 - a.width < high.width => a.width = rect.width - 1 - high.width
+                b.x += a.width + 1
+                b.width = rect.width - a.width - 1
+            }
+
+            else => {
+                a.height = (rect.height - 1) / 2
+                on a.height < low.height => a.height = low.height
+                on rect.height - 1 - a.height < high.height => a.height = rect.height - 1 - high.height
+                b.y += a.height + 1
+                b.height = rect.height - a.height - 1
+            }
+        }
+        self.arrange_node(node.first, a)
+        self.arrange_node(node.second, b)
+    }
+
+    pub arrange :: fn (self: ^Self, width: usize, height: usize) {
+        on self.nodes.count == 0 => return
+        minimum := self.minimum(0)
+        self.compact = width < minimum.width || height < minimum.height
+        self.arrange_node(0, PaneRect {
+            width  : on width < minimum.width {
+                yes   => minimum.width
+                else  => width
+            }
+            height : on height < minimum.height {
+                yes   => minimum.height
+                else  => height
+            }
+            ...
+        })
+    }
+
+    pub can_split :: fn (self: ^Self, axis: SplitAxis) -> bool {
+        on self.nodes.count == 0 => return no
+        count : usize = 0
+        for node in self.nodes {
+            on node.used && !node.split => count += 1
+        }
+        on count >= 16 || self.compact => return no
+        rect := self.nodes[self.focused].rect
+        return on axis {
+            Horizontal  => (rect.height >= 9)
+            Vertical    => (rect.width >= 25)
+            Automatic   => (rect.height >= 9 || rect.width >= 25)
+        }
+    }
+
+    slot :: fn (self: ^Self) -> usize {
+        for id, node in self.nodes {
+            on !node.used => {
+                node.used = yes
+                return id
+            }
+        }
+        self.nodes.push(PaneNode { used: yes ... })
+        return self.nodes.count - 1
+    }
+
+    pub divide :: fn (self: ^Self, axis: SplitAxis, view_id: usize) {
+        parent := self.focused
+        old    := self.nodes[parent]
+
+        vertical := on axis {
+            Vertical    => yes
+            Horizontal  => no
+
+            Automatic => on old.rect.width >= old.rect.height * 2 {
+                yes   => (old.rect.width >= 25)
+                else  => (old.rect.height < 9)
+            }
+        }
+        a := self.slot()
+        b := self.slot()
+
+        self.nodes[a] = old
+        self.nodes[a].parent = parent
+        self.nodes[b] = PaneNode { used: yes parent view_id ... }
+        self.nodes[parent].split = yes
+        self.nodes[parent].vertical = vertical
+        self.nodes[parent].first = a
+        self.nodes[parent].second = b
+        self.focused = b
+        rect := self.nodes[0].rect
+        self.arrange(rect.width, rect.height)
+    }
+
+    pub close :: fn (self: ^Self) -> bool {
+        on self.focused == 0 => return no
+        original := self.nodes[0].rect
+        leaf     := self.focused
+        parent   := self.nodes[leaf].parent
+        branch   := self.nodes[parent]
+
+        sibling := on branch.first == leaf {
+            yes   => branch.second
+            else  => branch.first
+        }
+        self.nodes[parent] = self.nodes[sibling]
+        self.nodes[parent].parent = branch.parent
+        self.nodes[leaf].used = no
+        self.nodes[sibling].used = no
+        on self.nodes[parent].split => {
+            self.nodes[self.nodes[parent].first].parent = parent
+            self.nodes[self.nodes[parent].second].parent = parent
+        }
+        self.focused = parent
+        for self.nodes[self.focused].split {
+            self.focused = self.nodes[self.focused].first
+        }
+        self.arrange(original.width, original.height)
+        return yes
+    }
+
+    pub neighbour :: fn (self: ^Self, direction: Direction) -> usize {
+        current  := self.nodes[self.focused].rect
+        best     := self.focused
+        score    := 0xffffffffffffffff.as(u64)
+        best_gap := 0xffffffffffffffff.as(usize)
+
+        for id, node in self.nodes {
+            on !node.used || node.split || id == self.focused => again
+            r := node.rect
+            eligible := on direction {
+                Left   => (r.x + r.width <= current.x && r.y < current.y + current.height && current.y < r.y + r.height)
+                Right  => (current.x + current.width <= r.x && r.y < current.y + current.height && current.y < r.y + r.height)
+                Up     => (r.y + r.height <= current.y && r.x < current.x + current.width && current.x < r.x + r.width)
+                Down   => (current.y + current.height <= r.y && r.x < current.x + current.width && current.x < r.x + r.width)
+                else   => no
+            }
+            on !eligible => again
+            dx       := (r.x * 2 + r.width).as(i64) - (current.x * 2 + current.width).as(i64)
+            dy       := (r.y * 2 + r.height).as(i64) - (current.y * 2 + current.height).as(i64)
+            distance := (dx * dx + 4 * dy * dy).as(u64)
+
+            gap := on direction {
+                Left   => current.x - r.x - r.width
+                Right  => r.x - current.x - current.width
+                Up     => current.y - r.y - r.height
+                Down   => r.y - current.y - current.height
+                else   => 0
+            }
+            on gap < best_gap ||
+                (gap == best_gap && distance < score) => {
+                best_gap = gap
+                score    = distance
+                best     = id
+            }
+        }
+        return best
+    }
+
+}
+
+test "pane splits retain geometry, directional focus and buffers when collapsed" {
+    layout : PaneLayout
+    defer layout.nodes.free()
+    layout.ensure(0)
+    layout.arrange(100, 30)
+    assert layout.can_split(SplitAxis.Automatic)
+    layout.divide(SplitAxis.Automatic, 1)
+    assert layout.nodes[0].vertical
+    assert layout.nodes[layout.focused].rect.x == 50
+    left := layout.neighbour(Direction.Left)
+    assert left != layout.focused
+    layout.focused = left
+    layout.divide(SplitAxis.Horizontal, 2)
+    assert layout.neighbour(Direction.Up) != layout.focused
+    assert layout.neighbour(Direction.Right) != layout.focused
+    assert layout.neighbour(Direction.Left) == layout.focused
+    layout.arrange(10, 3)
+    assert layout.compact && !layout.can_split(SplitAxis.Automatic)
+    layout.arrange(100, 30)
+    assert !layout.compact
+    assert layout.close() && layout.close() && !layout.close()
+    assert layout.nodes[0].view_id == 1
+}
+
+test "automatic splits respect cell proportions, minimum sizes and bounded tree reuse" {
+    layout : PaneLayout
+    defer layout.nodes.free()
+    layout.ensure(0)
+    layout.arrange(30, 30)
+    layout.divide(SplitAxis.Automatic, 1)
+    assert !layout.nodes[0].vertical
+    assert layout.close()
+    layout.arrange(24, 9)
+    assert !layout.can_split(SplitAxis.Vertical) && layout.can_split(SplitAxis.Automatic)
+    layout.divide(SplitAxis.Automatic, 1)
+    assert !layout.nodes[0].vertical
+    assert layout.close()
+    layout.arrange(25, 8)
+    layout.divide(SplitAxis.Automatic, 1)
+    assert layout.nodes[0].vertical
+    assert layout.close()
+    for _ in [0 .. 100] {
+        layout.arrange(80, 24)
+        layout.divide(SplitAxis.Vertical, 1)
+        assert layout.close()
+    }
+    assert layout.nodes.count == 3
+    layout.arrange(100000, 100000)
+    for id in [1.as(usize) .. 16] {
+        layout.divide(SplitAxis.Automatic, id)
+    }
+    assert layout.nodes.count == 31 && !layout.can_split(SplitAxis.Automatic)
+}

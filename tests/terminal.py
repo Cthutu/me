@@ -711,7 +711,7 @@ def undo_caret(binary, folder):
         session.quit()
 
     # Convert a real checkpoint to the previous envelope/history format.
-    # The new binary must recover it, then write v3 on its next checkpoint.
+    # The new binary must recover it, then write v4 on its next checkpoint.
     snapshot = next((folder / "home/.config/me").glob("*/snapshot"))
     data = snapshot.read_bytes()
     offset = 0
@@ -728,7 +728,7 @@ def undo_caret(binary, folder):
         return value
     def encoded(value):
         return struct.pack("<Q", len(value)) + value
-    assert text() == b"ME/MS1/3"
+    assert text() == b"ME/MS1/4"
     old = bytearray(encoded(b"ME/MS1/1") + encoded(text()))
     documents = number()
     old.extend(struct.pack("<Q", documents))
@@ -759,7 +759,7 @@ def undo_caret(binary, folder):
         session.send(b"\x13")
         assert path.read_bytes() == b"abcdX", "legacy history failed to recover"
         session.quit()
-    assert snapshot.read_bytes()[8:16] == b"ME/MS1/3", "legacy continuation was not upgraded"
+    assert snapshot.read_bytes()[8:16] == b"ME/MS1/4", "legacy continuation was not upgraded"
     # V2 already has caret hints, but no access-order tail.
     old2 = encoded(b"ME/MS1/2") + data[16:access_start]
     checksum = 14695981039346656037
@@ -769,7 +769,18 @@ def undo_caret(binary, folder):
     with Session(binary, folder) as session:
         assert b"version or folder mismatch" not in session.output
         session.quit()
-    assert snapshot.read_bytes()[8:16] == b"ME/MS1/3", "v2 continuation was not upgraded"
+    assert snapshot.read_bytes()[8:16] == b"ME/MS1/4", "v2 continuation was not upgraded"
+
+    # V3 contains MRU access order but no pane tree.
+    old3 = encoded(b"ME/MS1/3") + data[16:-24]
+    checksum = 14695981039346656037
+    for byte in old3:
+        checksum = ((checksum ^ byte) * 1099511628211) & ((1 << 64) - 1)
+    snapshot.write_bytes(old3 + struct.pack("<Q", checksum))
+    with Session(binary, folder) as session:
+        assert b"version or folder mismatch" not in session.output
+        session.quit()
+    assert snapshot.read_bytes()[8:16] == b"ME/MS1/4", "v3 continuation was not upgraded"
 
 
 def word_delete(binary, folder):
@@ -1336,8 +1347,8 @@ def leader_overlay(binary, folder):
         session.drain(1.1)
         shown = screen(session)
         assert b"Space menu" in shown and b"[ SPC ]" in shown and b"Open file" in shown, shown
-        assert shown.splitlines()[:16] == before.splitlines()[:16], "menu resized or scrolled the document"
-        assert all(b"visible-row-" not in row for row in shown.splitlines()[17:]), "document leaked through menu"
+        assert shown.splitlines()[:14] == before.splitlines()[:14], "menu resized or scrolled the document"
+        assert all(b"visible-row-" not in row for row in shown.splitlines()[15:]), "document leaked through menu"
         # Both press repeats and releases must leave the delayed menu open.
         session.send(b"\x1b[32;1:2;32u\x1b[32;1:3u")
         assert b"Space menu" in screen(session) and b"Files" not in screen(session)
@@ -1760,6 +1771,101 @@ def graphemes_and_resize(binary, folder):
         session.quit()
 
 
+
+def pane_controls(binary, folder):
+    path = folder / "shared.txt"
+    path.write_bytes(b"alpha\nbeta\ngamma\n")
+    with Session(binary, folder, "-r", path.name) as session:
+        session.send("l wv")
+        shown = screen(session)
+        assert shown.splitlines()[0].count(b"alpha") == 2, shown
+        session.send("liX")
+        session.normal()
+        session.send(" h")
+        # The left caret adjusts with shared edits but keeps its own position.
+        session.send("iL")
+        session.normal()
+        session.send(b"\x13")
+        assert path.read_bytes() == b"aLlXpha\nbeta\ngamma\n", path.read_bytes()
+        session.send(" l")
+        session.send(b"\x1a")  # shared undo history: undo the left pane's edit
+        session.send(b"\x13")
+        assert path.read_bytes() == b"alXpha\nbeta\ngamma\n"
+        session.normal()
+        session.send(" wh")
+        session.send(" k")
+        session.send("iU")
+        session.normal()
+        session.send(b"\x13")
+        assert b"U" in path.read_bytes()
+        session.send(" ")
+        session.send(b"\x1b[B")  # root leader arrow focuses the lower pane
+        session.send("iD")
+        session.normal()
+        session.send(b"\x13")
+        assert b"D" in path.read_bytes()
+        session.quit()
+    snapshot = next((folder / "home/.config/me").glob("*/snapshot"))
+    assert snapshot.read_bytes()[8:16] == b"ME/MS1/4"
+    with Session(binary, folder) as session:
+        shown = screen(session)
+        assert shown.count(path.read_bytes().splitlines()[0]) >= 3, shown
+        fcntl.ioctl(session.master, termios.TIOCSWINSZ, struct.pack("HHHH", 4, 12, 0, 0))
+        session.drain(0.15)
+        assert session.process.poll() is None
+        fcntl.ioctl(session.master, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+        session.drain(0.15)
+        assert screen(session).count(path.read_bytes().splitlines()[0]) >= 3
+        for _ in range(4):
+            session.send(" wc")
+        assert session.process.poll() is None
+        assert screen(session).count(path.read_bytes().splitlines()[0]) == 1
+        session.send("iUNSAVED")
+        session.normal()
+        session.send(" wv wc")
+        session.send(",")
+        assert b"1/1" in screen(session), "closing a pane killed its buffer"
+        session.send(b"\x1b", 0.15)
+        session.quit()
+
+
+def pane_file_picker(binary, folder):
+    (folder / "first.txt").write_bytes(b"FIRST")
+    (folder / "second.txt").write_bytes(b"SECOND")
+    with Session(binary, folder, "-r", "first.txt") as session:
+        before = screen(session)
+        session.send(" ww")
+        await_file_picker(session)
+        session.send(b"\x1b", 0.15)
+        assert screen(session) == before, "cancelled split picker changed the layout"
+        session.send(" ww")
+        await_file_picker(session)
+        session.send("second.txt")
+        session.drain(0.2)
+        (folder / "second.txt").unlink()
+        session.send("\r")
+        assert b"Selected file no longer exists" in screen(session)
+        session.send(b"\x1b", 0.15)
+        session.normal()
+        assert screen(session).count(b"FIRST") == 1
+        (folder / "second.txt").write_bytes(b"SECOND")
+        session.send(" ww")
+        await_file_picker(session)
+        session.send("second.txt")
+        session.drain(0.2)
+        session.send("\r")
+        shown = screen(session)
+        assert b"FIRST" in shown and b"SECOND" in shown, shown
+        session.send("iX")
+        session.send(b"\x13")
+        assert (folder / "second.txt").read_bytes() == b"XSECOND"
+        assert (folder / "first.txt").read_bytes() == b"FIRST"
+        session.normal()
+        session.send(" wc,")
+        assert b"2/2" in screen(session), "pane close removed the picked buffer"
+        session.send(b"\x1b", 0.15)
+        session.quit()
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", required=True, type=Path)
@@ -1774,7 +1880,7 @@ def main():
     allowed = {"libc.so.6", "libm.so.6", "libgcc_s.so.1", "linux-vdso.so.1"}
     unexpected = {name for name in names if name not in allowed and not Path(name).name.startswith("ld-linux-")}
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
-    checks = [file_picker, file_picker_stale_and_cancel, cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
+    checks = [pane_controls, pane_file_picker, file_picker, file_picker_stale_and_cancel, cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
               search_replace_and_buffers, search_origins, slash_replacement, confirmation_recovery, byte_paths_and_checkpoint_failures,
               second_instance, crash_and_signals, undo_caret, word_delete, buffer_picker, buffer_picker_close_selected, buffer_picker_preview, buffer_picker_recovery, buffer_picker_unicode_bytes, enhanced_key_actions, keyboard_diagnostics, hjkl_and_line_selection, leader_overlay, control_hjkl, duplicate_selection, command_completion, live_completion_filter, file_completion, home_paths, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
     selected = [check for check in checks if args.filter in check.__name__]

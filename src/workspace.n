@@ -4,6 +4,7 @@ use document
 use keyboard
 use native
 use os.linux
+use panes
 use positions
 use std.text
 use view
@@ -53,12 +54,13 @@ impl DocumentEntry {
 
 }
 
--- Stable numeric IDs keep buffer, view, and surface ownership independent. MS1
--- mounts one surface. Entries remain alive while views reference them.
+-- Numeric IDs keep buffer and view ownership independent. Each pane mounts a
+-- distinct view; surface tracks the focused view for command dispatch.
 pub TextView :: plex {
-    document_id usize
-    interaction View
-    keyboard    Keyboard
+    document_id         usize
+    interaction         View
+    keyboard            Keyboard
+    previous_caret_line usize
 }
 
 pub Surface :: plex {
@@ -70,6 +72,7 @@ pub Workspace :: plex {
     views             [..]TextView
     access_order      [..]usize
     surface           Surface
+    panes             PaneLayout
     folder            [..]u8
     session_path      [..]u8
     lock_fd           i32
@@ -101,6 +104,9 @@ impl Workspace {
         self.documents.free()
         self.views.free()
         self.access_order.free()
+        self.panes.nodes.free()
+        self.panes.focused = 0
+        self.panes.compact = no
     }
 
     pub release :: fn (self: ^Self) {
@@ -143,8 +149,33 @@ impl Workspace {
         self.access_order[0] = id
     }
 
+    copy_view :: fn (self: ^Self, original: TextView) -> usize {
+        copy := original
+        copy.keyboard = Keyboard { ... }
+        for id, existing in self.views {
+            on id != self.surface.view_id &&
+                existing.document_id == copy.document_id &&
+                !self.panes.mounted(id) => {
+                existing^ = copy
+                return id
+            }
+        }
+        self.views.push(copy)
+        return self.views.count - 1
+    }
+
     pub focus_view :: fn (self: ^Self, id: usize) {
-        self.surface.view_id = id
+        selected := id
+        on self.panes.nodes.count > 0 => {
+            on self.panes.nodes[self.panes.focused].view_id != id &&
+                self.panes.mounted(id) => {
+                copy := self.views[id]
+
+                selected = self.copy_view(copy)
+            }
+            self.panes.nodes[self.panes.focused].view_id = selected
+        }
+        self.surface.view_id = selected
         self.record_access()
     }
 
@@ -155,12 +186,51 @@ impl Workspace {
             return yes
         }
         for index, text_view in self.views {
+            on text_view.document_id == id &&
+                !self.panes.mounted(index) => {
+                self.focus_view(index)
+                return yes
+            }
+        }
+        for index, text_view in self.views {
             on text_view.document_id == id => {
                 self.focus_view(index)
                 return yes
             }
         }
         return no
+    }
+
+    pub split_pane :: fn (self: ^Self, axis: SplitAxis) -> void\string {
+        self.split_view(axis, self.surface.view_id)?
+    }
+
+    pub split_view :: fn (self    : ^Self,
+                          axis    : SplitAxis,
+                          view_id : usize) -> void\string {
+        self.panes.ensure(self.surface.view_id)
+        on !self.panes.can_split(axis) => return "Not enough room to split "
+            +"this pane"!
+        id := view_id
+        on self.panes.mounted(id) => id = self.copy_view(self.views[id])
+        self.panes.divide(axis, id)
+        self.surface.view_id = id
+        self.record_access()
+    }
+
+    pub close_pane :: fn (self: ^Self) {
+        self.panes.ensure(self.surface.view_id)
+        on self.panes.close() => {
+            self.surface.view_id = self.panes.nodes[self.panes.focused].view_id
+            self.record_access()
+        }
+    }
+
+    pub focus_pane :: fn (self: ^Self, direction: Direction) {
+        self.panes.ensure(self.surface.view_id)
+        self.panes.focused = self.panes.neighbour(direction)
+        self.surface.view_id = self.panes.nodes[self.panes.focused].view_id
+        self.record_access()
     }
 
     pub active_view :: fn (self: ^Self) => ^self.views[self.surface.view_id]
@@ -203,14 +273,7 @@ impl Workspace {
                         current.ino == known.ino => same_file = yes
                 }
             }
-            on same_file => {
-                for view_index, text_view in self.views {
-                    on text_view.document_id == index => {
-                        self.focus_view(view_index)
-                        return
-                    }
-                }
-            }
+            on same_file && self.focus_document(index) => return
         }
         entry       : DocumentEntry
         transferred                 := no
@@ -319,7 +382,7 @@ impl Workspace {
         encoded : Encoder
         defer encoded.bytes.free()
         self.record_access()
-        encoded.text("ME/MS1/3")
+        encoded.text("ME/MS1/4")
         encoded.text(bytes_text(self.folder))
         encoded.number(self.documents.count.as(u64))
         for entry in self.documents {
@@ -364,6 +427,8 @@ impl Workspace {
         for id in self.access_order {
             encoded.number(id^.as(u64))
         }
+        self.panes.ensure(self.surface.view_id)
+        self.encode_pane(^encoded, 0)
         encoded.number(fingerprint(bytes_text(encoded.bytes)))
         on atomic_write(scratch, bytes_text(self.session_path), bytes_text(encoded.bytes), yes) {
             _success => {
@@ -377,6 +442,60 @@ impl Workspace {
         }
     }
 
+    encode_pane :: fn (self: ^Self, encoded: ^Encoder, id: usize) {
+        node := self.panes.nodes[id]
+        encoded.number(on node.split {
+            yes => on node.vertical { yes => 2 else => 1 }
+
+            else => 0
+        })
+        on node.split {
+            yes => {
+                self.encode_pane(encoded, node.first)
+                self.encode_pane(encoded, node.second)
+            }
+
+            else => encoded.number(node.view_id.as(u64))
+        }
+    }
+
+    decode_pane :: fn (self   : ^Self,
+                       reader : ^Decoder,
+                       parent : usize,
+                       depth  : usize) -> usize\string {
+        on depth > 15 ||
+            self.panes.nodes.count >= 31 => return "Invalid continuation pane "
+            +"tree"!
+        kind := reader.number()?
+        on kind > 2 => return "Invalid continuation pane kind"!
+        id := self.panes.nodes.count
+        self.panes.nodes.push(PaneNode { used: yes parent split: kind != 0 vertical: kind == 2 ... })
+        on kind == 0 {
+            yes => {
+                view_id := reader.number()?.as(usize)
+                on view_id >= self.views.count => return "Invalid continuation "
+                    +"pane view"!
+                for index in [0 .. id] {
+                    node := self.panes.nodes[index]
+                    on !node.split &&
+                        node.view_id == view_id => return "Duplicate "
+                        +"continuation pane view"!
+                }
+                self.panes.nodes[id].view_id = view_id
+                on view_id == self.surface.view_id => self.panes.focused = id
+            }
+
+            else => {
+                first  := self.decode_pane(reader, id, depth + 1)?
+                second := self.decode_pane(reader, id, depth + 1)?
+
+                self.panes.nodes[id].first = first
+                self.panes.nodes[id].second = second
+            }
+        }
+        return id
+    }
+
     pub restore :: fn (self: ^Self, scratch: ^arena) -> void\string {
         bytes := read_file(scratch, bytes_text(self.session_path))?
         on bytes.count < 8 => return "Truncated continuation; original "
@@ -387,7 +506,7 @@ impl Workspace {
         version := reader.text()?
 
         on (version != "ME/MS1/1" && version != "ME/MS1/2" && version != "ME/MS"
-            +"1/3") ||
+            +"1/3" && version != "ME/MS1/4") ||
             reader.text()? != bytes_text(self.folder) => return "Continuation "
             +"version or folder mismatch"!
         documents := reader.number()?
@@ -442,12 +561,15 @@ impl Workspace {
                 yes   => Interaction.Insert
                 else  => Interaction.Normal
             }
+            -- Restored horizontal scrolling must not look like a fresh line
+            -- change on the first paint of each independently mounted view.
+            text_view.previous_caret_line = doc.line_at(view.selection.active)
             self.views.push(text_view)
         }
         self.surface.view_id = reader.number()?.as(usize)
         on self.surface.view_id >= self.views.count => return "Invalid "
             +"continuation layout"!
-        on version == "ME/MS1/3" {
+        on version == "ME/MS1/3" || version == "ME/MS1/4" {
             yes => {
                 count := reader.number()?.as(usize)
                 on count != self.documents.count => return "Invalid "
@@ -469,6 +591,16 @@ impl Workspace {
             }
 
             else => self.record_access()
+        }
+        on version == "ME/MS1/4" {
+            yes => {
+                _ := self.decode_pane(^reader, 0, 0)?
+                on self.panes.nodes[self.panes.focused].split ||
+                    self.panes.nodes[self.panes.focused].view_id != self.surface.view_id => return "Invalid continuation focused pane"!
+                self.panes.arrange(80, 23)
+            }
+
+            else => self.panes.ensure(self.surface.view_id)
         }
         on reader.offset != reader.bytes.count => return "Invalid continuation "
             +"layout"!
@@ -640,6 +772,17 @@ impl Workspace {
                         self.views[next - 1] = self.views[next]
                     }
                     _ := self.views.pop()
+                    for node in self.panes.nodes {
+                        on node.used &&
+                            !node.split => {
+                            on node.view_id == index {
+                                yes => node.view_id = 0xffffffffffffffff.as(usize)
+
+                                else => on node.view_id > index &&
+                                    node.view_id != 0xffffffffffffffff.as(usize) => node.view_id -= 1
+                            }
+                        }
+                    }
                     on index < active => active -= 1
                 }
             }
@@ -653,6 +796,17 @@ impl Workspace {
             on text_view.document_id > document_id => text_view.document_id -= 1
         }
         on self.views.count == 0 => self.add_empty()
+        -- Every pane showing a killed buffer receives its own surviving view.
+        for node in self.panes.nodes {
+            on node.used &&
+                !node.split &&
+                node.view_id >= self.views.count => {
+                copy := self.views[0]
+                self.views.push(copy)
+                node.view_id = self.views.count - 1
+            }
+        }
+        on self.panes.nodes.count > 0 => self.surface.view_id = self.panes.nodes[self.panes.focused].view_id
         on fallback => [id] {
             adjusted := on id > document_id {
                 yes   => id - 1
@@ -727,7 +881,7 @@ test {
         damaged : [..]u8
         defer damaged.free()
         own(^damaged, read_file(^scratch, snapshot)?)
-        ids := damaged.count - 8 - 3 * 8
+        ids := damaged.count - 8 - 16 - 3 * 8
         for i in [0.as(usize) .. 8] {
             damaged[ids + 8 + i] = damaged[ids + i]
         }
@@ -898,4 +1052,122 @@ test "absolute path composition preserves kernel dot-segment and symlink semanti
     defer scratch.done()
     assert absolute_path(^scratch, "/a/b", "../c/./file") == "/a/b/../c/./file"
     assert absolute_path(^scratch, "/a/b", "/x/../y") == "/x/../y"
+}
+
+test {
+
+    exercise_panes :: fn () -> void\string {
+        scratch : arena
+        defer scratch.done()
+        state : Workspace
+        state.lock_fd = -1
+        defer state.release()
+        state.add_empty()
+        on state.active_document().text.load("alpha\nbeta") {
+            _success => {
+            }
+
+            _error! => return "Fixture load failed"!
+        }
+        state.active_view().interaction.selection.collapse(2)
+        state.split_pane(SplitAxis.Vertical)?
+        right := state.surface.view_id
+        assert right != 0 && state.active_view().document_id == 0
+        state.active_view().interaction.selection.collapse(7)
+        state.active_view().interaction.horizontal = 1
+        state.focus_pane(Direction.Left)
+        assert state.surface.view_id == 0 && state.active_view().interaction.selection.active == 2
+        state.focus_pane(Direction.Right)
+        assert state.surface.view_id == right && state.active_view().interaction.selection.active == 7
+        assert make_directory(^scratch, "_tmp")
+        path := scratch.pr($"_tmp/pane-test-{syscall(SYS_GETPID, 0, 0, 0, 0, 0, 0)}")
+        own(^state.folder, "/pane-fixture")
+        own(^state.session_path, path)
+        state.persistent = yes
+        defer {
+            _ := syscall(SYS_UNLINK,
+                         path.c_string().as(usize).as(u64),
+                         0,
+                         0,
+                         0,
+                         0,
+                         0)
+        }
+        state.checkpoint(^scratch)?
+        restored : Workspace
+        restored.lock_fd = -1
+        defer restored.release()
+        own(^restored.folder, "/pane-fixture")
+        own(^restored.session_path, path)
+        restored.restore(^scratch)?
+        assert restored.panes.nodes.count == 3 && restored.panes.nodes[0].vertical
+        assert restored.surface.view_id == right && restored.active_view().interaction.selection.active == 7
+        assert restored.active_view().interaction.horizontal == 1 && restored.active_view().previous_caret_line == 1
+        -- A valid checksum must not allow two panes to mount the same view.
+        damaged : [..]u8
+        defer damaged.free()
+        own(^damaged, read_file(^scratch, path)?)
+        for byte in [0.as(usize) .. 8] {
+            damaged[damaged.count - 16 + byte] = damaged[damaged.count - 32 + byte]
+        }
+        checksum : Encoder
+        defer checksum.bytes.free()
+        checksum.number(fingerprint(damaged[..damaged.count - 8].as(string)))
+        damaged[damaged.count - 8..] = checksum.bytes[..]
+        atomic_write(^scratch, path, bytes_text(damaged), yes)?
+        invalid : Workspace
+        invalid.lock_fd = -1
+        defer invalid.release()
+        own(^invalid.folder, "/pane-fixture")
+        own(^invalid.session_path, path)
+        on invalid.restore(^scratch) {
+            _success => {
+                assert no, "Duplicate pane view accepted"
+            }
+
+            _error! => {
+            }
+        }
+        restored.close_pane()
+        assert restored.documents.count == 1 && restored.active_document().modified()
+        assert restored.active_view().interaction.selection.active == 2
+        restored.split_pane(SplitAxis.Horizontal)?
+        restored.add_empty()
+        -- Buffer replacement affects only the mounted pane. Killing a shared
+        -- buffer rebinds all its panes without collapsing the layout.
+        assert restored.documents.count == 2
+        restored.focus_pane(Direction.Up)
+        restored.split_pane(SplitAxis.Vertical)?
+        restored.kill_document(0, yes)?
+        assert restored.documents.count == 1
+        mounted : usize = 0
+        for node in restored.panes.nodes {
+            on node.used &&
+                !node.split => {
+                assert node.view_id < restored.views.count
+                assert restored.views[node.view_id].document_id == 0
+                mounted += 1
+                for other in restored.panes.nodes {
+                    on other.used &&
+                        !other.split &&
+                        other != node => {
+                        assert other.view_id != node.view_id
+                    }
+                }
+            }
+        }
+        assert mounted == 3
+    }
+
+}
+
+test "panes retain independent views and continuation, close without killing and rebind killed buffers" {
+    on exercise_panes() {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
 }

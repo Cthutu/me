@@ -105,8 +105,8 @@ Changes were pushed and installed at `b5be63e`; installed selected-close PTYs pa
 
 ## File discovery and Space leader (T4)
 
-Normal Space starts a leader sequence. Its known-key menu appears after two
-seconds; Space Space opens the file picker immediately. Escape or an unknown
+Normal Space starts a leader sequence. Its known-key menu appears after one
+second; Space Space opens the file picker immediately. Escape or an unknown
 key cancels the sequence. Spaces remain literal in Insert and prompts; enhanced
 key releases/repeats cannot accidentally advance the leader.
 
@@ -165,8 +165,8 @@ remain clipped.
 
 `src/leader_menu.n` supplies one declarative sequence table to both the dispatcher
 and renderer. Group prefixes, path headings and parent navigation prepare future
-submenus. Space Space is the only current action; Space b d was explicitly only
-an example. Modal input consumes Enter and other non-menu keys, ignores releases
+submenus. Space Space was the initial action; T5 adds the agreed Windows
+submenu and directional focus. Space b d was explicitly only an example. Modal input consumes Enter and other non-menu keys, ignores releases
 and repeats, and supports enhanced labels with or without paired text.
 
 Native regressions cover nested fixture lookup, animation bounds, opacity,
@@ -184,9 +184,54 @@ The follow-up delay adjustment uses one second, with native assertions at
 999 ms and 1,000 ms. All 162 native tests and focused debug overlay/file-picker
 and release overlay checks validate the adjustment; the 180 ms slide is retained.
 
+## Split panes (T5)
+
+The Windows submenu implements Space w h/v/s/c/w, with root Space hjkl or cursor
+keys for directional focus. A bounded binary tree owns rectangles and split axes;
+each leaf mounts a distinct text view. Views keep independent caret, selection,
+scroll and keyboard state while buffers own shared content and undo history.
+Closing a pane preserves its buffer and keeps the final pane open. Buffer
+replacement affects the current pane; killing a buffer rebinds affected leaves
+without dropping the layout. Hidden view/tree slots are reused.
+
+Space w w captures its originating pane, opens the picker, preflights available
+space before opening a selection and creates a pane only on success. Cancellation,
+stale candidates and failed opens leave the tree intact. The original file opener
+keeps its existing destination. The renderer offsets Unicode composite glyphs,
+clips panes, dims inactive status backgrounds and draws only the active caret.
+Status paths below the startup folder are relative, preserving filename visibility.
+Messages and overlays remain global.
+
+Initial policy: equal splits with one-cell dividers; 12 columns by 4 rows minimum;
+at most 16 panes; automatic orientation compares width with twice the height,
+falling back to the other axis when necessary. Focus requires perpendicular
+overlap, then prefers the nearest facing edge, physical centre and stable slot.
+Tiny terminals show only the focused pane, retaining minimum virtual geometry;
+enlarging restores the tree. See design §28 for the complete policy.
+
+Continuation v4 stores the bounded preorder tree and restores focus via the active
+view. It rejects malformed kinds, duplicate/out-of-range leaf views and excessive
+depth/node counts. Versions 1–3 recover as a single pane, then upgrade on checkpoint.
+Native tests exercise geometry, axis fallback, bounds/reuse, independent views,
+buffer deletion/rebinding, continuation corruption and Unicode/caret rendering.
+The two new PTY groups exercise shared edits/undo, focus, closing, restored layouts,
+resizes and transactional picker cancellation/failure/success. Existing migration
+coverage now also includes v3.
+
+Verification: **166 native tests** (54 ME across 19 modules + 112 imported),
+formatting/type checking, Python compilation, diff checks, and **40 debug and
+40 release PTY groups**. A rendered three-pane preview was inspected. The final
+relative-status-path refinement also passes native and focused debug/release pane
+checks. Nerd fix `8f62716b` repairs nested untyped numeric operand inference, exposed
+by the native pane status assertion; its full gate passed 75 stages with two
+platform skips. It is backed up on the fix branch and `remove-linux-libc`, and
+installed directly from `~/nerd` on that libc branch. No external runtime
+dependencies were introduced. ME installation follows commit/push using `just install`, with both pane groups rerun on the
+installed executable.
+
 ## Verification
 
-This section records the original MS1 baseline; the latest T3d/T4 evidence is
+This section records the original MS1 baseline; the latest T3d/T4/T5 evidence is
 above.
 
 ### Headless
@@ -317,7 +362,7 @@ hard real-time guarantee. Complex-grapheme overlays add one simulation step.
 Document projection/index rebuilding remains correctness-first, not a claim
 about very large-file scalability.
 
-## Nerd fixes — fourteen completed
+## Nerd fixes — fifteen completed
 
 All compiler changes used dedicated worktrees. Each fix passed the unified full
 gate (**72 passed, 0 failed, 2 platform skips**), formatting and isolated installed
@@ -428,7 +473,7 @@ spurious compiler patch remains.
 
 ## Explicit remaining limits / later milestones
 
-- No mouse, desktop clipboard integration, picker, pane-management UI, repeat
+- No mouse, desktop clipboard integration, repeat
   recording, configuration or Nerd language intelligence.
 - Legacy `std.term` Escape ambiguity currently has 100 ms Linux resolution;
   bracketed-paste boundaries are not exposed. Paste from a terminal in Insert.
@@ -459,3 +504,23 @@ has not been advanced. At those direct installations the shared checkout was on
 branch. The combined integration
 `c80d7775` passed 75 tests with 2 platform skips and is installed directly from
 `~/nerd` on `remove-linux-libc`, with matching modules.
+
+
+### T5 compiler regression: nested numeric operand widths
+
+The final pane-status native assertion uses `22 * 80 + x`, with `x: usize`.
+Nerd accepted it but emitted an i32 product as an operand of an i64 addition.
+Fix `8f62716b` re-infers whole untyped operands from their concrete sibling's
+numeric type, retaining nested operation widths and literal validation. Its
+regression covers indexing, both operand orders, wide products, comparisons,
+signed/narrow integers and floats, including LLVM and C output.
+
+The full Nerd gate passed **75 stages, zero failures and two platform skips**;
+formatting and the focused regression passed. The fix was committed/pushed on
+`agent/fix/literal-expression-width`, fast-forwarded into local `main` and the
+existing `remove-linux-libc` checkout, and pushed to remote `remove-linux-libc`.
+Remote Nerd `main` retains its separate history; no force push or unrelated merge
+was performed. Required installation runs directly in `~/nerd` on that libc
+branch at `8f62716b`, with matching installed modules. The completed fix worktree and local temporary
+branch were removed after verifying clean state, retained commits and no users. ME retains the original assertion without a
+compiler workaround.

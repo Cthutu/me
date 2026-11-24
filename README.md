@@ -3,9 +3,9 @@
 ME is a modal Linux terminal editor written in **Nerd**, using `std.term`.
 MS1 is implemented and debug/release regression-tested, providing precise,
 Notepad-level text editing with persistent continuation,
-shared buffer history, and independent view state. One pane is provided; pane
-management, facets and language services are future work. The MS2 file picker
-adds cancellable discovery under the startup folder.
+shared buffer history, and independent view state. MS2 adds split panes and a
+file picker with cancellable discovery under the startup folder. Facets and
+language services remain future work.
 
 ## Build and run
 
@@ -113,6 +113,10 @@ these letters remain literal text in Insert and prompts.
 | Ctrl+S | Save active document; unnamed opens `:w ` |
 | `,` | Normal-only buffer picker; Enter switches, Escape cancels |
 | Normal Space Space / `:files` | Open files; hold after the first Space for the key menu |
+| Space w h / v / s | Split above/below / side by side / automatically |
+| Space w c | Close the pane, keeping its buffer; keep the last pane open |
+| Space w w | Pick a file, then open it in a new automatic split |
+| Space h/j/k/l or Space + cursor key | Focus the neighbouring pane without wrapping |
 | Ctrl+W | Close the highlighted buffer in the picker, otherwise the active buffer; refuse unsaved work |
 
 Only `i` preserves selection on Insert entry; other entry commands clear it.
@@ -217,8 +221,8 @@ The second Space works immediately, without waiting for the menu. Unknown keys
 cancel the sequence without executing an editing command. Spaces remain ordinary
 text in Insert and prompts. Enhanced key releases and held-key repeats do not
 invoke menu commands. Menu definitions support future nested groups, with path
-headings and Backspace to return to the parent; no additional sequences are
-assigned yet.
+headings and Backspace to return to the parent. Space w opens the Windows
+submenu; directional focus also works directly after Space.
 
 Discovery includes hidden names and files excluded by `.gitignore`; no ignore
 rules are applied. Symlinks to files and directories are followed. Each opened
@@ -233,6 +237,32 @@ unreadable directories or other discovery limits explicitly mark the list
 **incomplete** and show an error. Available results remain usable.
 Cancellation also works while the discovery helper is blocked; it never waits for
 filesystem traversal to finish before returning input to the editor.
+
+## Panes
+
+In Normal, **Space w** opens the Windows submenu. **h** creates panes above and
+below; **v** creates panes side by side; **s** chooses automatically using the
+pane's physical proportions (one cell is treated as twice as tall as wide).
+The new pane appears below/right, is focused, and shows the same buffer with an
+independent caret, selection and scroll position. Edits and undo history are shared.
+
+**Space h/j/k/l**, or **Space** followed by a cursor key, focuses a neighbour.
+There is no wrapping at an edge. **Space w c** closes the focused pane without
+killing or saving its buffer, even with unsaved work. The final pane stays open.
+
+**Space w w** opens the file picker first. Successful opening creates and focuses
+an automatic split for that file; Escape or an open failure preserves the layout.
+Space Space opens a file in the current pane. Buffer switching also affects only
+the current pane, with an independent view when that buffer is visible elsewhere.
+
+Splits divide available space equally, allowing one cell for a divider. Panes have
+a status row and require at least 12 columns by 4 rows; at most 16 panes are open.
+A split that cannot fit is refused. Automatic splits try the other orientation
+when needed. When resizing leaves too little space, only the focused pane is
+shown; enlarging the terminal restores the retained tree. Directional focus uses
+that retained geometry. Layout, focus and each view's positions survive continuation.
+Status paths inside the startup folder are shown relative to it, keeping filenames
+visible in narrow panes. The status bars, shared bottom messages and popups stay distinct.
 
 ## Search and replacement
 
@@ -427,8 +457,9 @@ wrap/grow to half the terminal; Alt+Page Up/Down scroll overflow. Escape dismiss
 messages without changing caret/selection. `!C` marks checkpoint failure, `~` a
 non-persisting session, `!conflict` and `?missing` backing-file conditions.
 
-MS1 intentionally omits mouse support, desktop clipboard integration, a file
-picker, split-pane UI, repeat recording, configuration and language intelligence.
+MS1 originally omitted the file picker and pane controls delivered above. Mouse
+support, desktop clipboard integration, repeat recording, configuration and
+language intelligence remain unimplemented.
 Enter Insert before pasting from a terminal/desktop: Nerd does not yet expose
 bracketed-paste boundaries. In legacy keyboard mode, the current Linux `std.term`
 backend rounds its Escape ambiguity timeout to a 100 ms termios tick; enhanced

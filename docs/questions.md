@@ -408,8 +408,8 @@ T4 uses the startup folder and the existing Unicode subsequence matcher. Matt
 agreed to include hidden and ignored files, follow file and directory symlinks
 with cycle detection, and introduce a Normal-state Space leader. Space Space
 opens files; after one second the first Space shows known keys. `:files` is
-also available. Other roots, indexing, file previews, split destinations and an
-overlay stack remain separate choices. See design §26 and README for details.
+also available. Other roots, indexing, file previews and an overlay stack remain separate choices.
+The split destination is settled under T5 below. See design §26 and README for details.
 
 
 ## Space menu overlay — settled
@@ -419,7 +419,7 @@ overlay stack remain separate choices. See design §26 and README for details.
 - Preserve the underlying view geometry and messages; cancellation restores them.
 - Prepare grouped sequences with menu path headings and parent navigation.
 - Space b d was explicitly clarified as an example only. Do not add it, or other
-  submenu actions, without agreement. Space Space remains the only active action.
+  submenu actions, without agreement. T5 below adds the agreed Windows actions.
 - The implementation uses a 180 ms row animation; see design §27 for details.
 
 
@@ -434,6 +434,6 @@ Splits focus a new independent view of the current shared buffer. Automatic
 orientation accounts for terminal cell proportions. Focus does not wrap at an
 edge. Closing preserves buffers and keeps the final pane open. File-picker
 cancellation/failure preserves the layout; only a successful selection/open
-creates and focuses its new pane. This records the design agreement, not an
-implementation delivery. Sizing/minimum dimensions, neighbour ties and resize
-policies remain implementation choices to document.
+creates and focuses its new pane. Delivered under T5; design §28 records the
+initial sizing, minimum dimensions, neighbour ties and resize policies as
+implementation choices.

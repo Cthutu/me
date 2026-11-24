@@ -8,6 +8,7 @@ use keyboard
 use leader_menu
 use native
 use os.linux
+use panes
 use picker
 use positions
 use replacement
@@ -45,6 +46,8 @@ pub Editor :: plex {
     leader_revealed    Instant
     leader_prefix      string
     picking_files      bool
+    splitting_file     bool
+    split_origin       usize
     suppress_character bool
     search_decoded     [..]u8
     clipboard          Clipboard
@@ -493,6 +496,7 @@ impl Editor {
     pub open_buffer_picker :: fn (self: ^Self, scratch: ^arena) {
         self.files.cancel()
         self.picking_files = no
+        self.splitting_file = no
         self.workspace.record_access()
         self.picker.start("Buffers")
         active := self.workspace.active_view().document_id
@@ -518,6 +522,7 @@ impl Editor {
     }
     pub open_file_picker :: fn (self: ^Self) -> void\string {
         self.files.cancel()
+        self.splitting_file = no
         self.picking_files = yes
         self.picker.start("Files · scanning")
         self.picker.incremental = yes
@@ -564,7 +569,20 @@ impl Editor {
             }
             else => return "Selected file no longer exists"!
         }
+        -- Preflight before opening: the synchronous open cannot change geometry.
+        -- Only successful opens mount a file, so failures leave the origin intact.
+        origin_view := self.workspace.surface.view_id
+        on self.splitting_file => {
+            self.workspace.panes.focused = self.split_origin
+            on !self.workspace.panes.can_split(SplitAxis.Automatic) => return "Not enough room to split this pane"!
+        }
         self.workspace.open_file(scratch, path)?
+        on self.splitting_file => {
+            chosen := self.workspace.surface.view_id
+            self.workspace.focus_view(origin_view)
+            self.workspace.split_view(SplitAxis.Automatic, chosen)?
+        }
+        self.splitting_file = no
         self.workspace.active_view().interaction.state = Interaction.Normal
         self.files.cancel()
         self.picker.active = no
@@ -640,6 +658,7 @@ impl Editor {
                 self.picker.active = no
                 self.files.cancel()
                 self.picking_files = no
+                self.splitting_file = no
             }
             Enter => on self.picker.chosen() => [id] {
                 on self.picking_files {
@@ -672,9 +691,7 @@ impl Editor {
         for id, entry in self.workspace.documents {
             on !entry.modified() => again
             on entry.path.count == 0 => {
-                for index, text_view in self.workspace.views {
-                    on text_view.document_id == id => self.workspace.focus_view(index)
-                }
+                _ := self.workspace.focus_document(id)
                 self.prompt_open(':'.as(u32), initial = "w ")
                 self.save_all_pending = yes
                 return
@@ -682,9 +699,7 @@ impl Editor {
             on self.workspace.save(scratch, id, "", no, no) {
                 _success => self.dirty = yes
                 error! => {
-                    for index, text_view in self.workspace.views {
-                        on text_view.document_id == id => self.workspace.focus_view(index)
-                    }
+                    _ := self.workspace.focus_document(id)
                     return scratch.pr($"Cannot save {bytes_text(entry.path)}: {error}")!
                 }
             }
@@ -811,15 +826,12 @@ impl Editor {
                 number = number * 10 + (byte^ - '0').as(usize)
             }
             on number == 0 || number > self.workspace.documents.count => return "No such buffer; use :buffers"!
-            for id, text_view in self.workspace.views {
-                on text_view.document_id == number - 1 => {
-                    self.workspace.focus_view(id)
-                    text_view.interaction.state = Interaction.Normal
-                    self.highlights = no
-                    self.dirty = yes
-                    self.message.clear()
-                    return
-                }
+            on self.workspace.focus_document(number - 1) => {
+                self.workspace.active_view().interaction.state = Interaction.Normal
+                self.highlights = no
+                self.dirty = yes
+                self.message.clear()
+                return
             }
             return "No view for that buffer"!
         }
@@ -1304,6 +1316,28 @@ impl Editor {
             self.leader_revealed = current
         }
     }
+    pub pane_operation :: fn (self: ^Self, operation: LeaderOperation) -> void\string {
+        on operation {
+            SplitHorizontal => self.workspace.split_pane(SplitAxis.Horizontal)?
+            SplitVertical => self.workspace.split_pane(SplitAxis.Vertical)?
+            SplitAutomatic => self.workspace.split_pane(SplitAxis.Automatic)?
+            ClosePane => self.workspace.close_pane()
+            SplitPicker => {
+                self.workspace.panes.ensure(self.workspace.surface.view_id)
+                self.open_file_picker()?
+                self.splitting_file = yes
+                self.split_origin = self.workspace.panes.focused
+            }
+            FocusLeft => self.workspace.focus_pane(Direction.Left)
+            FocusDown => self.workspace.focus_pane(Direction.Down)
+            FocusUp => self.workspace.focus_pane(Direction.Up)
+            FocusRight => self.workspace.focus_pane(Direction.Right)
+            else => {
+            }
+        }
+        self.changed()
+    }
+
     pub leader_character :: fn (self: ^Self, rune: u32) {
         on leader_choice(LEADER_ENTRIES[..], self.leader_prefix, rune) {
             entry => on entry.operation {
@@ -1317,6 +1351,14 @@ impl Editor {
                 FilePicker => {
                     self.cancel_leader()
                     on self.open_file_picker() {
+                        _success => {
+                        }
+                        error! => self.tell(error)
+                    }
+                }
+                operation => {
+                    self.cancel_leader()
+                    on self.pane_operation(operation) {
                         _success => {
                         }
                         error! => self.tell(error)
@@ -1375,6 +1417,22 @@ impl Editor {
             on key.action == TermKeyAction.Repeat => {
                 self.suppress_character = key.character != nil
                 return
+            }
+            on key.modifiers == 0 && self.leader_prefix.count == 0 => {
+                direction : ?Direction = on key.scan_code {
+                    ArrowLeft => Direction.Left
+                    ArrowRight => Direction.Right
+                    ArrowUp => Direction.Up
+                    ArrowDown => Direction.Down
+                    else => nil
+                }
+                on direction => [towards] {
+                    self.cancel_leader()
+                    self.workspace.focus_pane(towards)
+                    self.changed()
+                    self.suppress_character = key.character != nil
+                    return
+                }
             }
             on key.modifiers == 0 && (key.scan_code == TermScanCode.Backspace || (key.scan_code == TermScanCode.Delete && key.character == 127.as(u32))) => {
                 on self.leader_prefix.count > 0 => self.leader_prefix = self.leader_prefix[.. self.leader_prefix.count - 1]

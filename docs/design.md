@@ -1315,8 +1315,8 @@ recording, system clipboard, configuration, or language-service APIs.
 
 T4 implements the agreed non-blocking discovery/filter/open/cancel direction,
 using the startup folder and the buffer picker's case-insensitive subsequence
-matching. The input and discovery policies below are agreed; split panes and an
-overlay stack remain separate queued work.
+matching. The input and discovery policies below are agreed; pane destinations
+are implemented separately in §28. An overlay stack remains future work.
 
 - Normal Space Space and `:files` open the existing generic popup; comma retains
   the buffer list. Space starts a leader sequence with a known-key menu after
@@ -1379,13 +1379,13 @@ animation. Enhanced key labels without paired text, paired character events,
 releases and repeats are handled without duplicate dispatch. Other non-menu keys
 cancel and are consumed, so Enter cannot insert a newline beneath the overlay.
 
-Space Space remains the only active menu action. Matt explicitly clarified that
+The Windows submenu and directional actions are now supplied by §28. Matt explicitly clarified that
 Space b d was an example for future nested sequences; it is **not** a binding or
 an agreed buffer-deletion task. Future groups/actions require agreement before
 adding entries. This menu does not implement a general overlay stack or pane UI.
 
 
-## 28. Pane controls and behaviour — agreed, implementation queued (T5)
+## 28. Pane controls and behaviour (T5)
 
 Normal Space w opens the Windows submenu. The agreed commands are:
 
@@ -1411,7 +1411,30 @@ automatically oriented pane for that file and focus it. Escape leaves the layout
 intact, as does an unsuccessful file open. The existing Space Space file opener
 keeps its current behaviour.
 
-These controls and behaviours are agreed but are not installed bindings yet.
-Initial split ratios, minimum pane dimensions, exact neighbour tie-breaking and
-small-terminal/resize policies still need implementation choices documented as
-such. Space b d remains an example only, unrelated to closing a pane.
+Implementation choices (initial policy, not a general configuration interface):
+
+- A binary split tree divides space equally, clamped to child minimum sizes, with
+  one-cell dividers. New panes are below/right and receive focus. Closing collapses
+  the parent into its surviving sibling and focuses that subtree's first leaf.
+- Each pane requires 12 columns and 4 rows, including its own status row. There
+  are at most 16 live panes. Explicit splits refuse insufficient space. Automatic
+  orientation compares width with twice the height, then tries the other axis if
+  needed. Hidden view slots and tree slots are reused.
+- Neighbours must overlap on the perpendicular axis. Prefer the nearest facing
+  edge, then the nearest physical centre (vertical cell distances count twice),
+  then stable tree-slot order. Focus never wraps.
+- On an undersized terminal, retain the tree and its minimum virtual geometry,
+  show the focused pane across the available editor area, and refuse new splits.
+  Resizing back restores all panes; directional focus still uses retained geometry.
+- The renderer clips each view within its rectangle, offsets composite Unicode
+  glyphs, draws only the active caret, and dims inactive status backgrounds.
+  Status paths inside the startup folder are relative to that folder.
+  Bottom messages, completion, file/buffer popups and leader menus remain global.
+- Buffer replacement mounts only in the focused pane; an already-visible view is
+  copied rather than mounted twice. Killing a buffer rebinds affected panes to
+  independent surviving views and preserves the split tree.
+- Continuation v4 stores the tree in bounded preorder with unique leaf view IDs;
+  the active view identifies focus. Versions 1–3 import as a single pane. Decoding
+  rejects duplicate/out-of-range view IDs, invalid kinds and excessive depth/nodes.
+
+Space b d remains an example only, unrelated to closing a pane.

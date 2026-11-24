@@ -4,6 +4,15 @@
 pub LeaderOperation :: enum {
     Group
     FilePicker
+    SplitHorizontal
+    SplitVertical
+    SplitAutomatic
+    ClosePane
+    SplitPicker
+    FocusLeft
+    FocusDown
+    FocusUp
+    FocusRight
 }
 
 pub LeaderEntry :: plex {
@@ -13,7 +22,17 @@ pub LeaderEntry :: plex {
 }
 
 pub LEADER_ENTRIES :: [
-    LeaderEntry { sequence: " " label: "Open file" operation: FilePicker },
+    LeaderEntry { sequence : " "  label : "Open file"           operation : FilePicker },
+    LeaderEntry { sequence : "w"  label : "Windows"             operation : Group },
+    LeaderEntry { sequence : "wh" label : "Split horizontally"  operation : SplitHorizontal },
+    LeaderEntry { sequence : "wv" label : "Split vertically"    operation : SplitVertical },
+    LeaderEntry { sequence : "ws" label : "Split automatically" operation : SplitAutomatic },
+    LeaderEntry { sequence : "wc" label : "Close pane"          operation : ClosePane },
+    LeaderEntry { sequence : "ww" label : "Split and open file" operation : SplitPicker },
+    LeaderEntry { sequence : "h"  label : "Focus left"          operation : FocusLeft },
+    LeaderEntry { sequence : "j"  label : "Focus down"          operation : FocusDown },
+    LeaderEntry { sequence : "k"  label : "Focus up"            operation : FocusUp },
+    LeaderEntry { sequence : "l"  label : "Focus right"         operation : FocusRight },
 ]
 
 pub leader_child :: fn (entry: LeaderEntry, prefix: string) -> bool {
