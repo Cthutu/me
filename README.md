@@ -117,7 +117,7 @@ these letters remain literal text in Insert and prompts.
 | Space w c | Close the pane, keeping its buffer; keep the last pane open |
 | Space w w | Pick a file, then open it in a new automatic split |
 | Space h/j/k/l or Space + cursor key | Focus the neighbouring pane without wrapping |
-| Ctrl+W | Close the highlighted buffer in the picker, otherwise the active buffer; refuse unsaved work |
+| Ctrl+W | Close the current pane; in the buffer picker, remove the highlighted saved buffer |
 
 Only `i` preserves selection on Insert entry; other entry commands clear it.
 Ctrl-bound editing commands enter Normal even on failure/no-op. Ctrl navigation
@@ -175,14 +175,18 @@ buffer, that row is selected instead.
 - Access order survives continuation; accepting a buffer updates it. Cancelling
   or merely moving the selection does not. Each buffer keeps its own view/history.
 
-**Ctrl+W closes the highlighted buffer while the picker is open, otherwise the active buffer.**
+**Ctrl+W closes the current pane, keeping its buffer available.** Other panes
+retain their buffers, carets and scrolling. Unsaved work is retained; the last
+pane stays open. This also works from Insert and enters Normal.
+
+Inside the buffer picker, **Ctrl+W removes the highlighted saved buffer**.
 With no matches it does nothing. The picker stays open after a close or refusal,
 retaining the query/caret and selecting the same result row (or the last remaining
 row). Closing the final match leaves the query open with no matches.
-Unsaved/new/missing work reports an error without writing or discarding it. Closing another buffer preserves the active
-buffer; closing the active one focuses the most recent survivor. Closing the last
-one leaves a fresh empty buffer. Ctrl+W enters Normal,
-including failure. `:kill`/`:kill!` remain available; `:kill!` is explicit discard.
+Unsaved/new/missing work reports an error without writing or discarding it.
+Closing another buffer preserves the active buffer; closing the active one
+focuses the most recent survivor. Closing the last one leaves a fresh empty buffer.
+`:kill`/`:kill!` remain available; `:kill!` is explicit discard.
 Comma remains literal in Insert and command/search prompts.
 
 A **read-only preview on the right** follows the highlighted buffer without

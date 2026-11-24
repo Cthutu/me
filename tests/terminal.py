@@ -861,21 +861,27 @@ def buffer_picker(binary, folder):
         session.drain(0.15)
         session.send(b"\x1b", 0.15)
         session.send("iD")
+        session.normal()
+        session.send(",")
+        session.send(b"\x1b[A")  # current buffer is first in access order
         changed = session.send(b"\x17")
         assert b"unsaved" in screen(session), "Ctrl W discarded unsaved work"
         assert alpha.read_bytes() == b"QRSalpha"
+        session.send(b"\x1b", 0.15)
         session.send(b"\x1a\x13")
         assert alpha.read_bytes() == b"QRSalpha"
         # Associated control text must not close the fallback buffer as well.
-        session.send(b"\x1b[119;5;23u\x1b[119;5:3u")
         session.send(",")
+        session.send(b"\x1b[A")
+        session.send(b"\x1b[119;5;23u\x1b[119;5:3u")
         assert b"2/2" in screen(session)
         session.send(b"\x1b", 0.15)
-        session.send(b"\x17")  # close clean Beta, returning to Gamma
+        session.send(",")
+        session.send(b"\x1b[A\x17\x1b", 0.15)  # close current Beta in picker
         session.send("iG")
         session.send(b"\x13")
         assert gamma.read_bytes() == b"CGgamma"
-        session.send(b"\x17")  # last clean buffer -> fresh empty buffer
+        session.send(",\x17\x1b", 0.15)  # last clean buffer -> fresh empty buffer
         session.send(",\r")
         assert b"[unnamed]" in screen(session)
         session.quit()
@@ -1829,6 +1835,40 @@ def pane_controls(binary, folder):
         session.quit()
 
 
+def pane_ctrl_w(binary, folder):
+    for name, text in (("alpha.txt", b"ALPHA"), ("beta.txt", b"BETA"),
+                       ("gamma.txt", b"GAMMA")):
+        (folder / name).write_bytes(text)
+    with Session(binary, folder, "-r", "alpha.txt") as session:
+        session.send(" wh")
+        session.command("e beta.txt")
+        session.send(" wv")
+        session.command("e gamma.txt")
+        shown = screen(session)
+        assert all(text in shown for text in (b"ALPHA", b"BETA", b"GAMMA")), shown
+        session.send(b"\x17")
+        shown = screen(session)
+        assert shown.count(b"ALPHA") == 1 and shown.count(b"BETA") == 1, shown
+        assert b"GAMMA" not in shown, "Ctrl W left the current pane open"
+        # Closing the lower pane restores the full-height right-hand pane.
+        assert shown.splitlines()[0].count(b"BETA") == 1, shown
+        session.send(b"\x1b[119;5;23u\x1b[119;5:3u")
+        shown = screen(session)
+        assert shown.count(b"ALPHA") == 1 and b"BETA" not in shown, shown
+        session.send("iUNSAVED")
+        session.normal()
+        session.send(" wh")
+        session.send(b"\x17")
+        shown = screen(session)
+        assert shown.count(b"UNSAVEDALPHA") == 1, shown
+        session.send(b"\x17")  # keep the final pane and unsaved work
+        assert screen(session).count(b"UNSAVEDALPHA") == 1
+        session.send(",gamma.txt")
+        session.send("\r")
+        assert b"GAMMA" in screen(session), "closed pane's buffer was removed"
+        session.quit()
+
+
 def pane_file_picker(binary, folder):
     (folder / "first.txt").write_bytes(b"FIRST")
     (folder / "second.txt").write_bytes(b"SECOND")
@@ -1930,7 +1970,7 @@ def main():
     allowed = {"libc.so.6", "libm.so.6", "libgcc_s.so.1", "linux-vdso.so.1"}
     unexpected = {name for name in names if name not in allowed and not Path(name).name.startswith("ld-linux-")}
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
-    checks = [exit_input_cleanup, pane_controls, pane_file_picker, file_picker, file_picker_stale_and_cancel, cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
+    checks = [exit_input_cleanup, pane_controls, pane_ctrl_w, pane_file_picker, file_picker, file_picker_stale_and_cancel, cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
               search_replace_and_buffers, search_origins, slash_replacement, confirmation_recovery, byte_paths_and_checkpoint_failures,
               second_instance, crash_and_signals, undo_caret, word_delete, buffer_picker, buffer_picker_close_selected, buffer_picker_preview, buffer_picker_recovery, buffer_picker_unicode_bytes, enhanced_key_actions, keyboard_diagnostics, hjkl_and_line_selection, leader_overlay, control_hjkl, duplicate_selection, command_completion, live_completion_filter, file_completion, home_paths, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
     selected = [check for check in checks if args.filter in check.__name__]

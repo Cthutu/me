@@ -946,8 +946,11 @@ impl Editor {
                 on self.prompt_kind == 0 => self.open_file_picker()?
                 return
             }
-            CloseBuffer => {
-                self.close_buffer(scratch, force = no, normalise = yes)?
+            ClosePane => {
+                on self.prompt_kind != 0 => self.prompt_cancel()
+                self.workspace.active_view().interaction.state = Interaction.Normal
+                self.pane_operation(LeaderOperation.ClosePane)?
+                self.workspace.active_view().interaction.state = Interaction.Normal
                 return
             }
             else => {
@@ -2658,16 +2661,22 @@ test "buffer picker starts at previous access and Ctrl W closes only saved buffe
     editor.key(^scratch,
                TermKeyEvent { scan_code: W action: Release modifiers: TERM_MOD_CONTROL ... })
     assert editor.workspace.documents.count == 3
+    editor.open_buffer_picker(^scratch)
+    editor.picker.selected = 0
     editor.key(^scratch,
                TermKeyEvent { scan_code: W action: Press modifiers: TERM_MOD_CONTROL character: 23.as(u32) ... })
     editor.character(^scratch, 23)
+    editor.picker.active = no
     assert editor.workspace.documents.count == 2
     assert bytes_text(editor.workspace.active_document().path) == "/gamma.n"
     assert editor.workspace.active_view().interaction.state == Interaction.Normal
     editor.character(^scratch, 'i'.as(u32))
     editor.character(^scratch, ','.as(u32))
     assert !editor.picker.active && editor.workspace.active_document().text.text() == ","
+    editor.open_buffer_picker(^scratch)
+    editor.picker.selected = 0
     editor.character(^scratch, 23)
+    editor.picker.active = no
     assert editor.workspace.documents.count == 2
     assert editor.workspace.active_document().text.text() == ","
     assert editor.workspace.active_view().interaction.state == Interaction.Normal
@@ -2868,4 +2877,78 @@ test "Space leader waits for help, cancels and leaves Insert and prompts literal
     editor.prompt_open(':'.as(u32), initial = "e")
     editor.character(^scratch, 32)
     assert !editor.leader && bytes_text(editor.prompt) == "e "
+}
+
+test "Ctrl W closes only the focused pane and retains shared and unsaved buffers" {
+    scratch : arena
+    defer scratch.done()
+    editor : Editor
+    editor.workspace.lock_fd = -1
+    defer editor.release()
+    editor.workspace.add_empty()
+    editor.character(^scratch, 'A'.as(u32))
+    editor.workspace.active_view().interaction.state = Interaction.Normal
+    on editor.pane_operation(LeaderOperation.SplitHorizontal) {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    editor.workspace.add_empty()
+    editor.character(^scratch, 'B'.as(u32))
+    editor.workspace.active_view().interaction.state = Interaction.Normal
+    right := editor.workspace.surface.view_id
+    on editor.pane_operation(LeaderOperation.SplitVertical) {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    editor.workspace.add_empty()
+    editor.character(^scratch, 'C'.as(u32))
+    editor.workspace.active_view().interaction.state = Interaction.Normal
+    editor.key(^scratch,
+               TermKeyEvent {
+        scan_code : W
+        action    : Release
+        modifiers : TERM_MOD_CONTROL
+        ...
+    })
+    assert editor.workspace.active_document().text.text() == "C"
+    editor.key(^scratch, TermKeyEvent {
+        scan_code : W
+        action    : Press
+        modifiers : TERM_MOD_CONTROL
+        character : 23.as(u32)
+        ...
+    })
+    editor.character(^scratch, 23)
+    assert editor.workspace.surface.view_id == right
+    assert editor.workspace.active_document().text.text() == "B"
+    assert editor.workspace.panes.mounted(0)
+    assert editor.workspace.documents.count == 3
+    assert editor.workspace.documents[2].text.text() == "C"
+    editor.character(^scratch, 23)
+    assert editor.workspace.surface.view_id == 0
+    assert !editor.workspace.panes.mounted(right)
+    assert editor.workspace.active_document().text.text() == "A"
+    -- Last-pane close is harmless, even with unsaved text.
+    editor.character(^scratch, 23)
+    assert editor.workspace.surface.view_id == 0 && !editor.quit
+    assert editor.workspace.documents.count == 3
+    on editor.pane_operation(LeaderOperation.SplitHorizontal) {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    editor.character(^scratch, 23)
+    assert editor.workspace.surface.view_id == 0
+    assert editor.workspace.active_document().text.text() == "A"
 }

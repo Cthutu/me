@@ -445,3 +445,11 @@ Matt clarified that h means a horizontal arrangement (side by side) and v means 
 vertical arrangement (above/below), correcting the original T5 mapping. Brighten
 the focused pane background to distinguish it, and fix terminal input reports
 leaking into the shell on exit. These are agreed fixes, not proposed controls.
+
+
+## Ctrl+W pane closing (T5b)
+
+The reported pane-closing bug is resolved by using the existing pane-close action
+for ordinary Ctrl+W. Buffers remain available, including unsaved work; other panes
+retain their contents and navigation. The last pane stays open. Buffer-picker
+Ctrl+W still removes its highlighted saved buffer; explicit :kill[!] is unchanged.

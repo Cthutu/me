@@ -33,7 +33,8 @@ refreshes. See the [README](../README.md) for usage and explicit limitations.
 - Normal comma opens the first reusable large fuzzy popup: Unicode full-case-folded
   subsequence matching, MRU buffer order, second-row initial selection and immediate
   Enter acceptance. Escape cancels; query/selection remain separate from text views.
-  Ctrl+W safely closes the highlighted picker buffer (otherwise the active one),
+  Ctrl+W safely removes the highlighted picker buffer; outside the popup it
+  closes only the current pane and retains the buffer (T5b). Picker deletion
   preserves focus when closing another buffer, focuses MRU surviving work when needed and
   refuses unsaved work. Input-stream suppression survives switching/closing views.
 - Enhanced cursor/Home/End/tilde-key releases no longer execute commands. Nerd
@@ -581,3 +582,22 @@ green. A rendered pane preview was inspected. Required release installation
 follows ME commit/push, with installed exit/pane/leader smoke checks. No direct
 libc usage, new external dependencies, private compiler override or ME escape
 handling workaround was introduced.
+
+
+## Ctrl+W pane-close correction (T5b)
+
+Ordinary Ctrl+W now closes the focused pane using Space w c's operation, retaining
+its buffer and unsaved work. It keeps the last pane open and preserves other
+panes' buffers and navigation. Picker Ctrl+W still removes the highlighted saved
+buffer without leaving the popup; :kill[!] remains explicit buffer deletion.
+The command is named ClosePane throughout keyboard dispatch.
+
+Verification: 167 native tests (55 ME + 112 imported), all 42 debug terminal
+groups and eight focused release pane/buffer-picker groups passed. The new PTY
+regression first reproduced a three-pane layout retaining the closed pane and
+duplicating a surviving buffer. It now verifies legacy/enhanced close events,
+shared unsaved work, the final pane and reopening a retained buffer. Formatting
+is idempotent; type checking, Python compilation and diff checks passed. A final
+prompt-cancellation preservation passed native and focused release checks.
+Commit/push and required release installation follow, with installed pane-close
+and picker-deletion regression checks.

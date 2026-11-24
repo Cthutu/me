@@ -373,6 +373,21 @@ ELF shared-library dependencies or interpreter. Release installation uses
   A rendered preview was visually checked. Required ME installation follows
   commit/push, with installed exit/pane/leader smoke checks.
 
+### T5b — Ctrl+W closes the focused pane — done
+
+- Ordinary Ctrl+W uses pane closing rather than buffer deletion. Collapse only
+  the focused pane, retaining buffers and unsaved work; keep the last pane open.
+- Preserve other panes' buffer identities and navigation, including shared views.
+- Retain selected-buffer deletion/refusal inside the buffer popup and :kill[!].
+- Regression coverage includes three distinct buffers, shared/unsaved buffers,
+  legacy control bytes, enhanced reports, ignored releases and paired text.
+- Verification: 167 native tests (55 ME + 112 imported), all 42 debug PTY groups
+  and all eight release pane/buffer-picker groups passed. Formatting is
+  idempotent; type checking, Python compilation and diff checks passed. The final
+  prompt-cancellation preservation also passed native and focused release checks.
+- Required commit/push and release installation follow verification, with installed
+  Ctrl+W pane and selected-buffer popup regression checks.
+
 ### T6 — Explicit repeat recording and playback
 
 - Implement the agreed recording/replay direction in design §12: Normal-state

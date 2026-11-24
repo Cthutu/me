@@ -45,7 +45,7 @@ impl Keyboard {
             on key.scan_code {
                 W => {
                     self.suppress_text = key.character != nil
-                    return Command.CloseBuffer
+                    return Command.ClosePane
                 }
 
                 S => {
@@ -172,7 +172,7 @@ impl Keyboard {
         }
         -- Traditional terminals send control bytes without modifier metadata.
         on rune {
-            23  => return Command.CloseBuffer
+            23  => return Command.ClosePane
             19  => return Command.Save
             26  => return Command.Undo
             18  => return Command.Redo
@@ -242,7 +242,7 @@ test "comma is Normal-only and Ctrl W suppresses associated text without acting 
     }
     on keyboard.key(TermKeyEvent { scan_code: W action: Press modifiers: TERM_MOD_CONTROL character: 23.as(u32) ... }) {
         command => on command {
-            CloseBuffer => {
+            ClosePane => {
             }
 
             else => {
@@ -258,7 +258,7 @@ test "comma is Normal-only and Ctrl W suppresses associated text without acting 
     assert keyboard.character(23, Interaction.Normal) == nil && !keyboard.suppress_text
     on keyboard.character(23, Interaction.Insert) {
         command => on command {
-            CloseBuffer => {
+            ClosePane => {
             }
 
             else => {

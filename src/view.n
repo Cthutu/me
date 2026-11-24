@@ -52,7 +52,7 @@ pub Command :: enum {
     Save
     BufferPicker
     FilePicker
-    CloseBuffer
+    ClosePane
     Prompt(u32)
     SearchNext(bool)
     Error(string)

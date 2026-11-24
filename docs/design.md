@@ -363,15 +363,19 @@ clears it. Keep the top query full-width; hide preview on narrow/short terminals
 and give the list the full width. This first consumer does not yet implement the
 proposed overlay stack, asynchronous discovery or pane destinations.
 
-Ctrl+W closes the highlighted buffer when the buffer picker is open, otherwise
-the active buffer, only when saved. No matches means no action. Keep the picker
+Outside popups, Ctrl+W closes the focused pane, retaining its buffer and all
+other panes' buffers and navigation state. It enters Normal, including from
+Insert, and keeps the final pane open. Unsaved work is retained. This supersedes
+the original active-buffer deletion binding (T5b).
+
+Ctrl+W removes the highlighted buffer when the buffer picker is open, only when saved. No matches means no action. Keep the picker
 open after success or refusal, retaining query/caret and selecting the same result
 row, clamped to the last remaining row. Rebuild candidate IDs/annotations/preview
 after removal; an empty result set stays open. Closing another buffer preserves
 the active buffer.
 Unsaved/new/missing work errors without writing/discarding it; explicit `:kill!`
 remains the force path. Closing the active buffer focuses MRU surviving work or
-creates a fresh empty buffer. Ctrl+W enters Normal on both
+creates a fresh empty buffer. Picker Ctrl+W enters Normal on both
 success/failure; legacy `:kill` retains its existing empty-buffer Insert behaviour.
 Key/text suppression follows the input stream across view changes/destruction,
 so an associated Enter/Ctrl+W text event cannot affect the destination buffer.
@@ -1461,3 +1465,14 @@ reports with a 25 ms quiet period and a 100 ms drain bound, then atomically flus
 unread input when restoring terminal mode. ME uses this library behaviour rather
 than a local escape/input workaround. PTY checks retain the slave after normal,
 forced and signal exits and verify that fresh shell input has no report prefix.
+
+
+## 30. Ctrl+W pane closing (T5b)
+
+Route ordinary Ctrl+W through the same pane-close operation as Space w c, rather
+than deleting a document and rebinding its views. Preserve the closed pane's
+buffer, including unsaved work, and leave other panes' buffers, selections and
+scrolling intact. Keep the final pane open. Both legacy control bytes and enhanced
+key reports work; paired text and releases cannot close a second pane.
+The buffer popup retains its selected-buffer deletion and dirty-buffer refusal;
+`:kill[!]` remains explicit buffer deletion.
