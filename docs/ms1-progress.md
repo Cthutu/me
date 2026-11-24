@@ -623,3 +623,37 @@ groups and the focused release new-buffer scenario passed, alongside type
 checking, idempotent formatting, Python compilation and diff checks. Required
 commit/push and release installation follow, with the installed Ctrl+N scenario
 checked afterwards.
+
+
+## Explicit repeat recording and playback (T6)
+
+Normal [ begins a draft, ] finishes and . replays the completed sequence. The
+active pane shows REC; Insert brackets/dots remain literal. One session-owned
+semantic recipe supports editing/navigation in the current buffer, with mode and
+selection transitions, Unicode text and internal clipboard commands. The completed
+recipe can be replayed in another buffer but is not stored in continuation.
+File/pane/buffer/search/Space operations are refused during recording. See design
+§32 for delivery policies, correction semantics, external-change cancellation and
+memory/action bounds.
+
+Recording retains per-operation undo; corrections disable/restore captured edits
+and their positioning, with pre-recording undo refused. Playback reports every
+mutation to shared views, then groups appended history into a single replacement
+record with UTF-8 scalar boundaries and invoking caret hints. The normal codec
+already stores this history. Partial failures retain one undoable result and
+identify the failing step. Navigation-only playback preserves a redo branch;
+zero-net playback still marks undo/redo history-position changes for checkpointing.
+
+Native regressions cover corrected recipes, undo/redo positioning and branches,
+owned Unicode payloads, literal delimiters, shared-view adjustment, recovery,
+BOM/CRLF grouping, partial failures, zero-net history, scope/count refusal,
+external cancellation and escaping the action limit. Two new PTY groups exercise
+actual legacy/enhanced input, the REC marker, multiple buffers/panes, grouped
+undo/redo through restart, session-only recipe storage and partial failures.
+
+Verification: 176 native tests (64 ME + 112 imported), all 45 debug and 45 release
+PTY groups, idempotent formatting, type checking, Python compilation and diff
+checks passed. Final guards (including single-count refusal and zero-net history)
+have native coverage, and the final repeat/count scenarios passed on both debug
+and release executables. Commit/push and required installation follow, with both
+repeat PTY scenarios checked against the installed binary.

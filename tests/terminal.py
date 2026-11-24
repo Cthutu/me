@@ -1869,6 +1869,80 @@ def pane_ctrl_w(binary, folder):
         session.quit()
 
 
+def repeat_recording(binary, folder):
+    path = folder / "original.txt"
+    path.write_bytes(b"BASE\n")
+    with Session(binary, folder, "-r", path.name) as session:
+        session.send("1[")
+        assert b"does not accept a count" in screen(session) and b" REC" not in screen(session)
+        session.normal()
+        session.send("[")
+        assert b" REC" in screen(session), screen(session)
+        session.send("iAB")
+        session.send(b"\x1b[122;5;26u\x1b[122;5:3u")  # undo B once
+        session.send("iC")
+        session.normal()
+        session.send("1]")
+        assert b"does not accept a count" in screen(session) and b" REC" in screen(session)
+        session.normal()
+        session.send("]")
+        assert b" REC" not in screen(session), screen(session)
+        session.send("1.")
+        assert b"does not accept a count" in screen(session)
+        session.normal()
+        session.send(" wh")
+        session.send(b"\x0e")
+        session.normal()
+        session.send(".")
+        session.send(b"\x13")
+        session.send("replayed.txt\r")
+        replayed = folder / "replayed.txt"
+        assert replayed.read_bytes() == b"AC", replayed.read_bytes()
+        session.send(b"\x1a")
+        session.send(b"\x13")
+        assert replayed.read_bytes() == b"", "replay was not one undo unit"
+        session.send(b"\x12\x13")
+        assert replayed.read_bytes() == b"AC", "redo lost replay grouping"
+        session.send(".")
+        session.send(b"\x13")
+        assert replayed.read_bytes() == b"ACAC"
+        session.send(b"\x1a\x13")
+        assert replayed.read_bytes() == b"AC"
+        assert b"ACBASE" in screen(session), "replay changed another pane's buffer"
+        assert path.read_bytes() == b"BASE\n"
+        session.quit()
+    with Session(binary, folder) as session:
+        session.send(".")
+        assert b"No recorded sequence" in screen(session), "recording escaped session scope"
+        session.send(b"\x1a\x13")
+        assert replayed.read_bytes() == b"", "recovered history lost grouping"
+        session.send(b"\x12\x13")
+        assert replayed.read_bytes() == b"AC"
+        session.quit()
+
+
+def repeat_failure(binary, folder):
+    (folder / "source.txt").write_bytes(b"abc")
+    with Session(binary, folder, "-r", "source.txt") as session:
+        session.send("[iX")
+        session.normal()
+        session.send("wy]")  # selection/copy succeeds in this buffer
+        session.send(b"\x0e")
+        session.normal()
+        session.send(".")  # after inserting X, w at EOF leaves no selection for y
+        shown = screen(session)
+        assert b"Replay stopped at step" in shown and b"No selection" in shown, shown
+        session.send(b"\x13")
+        session.send("partial.txt\r")
+        partial = folder / "partial.txt"
+        assert partial.read_bytes() == b"X", "failed replay rolled back completed work"
+        session.send(b"\x1a\x13")
+        assert partial.read_bytes() == b"", "partial result did not undo as one unit"
+        session.send(b"\x12\x13")
+        assert partial.read_bytes() == b"X"
+        session.quit()
+
+
 def new_buffer(binary, folder):
     path = folder / "original.txt"
     path.write_bytes(b"ORIGINAL")
@@ -2002,7 +2076,7 @@ def main():
     allowed = {"libc.so.6", "libm.so.6", "libgcc_s.so.1", "linux-vdso.so.1"}
     unexpected = {name for name in names if name not in allowed and not Path(name).name.startswith("ld-linux-")}
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
-    checks = [new_buffer, exit_input_cleanup, pane_controls, pane_ctrl_w, pane_file_picker, file_picker, file_picker_stale_and_cancel, cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
+    checks = [repeat_recording, repeat_failure, new_buffer, exit_input_cleanup, pane_controls, pane_ctrl_w, pane_file_picker, file_picker, file_picker_stale_and_cancel, cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
               search_replace_and_buffers, search_origins, slash_replacement, confirmation_recovery, byte_paths_and_checkpoint_failures,
               second_instance, crash_and_signals, undo_caret, word_delete, buffer_picker, buffer_picker_close_selected, buffer_picker_preview, buffer_picker_recovery, buffer_picker_unicode_bytes, enhanced_key_actions, keyboard_diagnostics, hjkl_and_line_selection, leader_overlay, control_hjkl, duplicate_selection, command_completion, live_completion_filter, file_completion, home_paths, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
     selected = [check for check in checks if args.filter in check.__name__]

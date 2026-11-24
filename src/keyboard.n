@@ -205,7 +205,11 @@ impl Keyboard {
             self.count = self.count * 10 + (rune - '0'.as(u32)).as(usize)
             return nil
         }
-        count := self.take_count()
+        counted := self.count > 0
+        count   := self.take_count()
+
+        on counted &&
+            (rune == '['.as(u32) || rune == ']'.as(u32) || rune == '.'.as(u32)) => return Command.Error("Command does not accept a count")
         direction: ?Direction = on rune {
             'h'.as(u32)  => Direction.Left
             'j'.as(u32)  => Direction.Down
@@ -222,6 +226,9 @@ impl Keyboard {
             'i'.as(u32), 'a'.as(u32), 'A'.as(u32), 'I'.as(u32), 'o'.as(u32), 'O'.as(u32)  => Command.EnterInsert(rune)
             'w'.as(u32)                                                                   => Command.SelectWord(count)
             'q'.as(u32)                                                                   => Command.SelectLine(count)
+            '['.as(u32)                                                                   => Command.RecordStart
+            ']'.as(u32)                                                                   => Command.RecordStop
+            '.'.as(u32)                                                                   => Command.Replay
             ','.as(u32)                                                                   => Command.BufferPicker
             'y'.as(u32)                                                                   => Command.Copy
             'x'.as(u32)                                                                   => Command.Cut
@@ -463,4 +470,28 @@ test "Ctrl HJKL mirror modified arrows with counts, Shift and associated text su
             }
         }
     }
+}
+
+test "repeat delimiters are Normal-only consume counts and ignore key releases" {
+    keyboard : Keyboard
+    for rune in ['['.as(u32), ']'.as(u32), '.'.as(u32)] {
+        assert keyboard.character(rune^, Interaction.Insert) == nil
+        keyboard.count = 1
+        on keyboard.character(rune^, Interaction.Normal) {
+            command => on command {
+                Error(_) => {
+                }
+
+                else => {
+                    assert no
+                }
+            }
+
+            else => {
+                assert no
+            }
+        }
+        assert keyboard.count == 0
+    }
+    assert keyboard.key(TermKeyEvent { scan_code: Dot action: Release character: '.'.as(u32) ... }) == nil
 }

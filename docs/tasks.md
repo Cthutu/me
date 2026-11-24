@@ -399,14 +399,22 @@ ELF shared-library dependencies or interpreter. Release installation uses
   compilation and diff checks. Required commit/push and release installation
   follow, with the installed new-buffer scenario checked afterwards.
 
-### T6 — Explicit repeat recording and playback
+### T6 — Explicit repeat recording and playback — done
 
 - Implement the agreed recording/replay direction in design §12: Normal-state
   `[` starts recording, `]` ends it and `.` replays; brackets remain text in Insert.
 - Recording uses normal individual undo units; one replay is one undo unit.
 - Preserve the agreed failure policy: retain completed edits as a single undoable
   group and report the failure, rather than automatically rolling them back.
-- Resolve remaining capture/state/selection, redo, scope and storage choices first.
+- First scope: current-buffer editing/navigation and one recording per session,
+  reusable in another buffer. Capture semantic mode/selection changes, correct
+  recipes on undo/redo, refuse file/pane/buffer/Space actions and retain grouped
+  history in continuation. Initial policies and bounds are in design §32.
+- Verified 176 native tests (64 ME + 112 imported), all 45 debug and 45 release
+  terminal groups, and final focused repeat checks on both profiles, including
+  count refusal. Formatting is idempotent; type checking, Python compilation
+  and diff checks passed. Required commit/push and release installation follow,
+  with installed recording/failure PTY scenarios checked afterwards.
 
 Language intelligence, desktop clipboard and configuration are not added to this
 queue by implication.

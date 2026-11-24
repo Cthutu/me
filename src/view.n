@@ -54,6 +54,9 @@ pub Command :: enum {
     FilePicker
     ClosePane
     NewBuffer
+    RecordStart
+    RecordStop
+    Replay
     Prompt(u32)
     SearchNext(bool)
     Error(string)

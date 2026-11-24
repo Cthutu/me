@@ -504,8 +504,8 @@ not separately settle restoration in every view.
 - During recording, undo remains single-operation, not sequence-sized.
 - `.` replays the completed sequence.
 - **One replay is one undo unit:** undo reverses the entire execution of the
-  sequence, not one internal operation at a time. Redo should preserve that
-  grouping (proposed).
+  sequence, not one internal operation at a time. Redo preserves that
+  grouping (delivered under T6).
 
 This explicitly supersedes the earlier proposal to preserve individual undo
 boundaries during replay. The same commands can execute as separate history
@@ -518,16 +518,17 @@ buffer history group. That group does not imply UI/input state is buffer-owned.
 Do not record undo commands for playback. The agreed direction is for undo
 while recording to remove the undone operation from the captured sequence, so
 playback reproduces the corrected edit rather than an intermediate mistake plus
-an undo. Exact mechanics, particularly redo and edits predating recording, still
-need definition.
+an undo. T6's initial correction and history-boundary policies are recorded in
+§32 below.
 
 If replay fails partway, keep the partial result as a single undoable group and
 report why/where it stopped. Do not automatically roll back its completed edits.
 This supersedes the proposed rollback policy.
 
-Still decide: capture of interaction-state transitions; replay's final
-selection/state; supported command scopes; nested recording; repeat storage
-scope; and whether `.` also supports an implicit last-change sequence.
+T6 delivers the first current-buffer editing/navigation implementation, with one
+recording per session. Its initial policies for transitions, selections,
+corrections, scope and storage are recorded in §32. Named macros, cross-buffer
+recording and implicit last-change capture remain outside this task.
 
 ## 13. First milestone — agreed direction
 
@@ -1488,3 +1489,51 @@ Legacy byte 0x0e and enhanced Ctrl+N reports have the same action; ignore releas
 and suppress associated text so a single press creates one buffer. Counts are
 unsupported and consumed with an error. Each new buffer has its own empty
 history; normal continuation includes it.
+
+
+## 32. Explicit repeat implementation (T6)
+
+Normal [ starts a draft, ] finishes and . replays the completed sequence. Brackets
+and dots remain literal Insert text. A REC marker appears in the active pane.
+The agreed first scope is editing/navigation in the current buffer with one
+completed sequence held for the running editor session, reusable in any buffer.
+The draft is bound to its original view/document; external text changes cancel
+it. A completed sequence is transient, while its grouped undo history persists
+through the normal continuation codec.
+
+Initial delivery policies:
+
+- Capture semantic Command invocations, including modes, movement counts,
+  selection extension, indentation, Unicode text, deletion, duplication and
+  clipboard operations. Own typed text separately from scratch/input storage.
+  Copy/cut/paste use the current internal clipboard; searches, prompts, saves,
+  file/buffer/pane operations and Space commands are refused during recording.
+- Begin playback from the current caret/selection. Execute the original relative
+  commands using the destination document's editing policies and retain the
+  resulting state/selection. Do not copy absolute source offsets or source text.
+  Escape capture represents actual mode/selection changes, excluding message or
+  pending-count dismissal. Playback Escape is independent of transient messages.
+- Undo during recording disables the corresponding captured edit and subsequent
+  navigation, matching history's restored edit caret. Redo reinstates that edit
+  and its preceding positioning. Keep the correction's Normal transition, rather
+  than capturing an executable undo/redo command. A fresh edit discards the undone
+  recipe branch. Refuse undo before the draft's history boundary and redo outside
+  its captured edits. Ordinary recording still uses individual history records.
+- Nested recording/replay and counts are refused. Starting a draft preserves the
+  previous completed sequence; an empty finished draft preserves it too. There is
+  no implicit last-change capture. Up to 4,096 actions (one reserved for final
+  Escape) and 1 MiB of owned typed text bound memory and replay duration.
+- Playback executes synchronously in the editor callback with per-edit reports
+  adjusting other shared views. Afterwards, collapse the newly appended history
+  records into one replacement record spanning the minimal changed byte interval,
+  widened to UTF-8 scalar boundaries. Retain invoking caret hints. No storage
+  mutation occurs during history grouping, and a navigation-only playback retains
+  the redo branch. Existing snapshot versions need no new format.
+- Always finish history grouping, including on failure. Return a one-based failing
+  step and its reason; completed edits stay as one undo/redo unit. Do not roll back
+  completed text or replay clipboard side effects. BOMs and line endings remain
+  governed by existing buffer/view rules.
+
+Source: src/repeat.n owns recipes and correction metadata; src/editor.n handles
+capture, execution and scope; src/document.n groups history; src/keyboard.n and
+src/terminal.n provide bindings and the recording indicator.

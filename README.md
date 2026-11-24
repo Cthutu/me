@@ -112,6 +112,7 @@ these letters remain literal text in Insert and prompts.
 | Ctrl+Z / Ctrl+R | Undo / redo |
 | Ctrl+S | Save active document; unnamed opens `:w ` |
 | Ctrl+N | New unnamed buffer in the current pane; enter Insert |
+| Normal `[` / `]` / `.` | Start recording / finish recording / replay |
 | `,` | Normal-only buffer picker; Enter switches, Escape cancels |
 | Normal Space Space / `:files` | Open files; hold after the first Space for the key menu |
 | Space w h / v / s | Split side by side / above/below / automatically |
@@ -127,6 +128,30 @@ preserves state. Each terminal character event, deletion, paste and duplicate is
 undo operation. Undo/redo clears selection and restores the operation's before/after
 caret, rather than replaying subsequent navigation. Older history without caret
 hints falls back to the start of the affected edit.
+
+Normal `[` starts a repeat recording; perform edits/navigation, leave Insert with
+Escape, then `]` finishes. The active pane shows `REC`. `.` runs the completed
+sequence from the current caret/selection. Brackets and dots remain text in Insert.
+For example, `[iHello`, Escape, `]` records insertion of `Hello`; moving elsewhere
+and pressing `.` inserts it there.
+
+Recording retains ordinary per-operation undo. Undo removes its edit and the
+subsequent navigation from the recipe; redo reinstates that edit and its preceding
+positioning. Undo cannot cross the recording's start. A new edit discards the
+undone branch. Playback is one undo/redo unit, including after restart. On failure,
+completed edits stay in one undoable unit and the message identifies the step.
+
+The first version records current-buffer editing, selection, navigation and mode
+changes. Copy/cut/paste use the current internal clipboard. Search, file commands,
+saving, buffer/pane changes and Space commands are refused while recording; finish
+with `]` first. Navigation/editing uses the destination buffer's normal policies,
+including line endings. Final state/selection follows the recorded commands.
+There is one completed recording per running session, reusable in another buffer;
+it is not saved in continuation. Starting a new recording retains the previous
+one until a non-empty recording finishes. Nested recording/replay and counted
+record/replay commands are unsupported; `.` has no implicit last-change action.
+Recordings are bounded to 4,096 actions (including a reserved final Escape) and
+1 MiB of typed text. External changes to the recording buffer cancel the draft.
 
 Ctrl+H/L move by word and Ctrl+J/K scroll down/up, matching Ctrl+arrows in
 Normal and Insert. Normal counts and Shift selection extension follow the same

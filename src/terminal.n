@@ -814,7 +814,9 @@ impl Terminal {
                 yes   => self.scratch.pr($"  {text_view.keyboard.count}")
                 else  => ""
             }
-            status := self.scratch.pr($"{persistence}{conflict}{missing}{modified} │ {caret_line + 1}:{display_column(doc.text(), doc.line_start(caret_line), view.selection.active) + 1}{count} │ {text_view.document_id + 1}/{editor.workspace.documents.count} │ {path}")
+            recording := on active && editor.recording.active { yes => " REC" else => "" }
+            status    := self.scratch.pr($"{recording}{persistence}{conflict}{missing}{modified} │ {caret_line + 1}:{display_column(doc.text(), doc.line_start(caret_line), view.selection.active) + 1}{count} │ {text_view.document_id + 1}/{editor.workspace.documents.count} │ {path}")
+
             self.text(0, status_y, badge, PAPER, caret_paper, width)
             on width > badge_width => self.text(badge_width, status_y, status, INK, status_paper, width - badge_width)
         }

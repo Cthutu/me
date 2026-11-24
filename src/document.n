@@ -119,6 +119,58 @@ impl Document {
         return position
     }
 
+    -- Collapse already-executed semantic edits into one contiguous history unit.
+    -- Views received each original edit; this changes history, not storage.
+    pub group_history :: fn (self         : ^Self,
+                             base         : usize,
+                             before       : string,
+                             caret_before : usize,
+                             caret_after  : usize) {
+        on self.applied == base => return
+        start : usize = 0
+        after         := self.text()
+
+        for start < before.count &&
+            start < after.count &&
+            before[start] == after[start] {
+            start += 1
+        }
+        -- Common byte prefixes/suffixes can end inside a UTF-8 scalar.
+        for start > 0 &&
+            start < before.count &&
+            (before[start] & 0xc0) == 0x80 {
+            start -= 1
+        }
+        old_end := before.count
+        new_end := after.count
+
+        for old_end > start &&
+            new_end > start &&
+            before[old_end - 1] == after[new_end - 1] {
+            old_end -= 1
+            new_end -= 1
+        }
+        for old_end < before.count && (before[old_end] & 0xc0) == 0x80 {
+            old_end += 1
+            new_end += 1
+        }
+        record : EditRecord
+        record.start = start
+        record.caret_before = caret_before
+        record.caret_after = caret_after
+        record.removed.resize_undefined_to(old_end - start)
+        record.removed[..] = before[start..old_end].as([]u8)
+        record.added.resize_undefined_to(new_end - start)
+        record.added[..] = after[start..new_end].as([]u8)
+        for self.history.count > base {
+            removed := self.history.pop()
+            removed.removed.free()
+            removed.added.free()
+        }
+        self.history.push(record)
+        self.applied = base + 1
+    }
+
     -- Extend the last undo unit with a disjoint edit to its right. Each change
     -- is still reported separately to views, while every checkpoint contains a
     -- complete, replayable history record (no open transaction to lose on exit).
@@ -303,6 +355,47 @@ test "document history is operation-sized, branches safely, and preserves line e
 
         error! => {
             assert no, error.show()
+        }
+    }
+}
+
+test {
+
+    exercise_grouped_history :: fn () -> void\EditError {
+        doc : Document
+        defer doc.release()
+        original := "﻿éabc\r\nZ"
+        doc.load(original)?
+        base := doc.applied
+        _    := doc.edit({ start: 3 end: 5 }, "ê")?
+        _    := doc.edit({ start: doc.text().count - 1 end: doc.text().count }, "👩‍💻")?
+
+        doc.group_history(base, original, 3, doc.text().count)
+        assert doc.history.count == 1 && doc.applied == 1
+        assert doc.history[0].start == 3
+        final := "﻿êabc\r\n👩‍💻"
+        assert doc.text() == final
+        _ := doc.undo_edit()
+        assert doc.text() == original
+        _ := doc.redo_edit()
+        assert doc.text() == final
+        -- Navigation-only replay preserves an existing redo branch.
+        _ := doc.undo_edit()
+        doc.group_history(0, original, 3, 3)
+        assert doc.history.count == 1 && doc.applied == 0
+        _ := doc.redo_edit()
+        assert doc.text() == final
+    }
+
+}
+
+test "compound history preserves UTF-8 boundaries BOM CRLF and a navigation-only redo branch" {
+    on exercise_grouped_history() {
+        _success => {
+        }
+
+        _error! => {
+            assert no
         }
     }
 }

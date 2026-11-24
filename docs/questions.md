@@ -297,8 +297,9 @@ Remaining:
 
 - Undo cursor restoration and compound-operation boundaries (paste, replacement,
   automatic pairing/indentation).
-- Recording corrections, redo, pre-recording undo, replay's final state/selection,
-  failure messages, command scope, and repeat storage scope.
+- Broader repeat scopes and named macros. T6's first implementation policies for
+  corrections, redo, state/selection, failure messages and session storage are
+  documented in design §32.
 - Exact keybindings and interaction states; pending-input display.
 - Buffer capabilities, view-kind compatibility, and facet composition contracts.
 - Text representation, indexes, revisions, anchors, and memory ownership.
@@ -453,3 +454,13 @@ The reported pane-closing bug is resolved by using the existing pane-close actio
 for ordinary Ctrl+W. Buffers remain available, including unsaved work; other panes
 retain their contents and navigation. The last pane stays open. Buffer-picker
 Ctrl+W still removes its highlighted saved buffer; explicit :kill[!] is unchanged.
+
+
+## Repeat recording first scope (T6)
+
+Matt accepted current-buffer editing/navigation with one recording per session.
+The initial implementation captures relative semantic commands and their mode/
+selection effects; undo/redo correct the recipe, while each playback is one undo/
+redo unit. File/pane/buffer actions are refused until recording finishes. Design
+§32 records the delivery policies and bounds; broader scopes and named macros
+remain separate work.

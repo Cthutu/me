@@ -11,6 +11,7 @@ use os.linux
 use panes
 use picker
 use positions
+use repeat
 use replacement
 use search
 use std.term
@@ -38,6 +39,7 @@ pub Editor :: plex {
     completion         PromptCompletion
     confirmation       ReplaceConfirmation
     diagnostics        KeyDiagnostics
+    recording          RepeatRecording
     picker             FuzzyPicker
     files              FileDiscovery
     leader             bool
@@ -73,6 +75,7 @@ impl Editor {
         self.completion.release()
         self.confirmation.release()
         self.diagnostics.release()
+        self.recording.release()
         self.files.release()
         self.picker.release()
         self.search_decoded.free()
@@ -925,7 +928,143 @@ impl Editor {
             }
         }
     }
+    pub start_recording :: fn (self: ^Self) -> void\string {
+        on self.recording.active => return "Already recording; use ] to finish"!
+        on self.workspace.active_view().interaction.state != Interaction.Normal => return "Start recording in Normal"!
+        self.recording.clear_draft()
+        self.recording.document_id = self.workspace.active_view().document_id
+        self.recording.view_id = self.workspace.surface.view_id
+        self.recording.revision = self.workspace.active_document().text.storage.revision()
+        self.recording.history_base = self.workspace.active_document().text.applied
+        self.recording.active = yes
+        self.tell("Recording; ] in Normal finishes")
+    }
+    pub replay :: fn (self: ^Self, scratch: ^arena) -> void\string {
+        on self.recording.active => return "Finish recording with ] before "
+            +"replay"!
+        on self.recording.playing => return "Nested replay is unavailable"!
+        on self.recording.saved.count == 0 => return "No recorded sequence"!
+        doc := ^self.workspace.active_document().text
+        base := doc.applied
+        before := scratch.pr(doc.text())
+        caret := self.workspace.active_view().interaction.selection.active
+        self.recording.playing = yes
+        self.message.clear()
+        defer {
+            doc.group_history(base, before, caret, self.workspace.active_view().interaction.selection.active)
+            self.recording.playing = no
+        }
+        step: usize = 0
+        for action in self.recording.saved {
+            on !action.enabled => again
+            step += 1
+            command := action.invocation()
+            -- Recorded Escape represents an editing transition, not dismissal
+            -- of a transient status message left by an earlier invocation.
+            on command {
+                Escape => self.message.clear() else => {
+                }
+            }
+            on self.execute_inner(scratch, command) {
+                _success => {
+                }
+                error! => return scratch.pr($"Replay stopped at step {step}: {error}")!
+            }
+        }
+    }
     pub execute :: fn (self: ^Self, scratch: ^arena, command: Command) -> void\string {
+        on command {
+            RecordStart => {
+                self.start_recording()?
+                return
+            }
+            RecordStop => {
+                on !self.recording.active => return "No recording is active"!
+                on self.workspace.surface.view_id != self.recording.view_id || self.workspace.active_view().document_id != self.recording.document_id || self.workspace.active_document().text.storage.revision() != self.recording.revision => {
+                    self.recording.active = no
+                    return "Recording cancelled: buffer or view changed "
+                        +"externally"!
+                }
+                on self.recording.draft.count == 0 => {
+                    self.recording.active = no
+                    self.tell("Empty recording; previous sequence retained")
+                    return
+                }
+                self.recording.finish()
+                self.tell("Recording ready; . replays")
+                return
+            }
+            Replay => {
+                self.replay(scratch)?
+                return
+            }
+            else => {
+            }
+        }
+        on !self.recording.active => {
+            self.execute_inner(scratch, command)?
+            return
+        }
+        doc := ^self.workspace.active_document().text
+        on self.workspace.surface.view_id != self.recording.view_id || self.workspace.active_view().document_id != self.recording.document_id || doc.storage.revision() != self.recording.revision => {
+            self.recording.active = no
+            return "Recording cancelled: buffer or view changed externally"!
+        }
+        on command {
+            Error(_) => {
+                self.execute_inner(scratch, command)?
+                return
+            } else => {
+            }
+        }
+        correcting := no
+        redoing := no
+        on command {
+            Undo => {
+                on doc.applied <= self.recording.history_base => return "Undo "
+                    +"cannot cross the start of recording"!
+                correcting = yes
+            }
+            Redo => {
+                on !self.recording.can_redo(doc.applied) => return "No "
+                    +"recorded edit to redo"!
+                correcting = yes
+                redoing = yes
+            }
+            else => on !recordable(command) => return "Command unavailable "
+                +"while recording; use ] to finish"!
+        }
+        on !self.recording.room(command) => return "Recording limit reached; "
+            +"use ] to finish"!
+        before := doc.applied
+        state := self.workspace.active_view().interaction.state
+        selection := self.workspace.active_view().interaction.selection
+        self.execute_inner(scratch, command)?
+        self.recording.revision = doc.storage.revision()
+        on correcting {
+            yes => {
+                index := on redoing {
+                    yes => before else => doc.applied
+                }
+                _ := self.recording.correction(index, redoing)
+                -- Undo/redo corrections are removed/restored edits, never
+                -- executable undo commands. Preserve their Normal transition.
+                self.recording.append(Command.Escape, doc.applied, doc.applied)
+            }
+            else => {
+                on command {
+                    Escape => {
+                        current := ^self.workspace.active_view().interaction
+                        on current.state == state && current.selection.anchor == selection.anchor && current.selection.active == selection.active => return
+                    }
+                    else => {
+                    }
+                }
+                self.recording.append(command, before, doc.applied)
+            }
+        }
+    }
+    execute_inner :: fn (self: ^Self, scratch: ^arena, command: Command) -> void\string {
         on self.confirmation.active => {
             on command {
                 Escape => self.confirm_replace(scratch, 27)?
@@ -1313,6 +1452,9 @@ impl Editor {
             self.notify_others(text_view.document_id, invoking_view, change)
             self.changed()
         }
+        -- A replay can change text and then restore it. Its single zero-net
+        -- history unit still has an applied/redo state that must be checkpointed.
+        on doc.applied != old_applied => self.dirty = yes
     }
     pub cancel_leader :: fn (self: ^Self) {
         self.leader = no
@@ -1537,6 +1679,12 @@ impl Editor {
         }
         text_view := self.workspace.active_view()
         on rune == ' '.as(u32) && self.prompt_kind == 0 && text_view.interaction.state == Interaction.Normal => {
+            on self.recording.active => {
+                text_view.keyboard.count = 0
+                self.tell("Space commands unavailable while recording; use ] "
+                    +"to finish")
+                return
+            }
             on text_view.keyboard.count != 0 => {
                 text_view.keyboard.count = 0
                 self.tell("Command does not accept a count")
@@ -1594,7 +1742,13 @@ impl Editor {
         for entry in self.workspace.documents {
             after += entry.text.storage.revision()
         }
-        on before != after => self.changed()
+        on before != after => {
+            self.changed()
+            on self.recording.active && self.workspace.active_document().text.storage.revision() != self.recording.revision => {
+                self.recording.active = no
+                self.tell("Recording cancelled: buffer changed externally")
+            }
+        }
         current := now()
         on self.dirty && self.workspace.persistent && elapsed(self.checkpoint_at, current) >= from_ms(1000) && (elapsed(self.changed_at, current) >= from_ms(400) || elapsed(self.checkpoint_at, current) >= from_ms(2000)) => {
             on self.workspace.checkpoint(scratch) {
@@ -3008,4 +3162,370 @@ test "Ctrl N creates distinct unnamed Insert buffers in the focused pane without
     editor.prompt_open(':'.as(u32), initial = "e unfinished")
     editor.character(^scratch, 14)
     assert editor.prompt_kind == 0 && editor.workspace.documents.count == 4
+}
+
+test {
+
+    repeat_keys :: fn (editor: ^Editor, scratch: ^arena, keys: string) {
+        for byte in keys {
+            on byte^ == 27 {
+                yes   => editor.key(scratch, TermKeyEvent { scan_code: Escape action: Press ... })
+                else  => editor.character(scratch, byte^.as(u32))
+            }
+        }
+    }
+
+    exercise_repeat :: fn () -> void\string {
+        scratch : arena
+        defer scratch.done()
+        editor : Editor
+        editor.workspace.lock_fd = -1
+        defer editor.release()
+        editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Normal
+        -- Correct an edit, branch, then undo/redo the replacement while recording.
+        repeat_keys(^editor, ^scratch, "[iAB")
+        editor.execute(^scratch, Command.Undo)?
+        repeat_keys(^editor, ^scratch, "iC")
+        editor.execute(^scratch, Command.Undo)?
+        editor.execute(^scratch, Command.Redo)?
+        editor.execute(^scratch, Command.RecordStop)?
+        assert editor.workspace.active_document().text.text() == "AC"
+        assert editor.workspace.active_document().text.applied == 2
+        editor.execute(^scratch, Command.Undo)?
+        assert editor.workspace.active_document().text.text() == "A"
+        editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Normal
+        editor.execute(^scratch, Command.Replay)?
+        doc := ^editor.workspace.active_document().text
+        assert doc.text() == "AC" && doc.applied == 1 && doc.history.count == 1
+        assert editor.workspace.active_view().interaction.state == Interaction.Normal
+        editor.execute(^scratch, Command.Undo)?
+        assert doc.text() == ""
+        editor.execute(^scratch, Command.Redo)?
+        assert doc.text() == "AC"
+        -- A second replay is a separate whole undo unit.
+        editor.execute(^scratch, Command.Replay)?
+        assert doc.text() == "ACAC" && doc.applied == 2
+        editor.execute(^scratch, Command.Undo)?
+        assert doc.text() == "AC"
+        editor.execute(^scratch, Command.Redo)?
+        assert doc.text() == "ACAC"
+        -- Compound history is continuation-compatible without a codec change.
+        encoded : Encoder
+        defer encoded.bytes.free()
+        encoded.document(doc)
+        decoded             := Decoder { bytes: bytes_text(encoded.bytes) ... }
+        restored : Document
+
+        defer restored.release()
+        decoded.document(^restored)?
+        _ := restored.undo_edit()
+        assert restored.text() == "AC"
+        _ := restored.redo_edit()
+        assert restored.text() == "ACAC"
+    }
+
+    exercise_repeat_corrections :: fn () -> void\string {
+        scratch : arena
+        defer scratch.done()
+        editor : Editor
+        editor.workspace.lock_fd = -1
+        defer editor.release()
+        editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Normal
+        repeat_keys(^editor, ^scratch, "[iA")
+        editor.execute(^scratch, Command.Move { direction: Left count: 1 extend: no })?
+        editor.execute(^scratch, Command.InsertText("B"))?
+        editor.execute(^scratch, Command.Move { direction: Right count: 1 extend: no })?
+        editor.execute(^scratch, Command.Undo)?
+        editor.execute(^scratch, Command.Undo)?
+        editor.execute(^scratch, Command.Redo)?
+        editor.execute(^scratch, Command.Redo)?
+        editor.execute(^scratch, Command.RecordStop)?
+        assert editor.workspace.active_document().text.text() == "BA"
+        editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Normal
+        editor.execute(^scratch, Command.Replay)?
+        assert editor.workspace.active_document().text.text() == "BA"
+        assert editor.workspace.active_view().interaction.selection.active == 1
+        -- Undo cannot remove history predating this recording.
+        editor.execute(^scratch, Command.RecordStart)?
+        on editor.execute(^scratch, Command.Undo) {
+            _success => {
+                assert no
+            }
+
+            _error! => {
+            }
+        }
+        assert editor.workspace.active_document().text.text() == "BA"
+        editor.execute(^scratch, Command.RecordStop)?
+        editor.execute(^scratch, Command.Replay)?
+        assert editor.workspace.active_document().text.text() == "BBAA"
+    }
+
+    exercise_repeat_failure :: fn () -> void\string {
+        scratch : arena
+        defer scratch.done()
+        editor : Editor
+        editor.workspace.lock_fd = -1
+        defer editor.release()
+        editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Normal
+        own(^editor.clipboard.bytes, "Z")
+        repeat_keys(^editor, ^scratch, "[iA")
+        editor.execute(^scratch, Command.Escape)?
+        editor.execute(^scratch, Command.Paste)?
+        editor.execute(^scratch, Command.RecordStop)?
+        editor.clipboard.bytes.clear()
+        editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Normal
+        on editor.execute(^scratch, Command.Replay) {
+            _success => {
+                assert no
+            }
+
+            error! => {
+                assert error.count > 20
+            }
+        }
+        doc := ^editor.workspace.active_document().text
+        assert doc.text() == "A" && doc.history.count == 1 && doc.applied == 1
+        editor.execute(^scratch, Command.Undo)?
+        assert doc.text() == ""
+        editor.execute(^scratch, Command.Redo)?
+        assert doc.text() == "A"
+        -- Failed recording commands do not enter the saved sequence or change scope.
+        editor.execute(^scratch, Command.RecordStart)?
+        on editor.execute(^scratch, Command.NewBuffer) {
+            _success => {
+                assert no
+            }
+
+            _error! => {
+            }
+        }
+        on editor.execute(^scratch, Command.RecordStart) {
+            _success => {
+                assert no
+            }
+
+            _error! => {
+            }
+        }
+        assert editor.workspace.documents.count == 2 && editor.recording.active
+        editor.execute(^scratch, Command.RecordStop)?
+        -- A zero-net replay remains one history unit; undo/redo still mark its
+        -- applied state dirty even though the stored text does not change.
+        editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Normal
+        editor.execute(^scratch, Command.RecordStart)?
+        editor.execute(^scratch, Command.EnterInsert('i'.as(u32)))?
+        editor.execute(^scratch, Command.InsertText("Z"))?
+        editor.execute(^scratch, Command.Backspace)?
+        editor.execute(^scratch, Command.Escape)?
+        editor.execute(^scratch, Command.RecordStop)?
+        zero := ^editor.workspace.active_document().text
+        editor.execute(^scratch, Command.Replay)?
+        assert zero.text() == "" && zero.applied == 3
+        editor.dirty = no
+        editor.execute(^scratch, Command.Undo)?
+        assert zero.applied == 2 && editor.dirty
+        editor.dirty = no
+        editor.execute(^scratch, Command.Redo)?
+        assert zero.applied == 3 && editor.dirty
+    }
+
+    exercise_repeat_unicode :: fn () -> void\string {
+        scratch : arena
+        defer scratch.done()
+        editor : Editor
+        editor.workspace.lock_fd = -1
+        defer editor.release()
+        editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Normal
+        editor.execute(^scratch, Command.RecordStart)?
+        editor.execute(^scratch, Command.EnterInsert('i'.as(u32)))?
+        text := scratch.pr("é👩‍💻")
+        editor.execute(^scratch, Command.InsertText(text))?
+        repeat_keys(^editor, ^scratch, "[]")
+        editor.execute(^scratch, Command.Escape)?
+        editor.execute(^scratch, Command.RecordStop)?
+        editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Normal
+        on editor.workspace.active_document().text.load("Z") {
+            _success => {
+            }
+
+            _error! => {
+                assert no
+            }
+        }
+        editor.workspace.active_view().interaction.selection.collapse(1)
+        editor.workspace.split_pane(SplitAxis.Columns)?
+        editor.workspace.active_view().interaction.selection.collapse(0)
+        editor.execute(^scratch, Command.Replay)?
+        doc := ^editor.workspace.active_document().text
+        assert doc.text() == "é👩‍💻[]Z" && doc.applied == 1
+        assert editor.workspace.views[1].interaction.selection.active == doc.text().count
+        editor.execute(^scratch, Command.Undo)?
+        assert doc.text() == "Z"
+        assert editor.workspace.views[1].interaction.selection.active == 1
+        editor.execute(^scratch, Command.Redo)?
+        assert doc.text() == "é👩‍💻[]Z"
+        assert editor.workspace.views[1].interaction.selection.active == doc.text().count
+        -- Payload ownership does not depend on the caller's scratch arena.
+        scratch.reset()
+        editor.execute(^scratch, Command.Replay)?
+        assert doc.text() == "é👩‍💻[]é👩‍💻[]Z"
+    }
+
+}
+
+test "repeat recording corrects edits and replays as one persistent undo redo unit" {
+    on exercise_repeat() {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+}
+
+test "repeat undo redo corrections preserve semantic positioning and reject older history" {
+    on exercise_repeat_corrections() {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+}
+
+test "repeat failures retain a single undoable partial result and refuse scope changes" {
+    on exercise_repeat_failure() {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+}
+
+test "repeat owns Unicode payloads and adjusts shared views during playback" {
+    on exercise_repeat_unicode() {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+}
+
+test {
+
+    exercise_repeat_guards :: fn () -> void\string {
+        scratch : arena
+        defer scratch.done()
+        editor : Editor
+        editor.workspace.lock_fd = -1
+        defer editor.release()
+        editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Normal
+        editor.execute(^scratch, Command.RecordStart)?
+        editor.execute(^scratch, Command.EnterInsert('i'.as(u32)))?
+        for _ in [0 .. 4094] {
+            editor.execute(^scratch, Command.Move { direction: Right count: 1 extend: no })?
+        }
+        on editor.execute(^scratch, Command.InsertText("blocked")) {
+            _success => {
+                assert no
+            }
+
+            _error! => {
+            }
+        }
+        -- The cap must never trap the user in Insert with no way to finish.
+        editor.execute(^scratch, Command.Escape)?
+        on editor.workspace.active_view().interaction.state == Interaction.Insert => editor.execute(^scratch, Command.Escape)?
+        assert editor.workspace.active_view().interaction.state == Interaction.Normal
+        editor.execute(^scratch, Command.RecordStop)?
+        assert editor.recording.saved.count == 4096
+        editor.execute(^scratch, Command.Replay)?
+        assert editor.workspace.active_document().text.history.count == 0
+        editor.execute(^scratch, Command.RecordStart)?
+        on editor.workspace.active_document().text.edit({ start: 0 end: 0 }, "e"
+    +"xternal") {
+            _change => {
+            }
+
+            _error! => {
+                assert no
+            }
+        }
+        on editor.execute(^scratch, Command.RecordStop) {
+            _success => {
+                assert no
+            }
+
+            _error! => {
+            }
+        }
+        assert !editor.recording.active && editor.recording.saved.count == 4096
+    }
+
+    exercise_repeat_edit_recipes :: fn () -> void\string {
+        scratch : arena
+        defer scratch.done()
+        for keys in [
+    "[iAB\x1bl\x1aiC\x1b]",
+    "[iAB\x1bh\x1a\x12]",
+    "[iA\x1bhciB\x1b\x1a\x1a"
+        +"\x12\x12]",
+] {
+            editor : Editor
+            editor.workspace.lock_fd = -1
+            defer editor.release()
+            editor.workspace.add_empty()
+            editor.workspace.active_view().interaction.state = Interaction.Normal
+            repeat_keys(^editor, ^scratch, keys^)
+            assert !editor.recording.active && editor.recording.saved.count > 0
+            expected := scratch.pr(editor.workspace.active_document().text.text())
+            position := editor.workspace.active_view().interaction.selection.active
+
+            editor.workspace.add_empty()
+            editor.workspace.active_view().interaction.state = Interaction.Normal
+            editor.execute(^scratch, Command.Replay)?
+            assert editor.workspace.active_document().text.text() == expected
+            assert editor.workspace.active_view().interaction.selection.active == position
+        }
+    }
+
+}
+
+test "recording limits allow final Escape and external changes cancel drafts" {
+    on exercise_repeat_guards() {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+}
+
+test "corrected repeat recipes reproduce content and caret after mixed editing and navigation" {
+    on exercise_repeat_edit_recipes() {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
 }

@@ -1,0 +1,166 @@
+use native
+use view
+
+-- Session-owned semantic commands. Text payloads outlive input/scratch arenas.
+pub RecordedAction :: plex {
+    command       Command
+    text          [..]u8
+    enabled       bool
+    redoable      bool
+    edited        bool
+    history_index usize
+}
+
+impl RecordedAction {
+
+    pub release :: fn (self: ^Self) {
+        self.text.free()
+    }
+
+    pub invocation :: fn (self: ^Self) -> Command {
+        return on self.command {
+            InsertText(_)  => Command.InsertText(bytes_text(self.text))
+            else           => self.command
+        }
+    }
+
+}
+
+pub recordable :: fn (command: Command) -> bool {
+    return on command {
+        Move { direction: _, count: _, extend: _ },
+        EnterInsert(_),
+        InsertText(_),
+        Backspace,
+        DeleteWordBack,
+        Tab,
+        Delete,
+        Escape,
+        Duplicate,
+        SelectWord(_),
+        SelectLine(_),
+        Copy,
+        Cut,
+        Paste,
+        Change => yes
+
+        else => no
+    }
+}
+
+pub RepeatRecording :: plex {
+    active       bool
+    playing      bool
+    document_id  usize
+    view_id      usize
+    revision     u64
+    history_base usize
+    draft        [..]RecordedAction
+    saved        [..]RecordedAction
+    bytes        usize
+}
+
+impl RepeatRecording {
+
+    pub clear_draft :: fn (self: ^Self) {
+        for action in self.draft {
+            action.release()
+        }
+        self.draft.clear()
+        self.bytes = 0
+    }
+
+    pub release :: fn (self: ^Self) {
+        self.clear_draft()
+        self.draft.free()
+        for action in self.saved {
+            action.release()
+        }
+        self.saved.free()
+    }
+
+    pub finish :: fn (self: ^Self) {
+        previous := self.saved
+        self.saved = self.draft
+        self.draft = previous
+        self.clear_draft()
+        self.active = no
+    }
+
+    pub room :: fn (self: ^Self, command: Command) -> bool {
+        bytes := on command {
+            InsertText(text)  => text.count
+            else              => 0
+        }
+        -- Reserve a final slot for leaving Insert at the action limit.
+        limit : usize = on command { Escape => 4096 else => 4095 }
+        return self.draft.count < limit && bytes <= 1048576 - self.bytes
+    }
+
+    pub append :: fn (self    : ^Self,
+                      command : Command,
+                      before  : usize,
+                      after   : usize) {
+        action : RecordedAction
+        action.command = command
+        action.enabled = yes
+        action.redoable = yes
+        action.edited = after > before
+        action.history_index = before
+        on action.edited => {
+            -- A new edit discards the undone branch, just like document history.
+            for previous in self.draft {
+                on !previous.enabled => previous.redoable = no
+            }
+        }
+        on command {
+            InsertText(text) => {
+                own(^action.text, text)
+                self.bytes += text.count
+            }
+
+            else => {
+            }
+        }
+        self.draft.push(action)
+    }
+
+    pub correction :: fn (self: ^Self, index: usize, redo: bool) -> bool {
+        for slot, action in self.draft {
+            on action.edited &&
+                action.history_index == index &&
+                action.redoable &&
+                action.enabled != redo => {
+                action.enabled = redo
+                -- Undo/redo restores edit caret hints, so subsequent navigation
+                -- is no longer part of the corrected recipe.
+                for later in [slot + 1 .. self.draft.count] {
+                    on !self.draft[later].edited => self.draft[later].enabled = no
+                }
+                on redo => {
+                    -- Reinstate the semantic positioning preceding this edit,
+                    -- which an earlier correction may have pruned.
+                    previous := slot
+                    for previous > 0 {
+                        previous -= 1
+                        on self.draft[previous].edited => break
+                        on self.draft[previous].redoable => self.draft[previous].enabled = yes
+                    }
+                }
+                return yes
+            }
+        }
+        return no
+    }
+
+    pub can_redo :: fn (self: ^Self, index: usize) -> bool {
+        for action in self.draft {
+            on action.edited &&
+                action.history_index == index &&
+                action.redoable &&
+                !action.enabled => return yes
+        }
+        return no
+    }
+
+}
