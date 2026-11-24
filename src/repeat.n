@@ -35,6 +35,7 @@ pub recordable :: fn (command: Command) -> bool {
         DeleteWordBack,
         Tab,
         Delete,
+        DeleteLines(_),
         Escape,
         Duplicate,
         SelectWord(_),

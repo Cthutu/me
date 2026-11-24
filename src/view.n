@@ -39,6 +39,7 @@ pub Command :: enum {
     DeleteWordBack
     Tab
     Delete
+    DeleteLines(usize)
     Escape
     Undo
     Redo

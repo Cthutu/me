@@ -1302,6 +1302,31 @@ impl Editor {
                     _error! => return "Cannot insert indentation"!
                 }
             }
+            DeleteLines(count) => {
+                line := doc.line_at(view.selection.active)
+                remaining := doc.lines.count - line
+                amount := on count < remaining {
+                    yes => count else => remaining
+                }
+                end_line := line + amount
+                start := doc.line_start(line)
+                end := on end_line < doc.lines.count {
+                    yes => doc.line_start(end_line)
+                    else => doc.text().count
+                }
+                -- An unterminated final line (including a trailing empty line)
+                -- owns the separator before it when there is no following line.
+                on end_line == doc.lines.count && line > 0 => start = doc.line_end(line - 1)
+                view.selection = Selection {
+                    anchor: start active: end
+                }
+                on view.replace_selection(doc, "") {
+                    _success => {
+                    }
+                    _error! => return "Cannot delete lines"!
+                }
+                view.state = Interaction.Normal
+            }
             Backspace, Delete, DeleteWordBack => {
                 on view.selection.empty() => {
                     position := view.selection.active
@@ -1523,6 +1548,13 @@ impl Editor {
             }
         }
     }
+    -- Invalid continuations cancel the prefix without an intermediate edit.
+    pub reject_delete :: fn (self: ^Self) -> void\string {
+        count := self.workspace.active_view().keyboard.delete_count
+        self.workspace.active_view().keyboard.delete_count = 0
+        on count == 0 => return
+        return "Expected d to delete lines; Escape cancels"!
+    }
     pub key :: fn (self: ^Self, scratch: ^arena, key: TermKeyEvent) {
         on self.diagnostics.active => {
             on (key.modifiers & TERM_MOD_ALT) != 0 && key.action != TermKeyAction.Release => {
@@ -1554,6 +1586,26 @@ impl Editor {
         }
         -- Diagnostics must observe releases; ordinary UI/command handlers must not.
         on key.action == TermKeyAction.Release => return
+        on self.workspace.active_view().keyboard.delete_count > 0 => {
+            on key.scan_code == TermScanCode.Escape => {
+                self.workspace.active_view().keyboard.delete_count = 0
+                self.suppress_character = key.character != nil
+                return
+            }
+            printable := no
+            on key.character => [rune] {
+                printable = rune >= 32 && rune != 127 && (key.modifiers & (TERM_MOD_CONTROL | TERM_MOD_ALT)) == 0
+            }
+            on !printable => on self.reject_delete() {
+                _success => {
+                }
+                error! => {
+                    self.tell(error)
+                    self.suppress_character = key.character != nil
+                    return
+                }
+            }
+        }
         on key.scan_code == TermScanCode.Space && key.modifiers == 0 && self.prompt_kind == 0 && !self.picker.active && !self.confirmation.active && self.workspace.active_view().interaction.state == Interaction.Normal => {
             on key.action == TermKeyAction.Repeat => {
                 on key.character != nil => self.suppress_character = yes
@@ -1677,6 +1729,19 @@ impl Editor {
             self.leader_character(rune)
             return
         }
+        on self.workspace.active_view().keyboard.delete_count > 0 && rune != 'd'.as(u32) => {
+            on rune == 27 => {
+                self.workspace.active_view().keyboard.delete_count = 0
+                return
+            }
+            on self.reject_delete() {
+                _success => {
+                }
+                error! => {
+                    self.tell(error) return
+                }
+            }
+        }
         text_view := self.workspace.active_view()
         on rune == ' '.as(u32) && self.prompt_kind == 0 && text_view.interaction.state == Interaction.Normal => {
             on self.recording.active => {
@@ -1700,7 +1765,8 @@ impl Editor {
         state := text_view.interaction.state
         on text_view.keyboard.character(rune, on self.prompt_kind != 0 {
             yes => Interaction.Insert else => state
-        }) {
+        }
+        , selected = self.prompt_kind == 0 && !text_view.interaction.selection.empty()) {
             command => {
                 on self.execute(scratch, command) {
                     _success => {
@@ -3530,7 +3596,7 @@ test "corrected repeat recipes reproduce content and caret after mixed editing a
     }
 }
 
-test "Normal d deletes selected text or one grapheme with ordinary history and repeat" {
+test "Normal d immediately deletes selections with ordinary history and repeat" {
     scratch : arena
     defer scratch.done()
     editor : Editor
@@ -3549,8 +3615,9 @@ test "Normal d deletes selected text or one grapheme with ordinary history and r
     own(^editor.clipboard.bytes, "kept")
     view := ^editor.workspace.active_view().interaction
     view.state = Interaction.Normal
-    view.place(doc, 1, no)
+    view.selection = Selection { anchor: 1 active: 12 }
     editor.character(^scratch, 'd'.as(u32))
+
     assert doc.text() == "abc\r\nz" && doc.applied == 1
     assert view.state == Interaction.Normal && bytes_text(editor.clipboard.bytes) == "kept"
     on editor.execute(^scratch, Command.Undo) {
@@ -3572,6 +3639,7 @@ test "Normal d deletes selected text or one grapheme with ordinary history and r
     }
     view.selection = Selection { anchor: 3 active: 1 }
     editor.character(^scratch, 'd'.as(u32))
+
     assert doc.text() == "a\r\nz" && view.selection.empty()
     on editor.execute(^scratch, Command.Undo) {
         _success => {
@@ -3585,9 +3653,20 @@ test "Normal d deletes selected text or one grapheme with ordinary history and r
     view.place(doc, doc.text().count, no)
     applied := doc.applied
     editor.character(^scratch, 'd'.as(u32))
+
     assert doc.text() == "abc\r\nz" && doc.applied == applied
+    editor.key(^scratch, TermKeyEvent { scan_code: Escape action: Press ... })
     view.place(doc, 0, no)
-    repeat_keys(^editor, ^scratch, "[d].")
+    repeat_keys(^editor, ^scratch, "[")
+    on editor.execute(^scratch, Command.Move { direction: Right count: 1 extend: yes }) {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    repeat_keys(^editor, ^scratch, "d].")
     assert doc.text() == "c\r\nz"
     on editor.execute(^scratch, Command.Undo) {
         _success => {
@@ -3610,5 +3689,183 @@ test "Normal d deletes selected text or one grapheme with ordinary history and r
     }
     editor.prompt_open(':'.as(u32), initial = "s")
     editor.character(^scratch, 'd'.as(u32))
+
     assert bytes_text(editor.prompt) == "sd" && doc.text() == "dbc\r\nz"
+}
+
+test {
+
+    check_line_deletion :: fn (text     : string,
+                               caret    : usize,
+                               count    : usize,
+                               expected : string) -> void\string {
+        scratch : arena
+        defer scratch.done()
+        editor : Editor
+        editor.workspace.lock_fd = -1
+        defer editor.release()
+        editor.workspace.add_empty()
+        doc := ^editor.workspace.active_document().text
+        on doc.load(text) {
+            _success => {
+            }
+
+            _error! => return "Line deletion fixture failed"!
+        }
+        view := ^editor.workspace.active_view().interaction
+        view.state = Interaction.Normal
+        view.place(doc, caret, no)
+        own(^editor.clipboard.bytes, "retained")
+        editor.execute(^scratch, Command.DeleteLines(count))?
+        assert doc.text() == expected
+        assert view.state == Interaction.Normal && view.selection.empty()
+        assert bytes_text(editor.clipboard.bytes) == "retained"
+        on text != expected => {
+            assert doc.applied == 1
+            editor.execute(^scratch, Command.Undo)?
+            assert doc.text() == text && view.selection.active == caret
+            editor.execute(^scratch, Command.Redo)?
+            assert doc.text() == expected
+        }
+    }
+
+}
+
+test "line deletion clamps counts preserves BOM and endings and forms one undo unit" {
+    on check_line_deletion("one\ntwo\nthree", 1, 1, "two\nthree") {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    on check_line_deletion("one\ntwo\nthree", 5, 2, "one") {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    on check_line_deletion("one\ntwo\nthree", 9, 999999, "one\ntwo") {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    on check_line_deletion("""
+    one
+    two
+    """, 4, 1, """
+    one
+    """) {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    on check_line_deletion("""
+    one
+    """, 4, 1, "one") {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    on check_line_deletion("﻿é\r\n👩‍💻\r\nz", 7, 1, "﻿é\r\nz") {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    on check_line_deletion("﻿one\r\ntwo", 3, 999999, "﻿") {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    on check_line_deletion("", 0, 2, "") {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+}
+
+test {
+
+    exercise_dd :: fn () -> void\string {
+        scratch : arena
+        defer scratch.done()
+        editor : Editor
+        editor.workspace.lock_fd = -1
+        defer editor.release()
+        editor.workspace.add_empty()
+        doc := ^editor.workspace.active_document().text
+        on doc.load("one\ntwo\nthree\nfour\nfive") {
+            _success => {
+            }
+
+            _error! => {
+                assert no
+            }
+        }
+        editor.workspace.active_view().interaction.state = Interaction.Normal
+        editor.character(^scratch, 'd'.as(u32))
+        assert doc.applied == 0 && doc.text() == "one\ntwo\nthree\nfour\nfive"
+        editor.key(^scratch,
+                   TermKeyEvent { scan_code: D action: Release character: 'd'.as(u32) ... })
+        assert editor.workspace.active_view().keyboard.delete_count == 1
+        editor.key(^scratch,
+                   TermKeyEvent { scan_code: Escape action: Press character: 27.as(u32) ... })
+        editor.character(^scratch, 27)
+        assert editor.workspace.active_view().keyboard.delete_count == 0 && doc.applied == 0
+        repeat_keys(^editor, ^scratch, "di")
+        assert doc.applied == 0 && editor.workspace.active_view().interaction.state == Interaction.Normal
+        assert editor.workspace.active_view().keyboard.delete_count == 0
+        editor.character(^scratch, 'd'.as(u32))
+        editor.key(^scratch,
+                   TermKeyEvent { scan_code: N action: Press modifiers: TERM_MOD_CONTROL character: 14.as(u32) ... })
+        editor.character(^scratch, 14)
+        assert editor.workspace.documents.count == 1 && doc.applied == 0
+        repeat_keys(^editor, ^scratch, "2dd")
+        assert doc.text() == "three\nfour\nfive" && doc.applied == 1
+        editor.execute(^scratch, Command.Undo)?
+        assert doc.text() == "one\ntwo\nthree\nfour\nfive"
+        editor.message.clear()
+        repeat_keys(^editor, ^scratch, "[2dd].")
+        assert doc.text() == "five" && doc.applied == 2
+        editor.execute(^scratch, Command.Undo)?
+        assert doc.text() == "three\nfour\nfive"
+        editor.execute(^scratch, Command.Redo)?
+        assert doc.text() == "five"
+        -- Literal Insert dd is not a pending command.
+        repeat_keys(^editor, ^scratch, "idd")
+        assert doc.text() == "ddfive" && editor.workspace.active_view().keyboard.delete_count == 0
+    }
+
+}
+
+test "pending d cancels without edits and counted dd records one semantic operation" {
+    on exercise_dd() {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
 }

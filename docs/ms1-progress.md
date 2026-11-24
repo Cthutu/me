@@ -661,8 +661,9 @@ repeat PTY scenarios checked against the installed binary.
 
 ## Normal d deletion (T7)
 
-Normal d aliases the existing Delete command: remove the selection or one forward
-grapheme, stay Normal and leave the clipboard intact. Insert/prompts/picker queries
+At T7 delivery, Normal d aliased the existing Delete command for a selection or
+one forward grapheme. T8 below supersedes unselected d with a pending command;
+selected d stays immediate, retains Normal and leaves the clipboard intact. Insert/prompts/picker queries
 retain literal d. Existing EOF/line-ending handling, undo/redo, shared-view edits
 and semantic repeat apply without a separate mutation path.
 
@@ -673,3 +674,37 @@ clipboard preservation, history, EOF, repeat and literal Insert/prompt text. PTY
 coverage adds actual key input, word selection, save, undo/redo, grouped repeat,
 Insert d, EOF and unsupported counts. Required commit/push and installation follow,
 with an installed-binary deletion smoke check.
+
+
+## Pending d and counted dd (T8)
+
+Matt clarified that d deletes an existing selection immediately, otherwise it
+waits for a second d. dd deletes the caret's line; 3dd deletes three, with counts
+clamped at EOF. An explicit count starts line deletion even with an existing
+selection. The status shows pending d/count; Escape cancels without mutation.
+Invalid continuations cancel with an error and consume their associated text,
+so rejected enhanced Ctrl keys cannot leak a second action. Insert/prompts/picker
+queries retain literal d.
+
+DeleteLines(count) executes one edit with normal undo/redo, shared-view adjustment,
+clipboard preservation and repeat capture/playback. Whole line endings and the
+preceding separator of a final unterminated/trailing empty line are handled as
+logical line deletion. The BOM remains. Native and PTY coverage exercises counts,
+selections, prefixes/releases/cancellation, enhanced paired events, CRLF, Unicode,
+BOM/EOF/empty buffers, history, shared panes and semantic replay.
+
+Verification: 180 native tests (68 ME + 112 imported), all 47 debug and 47 release
+terminal groups, and final focused deletion checks on both builds passed. The
+explicit-count/selection refinement is covered natively and in those final PTYs.
+Formatting is idempotent; type checking, Python compilation and diff checks passed.
+Required commit/push and release installation follow, with installed deletion,
+selection and word-deletion regressions checked afterwards.
+
+## Future modes milestone recorded (T9)
+
+Queued **Modes M1: foundation and Markdown**, with file-type modes controlling
+LSP, formatting, syntax highlighting, indentation and related provider choices.
+Add status LF/CRLF and recognised file type in that milestone. Customisation,
+recognition, provider/lifecycle and Markdown feature details remain open before
+implementation; no mode or status services are added by T8. See design §35 and
+questions. Later modes milestones remain unscoped.

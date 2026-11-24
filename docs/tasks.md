@@ -193,8 +193,7 @@ fresh discovery on reopening, safe acceptance and no-match handling.
 ## Agreed MS2 work
 
 The following tasks were explicitly accepted after T1/T2. T3's detailed
-interaction is now agreed and implemented; T4/T4a/T4b and T5/T5a are complete; T6
-remains queued. T2's filename
+interaction is agreed and implemented; T4/T4a/T4b, T5/T5a and T6 are complete. T2's filename
 completion still uses the existing message area, separate from the reusable popup.
 
 ### T3 — Popup/picker foundation, buffer switcher and Ctrl+W — done
@@ -422,6 +421,9 @@ queue by implication.
 
 ### T7 — Normal d deletes — done
 
+Historical delivery: T8 supersedes unselected single-d behaviour after Matt's
+pending-command clarification; selected d remains immediate.
+
 - Bind Normal d to the existing Delete command: selection or one forward grapheme.
 - Keep Normal, clipboard contents, ordinary undo/redo and repeat integration.
 - Retain literal d in Insert/prompts/pickers and existing Ctrl+D duplication.
@@ -432,3 +434,29 @@ queue by implication.
   and unsupported counts. Formatting/idempotence, type checking, Python compilation
   and diff checks passed. Required commit/push and release installation follow,
   with the installed deletion scenario checked afterwards.
+
+
+### T8 — Pending d and counted dd line deletion — done
+
+- d immediately deletes an existing selection; otherwise it waits for dd.
+- dd deletes the current line; a numeric prefix such as 3dd deletes that many.
+- Show pending d/count, allow Escape cancellation, and preserve Insert literals.
+- Keep clipboard, one-operation undo, shared views and semantic repeat support.
+- See design §34 for cancellation, final-line/BOM/ending and explicit-count policies.
+- Verified 180 native tests (68 ME + 112 imported), all 47 debug and 47 release
+  terminal groups, plus final focused deletion checks on both profiles for the
+  explicit-count/selection refinement. Formatting is idempotent; type checking,
+  Python compilation and diff checks passed. Required commit/push and installation
+  follow, with installed deletion checks afterwards.
+
+### T9 — Modes M1: foundation and Markdown — future milestone, queued
+
+- Introduce customisable systems based on recognised file type.
+- Modes determine LSP, formatting, syntax highlighting, indentation and related
+  file-type behaviour and provider choices.
+- First modes milestone: foundations plus Markdown support as the first mode.
+- Add LF/CRLF and recognised file type to the status line.
+- Agree recognition/customisation interfaces, concrete providers and lifecycle,
+  the initial Markdown checklist and status edge cases before implementation.
+- This is agreed future work; it is not bundled into the current dd change.
+  Later modes milestones remain unscoped. See design §35 and questions.

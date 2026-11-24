@@ -16,6 +16,7 @@ pub navigation_scan_code :: fn (key: TermKeyEvent) -> TermScanCode {
 
 pub Keyboard :: plex {
     count         usize
+    delete_count  usize
     suppress_text bool
 }
 
@@ -170,7 +171,10 @@ impl Keyboard {
         return nil
     }
 
-    pub character :: fn (self: ^Self, rune: u32, state: Interaction) -> ?Command {
+    pub character :: fn (self     : ^Self,
+                         rune     : u32,
+                         state    : Interaction,
+                         selected : bool = no) -> ?Command {
         on self.suppress_text => {
             self.suppress_text = no
             return nil
@@ -196,6 +200,12 @@ impl Keyboard {
         }
         on rune < 32 || rune == 127    => return nil
         on state == Interaction.Insert => return nil
+        on self.delete_count > 0 &&
+            rune == 'd'.as(u32) => {
+            count := self.delete_count
+            self.delete_count = 0
+            return Command.DeleteLines(count)
+        }
         on rune >= '0'.as(u32) &&
             rune <= '9'.as(u32) => {
             on self.count >= 100000 => {
@@ -208,6 +218,11 @@ impl Keyboard {
         counted := self.count > 0
         count   := self.take_count()
 
+        on rune == 'd'.as(u32) => {
+            on selected && !counted => return Command.Delete
+            self.delete_count = count
+            return nil
+        }
         on counted &&
             (rune == '['.as(u32) || rune == ']'.as(u32) || rune == '.'.as(u32)) => return Command.Error("Command does not accept a count")
         direction: ?Direction = on rune {
@@ -233,7 +248,6 @@ impl Keyboard {
             'y'.as(u32)                                                                   => Command.Copy
             'x'.as(u32)                                                                   => Command.Cut
             'v'.as(u32)                                                                   => Command.Paste
-            'd'.as(u32)                                                                   => Command.Delete
             'c'.as(u32)                                                                   => Command.Change
             ':'.as(u32), '/'.as(u32), '?'.as(u32)                                         => Command.Prompt(rune)
             'n'.as(u32)                                                                   => Command.SearchNext(no)
@@ -495,4 +509,77 @@ test "repeat delimiters are Normal-only consume counts and ignore key releases" 
         assert keyboard.count == 0
     }
     assert keyboard.key(TermKeyEvent { scan_code: Dot action: Release character: '.'.as(u32) ... }) == nil
+}
+
+test "dd consumes an optional count while selected d deletes immediately" {
+    keyboard : Keyboard
+    assert keyboard.character('d'.as(u32), Interaction.Normal) == nil
+    assert keyboard.delete_count == 1
+    on keyboard.character('d'.as(u32), Interaction.Normal) {
+        command => on command {
+            DeleteLines(count) => {
+                assert count == 1
+            }
+
+            else => {
+                assert no
+            }
+        }
+
+        else => {
+            assert no
+        }
+    }
+    assert keyboard.delete_count == 0
+    assert keyboard.character('3'.as(u32), Interaction.Normal) == nil
+    assert keyboard.character('d'.as(u32), Interaction.Normal) == nil
+    assert keyboard.count == 0 && keyboard.delete_count == 3
+    on keyboard.character('d'.as(u32), Interaction.Normal) {
+        command => on command {
+            DeleteLines(count) => {
+                assert count == 3
+            }
+
+            else => {
+                assert no
+            }
+        }
+
+        else => {
+            assert no
+        }
+    }
+    on keyboard.character('d'.as(u32), Interaction.Normal, selected = yes) {
+        command => on command {
+            Delete => {
+            }
+
+            else => {
+                assert no
+            }
+        }
+
+        else => {
+            assert no
+        }
+    }
+    assert keyboard.delete_count == 0
+    assert keyboard.character('2'.as(u32), Interaction.Normal) == nil
+    assert keyboard.character('d'.as(u32), Interaction.Normal, selected = yes) == nil
+    on keyboard.character('d'.as(u32), Interaction.Normal, selected = yes) {
+        command => on command {
+            DeleteLines(count) => {
+                assert count == 2
+            }
+
+            else => {
+                assert no
+            }
+        }
+
+        else => {
+            assert no
+        }
+    }
+    assert keyboard.character('d'.as(u32), Interaction.Insert, selected = yes) == nil
 }

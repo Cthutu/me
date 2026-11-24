@@ -810,9 +810,16 @@ impl Terminal {
                     else  => " ~"
                 }
             }
-            count := on text_view.keyboard.count > 0 {
-                yes   => self.scratch.pr($"  {text_view.keyboard.count}")
-                else  => ""
+            count := on text_view.keyboard.delete_count > 0 {
+                yes => on text_view.keyboard.delete_count == 1 {
+                    yes   => " d"
+                    else  => self.scratch.pr($" {text_view.keyboard.delete_count}d")
+                }
+
+                else => on text_view.keyboard.count > 0 {
+                    yes   => self.scratch.pr($"  {text_view.keyboard.count}")
+                    else  => ""
+                }
             }
             recording := on active && editor.recording.active { yes => " REC" else => "" }
             status    := self.scratch.pr($"{recording}{persistence}{conflict}{missing}{modified} │ {caret_line + 1}:{display_column(doc.text(), doc.line_start(caret_line), view.selection.active) + 1}{count} │ {text_view.document_id + 1}/{editor.workspace.documents.count} │ {path}")

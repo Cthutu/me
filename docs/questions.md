@@ -464,3 +464,23 @@ selection effects; undo/redo correct the recipe, while each playback is one undo
 redo unit. File/pane/buffer actions are refused until recording finishes. Design
 §32 records the delivery policies and bounds; broader scopes and named macros
 remain separate work.
+
+
+## Pending d and line deletion (T8)
+
+Settled: d immediately deletes an existing selection; without a selection it
+waits for a second d. dd deletes a line, and a prefix such as 3dd deletes three.
+Design §34 records cancellation, line endings, clipboard and count policies.
+
+## Future file-type modes: first milestone foundation and Markdown
+
+Matt explicitly requested modes that determine LSP, formatting, syntax
+highlighting, indentation and related behaviour, with file-type customisation.
+The first future modes milestone covers the foundation and Markdown support,
+including status LF/CRLF and recognised file type. See design §35.
+
+Open before implementation: recognition and override precedence; customisation
+format/storage; mode and facet ownership; provider/service lifecycle and concrete
+LSP/formatter/highlighter choices; the initial Markdown feature checklist; status
+representation for mixed/no line endings and unknown file types. Further modes
+milestones remain unscoped.

@@ -1869,10 +1869,53 @@ def pane_ctrl_w(binary, folder):
         session.quit()
 
 
+def delete_lines(binary, folder):
+    path = folder / "lines.txt"
+    original = "one\r\n👩‍💻 two\r\nthree\r\nfour\r\nfive".encode()
+    path.write_bytes(original)
+    with Session(binary, folder, "-r", path.name) as session:
+        session.send("d", 0.4)
+        shown = screen(session)
+        assert b"one" in shown.splitlines()[0] and b"1:1 d" in shown, shown
+        session.send(b"\x1b[100;1:3u")  # a release must not complete the prefix
+        assert b"one" in screen(session).splitlines()[0]
+        session.send(b"\x1b", 0.15)
+        session.send("di")  # invalid continuation cancels without entering Insert
+        assert b"Expected d" in screen(session)
+        session.normal()
+        session.send("w2dd")  # an explicit count also works with an existing selection
+        session.send(b"\x13")
+        assert path.read_bytes() == b"three\r\nfour\r\nfive"
+        session.send(b"\x1a\x13")
+        assert path.read_bytes() == original, "counted dd was not one undo unit"
+        session.send(" wh")
+        session.send("[2dd].")
+        session.send(b"\x13")
+        assert path.read_bytes() == b"five", "counted dd did not record and replay"
+        assert screen(session).splitlines()[0].count(b"five") == 2, "shared pane did not adjust"
+        session.send(b"\x1a\x13")
+        assert path.read_bytes() == b"three\r\nfour\r\nfive"
+        session.send(b"\x12\x13")
+        assert path.read_bytes() == b"five"
+        session.send("999dd")
+        session.send(b"\x13")
+        assert path.read_bytes() == b"", "line count did not clamp at EOF"
+        session.send(b"\x1a\x13")
+        assert path.read_bytes() == b"five"
+        session.send("idd")
+        session.send(b"\x13")
+        assert path.read_bytes() == b"ddfive", "Insert dd was not literal"
+        session.send("wd")  # an existing selection deletes immediately
+        session.send(b"\x13")
+        assert path.read_bytes() == b""
+        session.quit()
+
+
 def normal_delete(binary, folder):
     path = folder / "delete.txt"
     path.write_text("👩‍💻abc\nz")
     with Session(binary, folder, "-r", path.name) as session:
+        session.send(b"\x1b[1;2C")  # select the first grapheme
         session.send("d")
         session.send(b"\x13")
         assert path.read_bytes() == b"abc\nz", "d split a Unicode grapheme"
@@ -1882,7 +1925,9 @@ def normal_delete(binary, folder):
         session.send(b"\x1a\x13")
         assert path.read_bytes() == b"abc\nz"
         session.send(b"\x1b[H")
-        session.send("[d].")
+        session.send("[")
+        session.send(b"\x1b[1;2C")
+        session.send("d].")
         session.send(b"\x13")
         assert path.read_bytes() == b"c\nz", "d did not record and replay"
         session.send(b"\x1a\x13")
@@ -1894,10 +1939,11 @@ def normal_delete(binary, folder):
         assert path.read_bytes() == b"dc\nz", "Insert d was not literal"
         session.send(b"\x1b[1;5F")
         session.send("d")
+        session.send(b"\x1b", 0.15)  # pending d at EOF is cancellable
         session.send(b"\x13")
-        assert path.read_bytes() == b"dc\nz", "d at EOF was not harmless"
-        session.send("3d")
-        assert b"does not accept a count" in screen(session)
+        assert path.read_bytes() == b"dc\nz", "pending d at EOF changed text"
+        session.send("3di")
+        assert b"Expected d" in screen(session)
         session.quit()
 
 
@@ -2108,7 +2154,7 @@ def main():
     allowed = {"libc.so.6", "libm.so.6", "libgcc_s.so.1", "linux-vdso.so.1"}
     unexpected = {name for name in names if name not in allowed and not Path(name).name.startswith("ld-linux-")}
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
-    checks = [normal_delete, repeat_recording, repeat_failure, new_buffer, exit_input_cleanup, pane_controls, pane_ctrl_w, pane_file_picker, file_picker, file_picker_stale_and_cancel, cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
+    checks = [delete_lines, normal_delete, repeat_recording, repeat_failure, new_buffer, exit_input_cleanup, pane_controls, pane_ctrl_w, pane_file_picker, file_picker, file_picker_stale_and_cancel, cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
               search_replace_and_buffers, search_origins, slash_replacement, confirmation_recovery, byte_paths_and_checkpoint_failures,
               second_instance, crash_and_signals, undo_caret, word_delete, buffer_picker, buffer_picker_close_selected, buffer_picker_preview, buffer_picker_recovery, buffer_picker_unicode_bytes, enhanced_key_actions, keyboard_diagnostics, hjkl_and_line_selection, leader_overlay, control_hjkl, duplicate_selection, command_completion, live_completion_filter, file_completion, home_paths, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
     selected = [check for check in checks if args.filter in check.__name__]

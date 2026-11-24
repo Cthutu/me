@@ -107,7 +107,8 @@ these letters remain literal text in Insert and prompts.
 | `w` / `q` | Select whole word / line; repeats extend |
 | `y` / `x` / `v` | Copy / cut / paste using the internal typed clipboard |
 | `c` | Delete selection and enter Insert; no selection just enters Insert |
-| `d` | Delete selection, or the grapheme at the caret; stay Normal, leave clipboard unchanged |
+| `d` | Delete an existing selection immediately; otherwise begin pending `dd` |
+| `dd` / `3dd` | Delete the current line / three lines; retain Normal and clipboard |
 | Ctrl+Backspace | Delete the selection, or back to the previous Ctrl+Left word boundary; one undo; enter Normal |
 | Ctrl+D | Duplicate selected lines below (keeping the copy selected), or the current line at the same display column; clear character selections; one undo |
 | Ctrl+Z / Ctrl+R | Undo / redo |
@@ -169,6 +170,8 @@ configuration or enhanced keyboard reporting.
 Positive Normal counts prefix arrows, `h`/`j`/`k`/`l`, word/paragraph/page
 movement and `w`/`q`. For example, `3j` moves down three lines and `3q` selects
 three lines; `qqq` also selects three lines.
+A count also prefixes `dd` for line deletion. Pending `d` waits for its second
+`d`; Escape cancels, and an invalid continuation cancels with an error.
 Unsupported combinations report an error and consume the count. `:120` jumps to
 line 120's first non-whitespace; out-of-range lines are clamped. Vertical motion
 retains a preferred display-cell column through shorter lines. Intentional
@@ -515,3 +518,12 @@ and [standard-library candidates](docs/standard-library-candidates.md).
 `just unicode` fetches checksum-pinned build inputs and regenerates the Unicode
 16 tables and 1,093 official grapheme vectors. Unicode data is covered by
 [its own licence](LICENSE-UNICODE.txt).
+
+
+Future agreed milestone: **Modes M1 — foundation and Markdown**. File-type modes
+will determine LSP, formatting, syntax highlighting, indentation and related
+behaviour, with customisable provider choices. The first milestone includes the
+mode foundation, Markdown support and status-line LF/CRLF/recognised file-type
+information. See [design §35](docs/design.md#35-future-file-type-mode-milestones--agreed-direction)
+and [agreed tasks](docs/tasks.md); concrete providers and feature details remain
+open before implementation.

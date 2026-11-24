@@ -42,8 +42,13 @@ first-release scope.
 - **Popup:** a temporary surface above the pane layout, mounting a view.
 - **Interaction state:** modal keyboard behaviour, such as Normal, Insert,
   Select, or an operator-pending substate.
-- **Facet:** a composable specialisation of a view, analogous in purpose to
-  Emacs modes, without overloading the term "mode".
+- **Facet:** a composable specialisation of a view. The original terminology
+  compared facets with Emacs modes. The later file-type mode decision (§35)
+  introduces modes explicitly; Normal/Insert remain interaction states.
+- **File-type mode:** a customisable system selected for a file type that
+  determines LSP, formatting, syntax highlighting, indentation and related
+  file-type behaviour. Its relationship with composable view facets is to be
+  specified in the future modes milestone.
 - **Workspace:** manages buffers, views, surfaces, focus, and shared services.
 
 Distinguish a buffer's content kind, a view's fundamental interaction kind, and
@@ -1548,4 +1553,56 @@ Delete's existing line-joining policy. It is one ordinary undo unit, with existi
 shared-view adjustment, recording and grouped playback support. Insert, prompts
 and picker queries retain literal d; Ctrl+D retains duplication. Counts use the
 existing non-counted command policy. No operator-pending d or dw/dd grammar is
-introduced by this alias.
+introduced by this alias. The unselected single-d behaviour is superseded by
+Matt's later pending-d clarification in §34; immediate selection deletion remains.
+
+
+## 34. Pending d and counted line deletion (T8)
+
+Matt clarified: d deletes an existing selection immediately. With no selection,
+the first d is a pending command; dd deletes the current line and a positive
+prefix such as 3dd deletes that many lines, clamped at the end of the buffer.
+Show d/3d in the status line while waiting. Escape cancels without edits; invalid
+continuations cancel with a message and do not run that key's command. Key
+releases do not complete or cancel the prefix. Insert/prompts/picker queries
+retain literal d. This supersedes §33's unselected single-d grapheme deletion;
+the Delete key retains ordinary forward deletion.
+
+Initial policies: counted dd operates from the caret's line, retains the clipboard
+and Normal, and is one edit/undo unit with normal shared-view adjustment. Capture
+one semantic DeleteLines(count) operation for recording and replay. Delete complete
+line endings; an unterminated final line/trailing empty line also removes its
+preceding separator so it disappears as a logical line. Preserve the UTF-8 BOM.
+A bare d with an existing selection deletes it immediately; an explicit numeric
+prefix starts counted dd even with a selection, using the active caret's line.
+
+
+## 35. Future file-type mode milestones — agreed direction
+
+Add customisable file-type modes. A mode determines the LSP service, formatter,
+syntax highlighting, indentation and related file-type behaviour. These are
+file-type systems; Normal/Insert remain interaction states. The earlier choice
+to use only the term facet is superseded for this system, while the relationship
+with view facets remains a design question.
+
+The first milestone in this programme is **Modes M1: foundation and Markdown**.
+This is a new future milestone; it does not rename the completed historical MS1
+editor foundation or the delivered MS2 work.
+
+Agreed scope:
+
+- Foundations for recognising a file type, choosing its mode and customising the
+  mode's behaviour and provider choices.
+- Mode-owned selection/configuration of LSP, formatting, syntax highlighting,
+  indentation and related file-type services.
+- Markdown as the first supported file-type mode and consumer of that foundation.
+- Extra status information, including LF/CRLF line endings and recognised file
+  type, while retaining the editor's existing status information.
+
+Before implementation, settle customisation/storage interfaces, file-type
+recognition precedence and overrides, mode/facet ownership, provider lifecycle
+and concrete providers, the Markdown feature/verification checklist, and status
+behaviour for mixed/no line endings or unknown file types. These are open choices,
+not implied implementation promises. Later modes milestones are not yet scoped.
+This request records future work; it does not implement status or mode services
+inside T8's deletion change.
