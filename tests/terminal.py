@@ -1869,6 +1869,38 @@ def pane_ctrl_w(binary, folder):
         session.quit()
 
 
+def normal_delete(binary, folder):
+    path = folder / "delete.txt"
+    path.write_text("👩‍💻abc\nz")
+    with Session(binary, folder, "-r", path.name) as session:
+        session.send("d")
+        session.send(b"\x13")
+        assert path.read_bytes() == b"abc\nz", "d split a Unicode grapheme"
+        session.send("wd")
+        session.send(b"\x13")
+        assert path.read_bytes() == b"\nz", "d did not delete the selected word"
+        session.send(b"\x1a\x13")
+        assert path.read_bytes() == b"abc\nz"
+        session.send(b"\x1b[H")
+        session.send("[d].")
+        session.send(b"\x13")
+        assert path.read_bytes() == b"c\nz", "d did not record and replay"
+        session.send(b"\x1a\x13")
+        assert path.read_bytes() == b"bc\nz"
+        session.send(b"\x12\x13")
+        assert path.read_bytes() == b"c\nz"
+        session.send("id")
+        session.send(b"\x13")
+        assert path.read_bytes() == b"dc\nz", "Insert d was not literal"
+        session.send(b"\x1b[1;5F")
+        session.send("d")
+        session.send(b"\x13")
+        assert path.read_bytes() == b"dc\nz", "d at EOF was not harmless"
+        session.send("3d")
+        assert b"does not accept a count" in screen(session)
+        session.quit()
+
+
 def repeat_recording(binary, folder):
     path = folder / "original.txt"
     path.write_bytes(b"BASE\n")
@@ -2076,7 +2108,7 @@ def main():
     allowed = {"libc.so.6", "libm.so.6", "libgcc_s.so.1", "linux-vdso.so.1"}
     unexpected = {name for name in names if name not in allowed and not Path(name).name.startswith("ld-linux-")}
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
-    checks = [repeat_recording, repeat_failure, new_buffer, exit_input_cleanup, pane_controls, pane_ctrl_w, pane_file_picker, file_picker, file_picker_stale_and_cancel, cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
+    checks = [normal_delete, repeat_recording, repeat_failure, new_buffer, exit_input_cleanup, pane_controls, pane_ctrl_w, pane_file_picker, file_picker, file_picker_stale_and_cancel, cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
               search_replace_and_buffers, search_origins, slash_replacement, confirmation_recovery, byte_paths_and_checkpoint_failures,
               second_instance, crash_and_signals, undo_caret, word_delete, buffer_picker, buffer_picker_close_selected, buffer_picker_preview, buffer_picker_recovery, buffer_picker_unicode_bytes, enhanced_key_actions, keyboard_diagnostics, hjkl_and_line_selection, leader_overlay, control_hjkl, duplicate_selection, command_completion, live_completion_filter, file_completion, home_paths, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
     selected = [check for check in checks if args.filter in check.__name__]

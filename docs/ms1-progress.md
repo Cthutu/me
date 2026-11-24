@@ -657,3 +657,19 @@ checks passed. Final guards (including single-count refusal and zero-net history
 have native coverage, and the final repeat/count scenarios passed on both debug
 and release executables. Commit/push and required installation follow, with both
 repeat PTY scenarios checked against the installed binary.
+
+
+## Normal d deletion (T7)
+
+Normal d aliases the existing Delete command: remove the selection or one forward
+grapheme, stay Normal and leave the clipboard intact. Insert/prompts/picker queries
+retain literal d. Existing EOF/line-ending handling, undo/redo, shared-view edits
+and semantic repeat apply without a separate mutation path.
+
+Verified 177 native tests (65 ME + 112 imported), the focused Normal d PTY group
+on debug/release, formatting/idempotence, type checking, Python compilation and
+diff checks. Native coverage includes reversed selections, Unicode graphemes,
+clipboard preservation, history, EOF, repeat and literal Insert/prompt text. PTY
+coverage adds actual key input, word selection, save, undo/redo, grouped repeat,
+Insert d, EOF and unsupported counts. Required commit/push and installation follow,
+with an installed-binary deletion smoke check.

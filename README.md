@@ -107,6 +107,7 @@ these letters remain literal text in Insert and prompts.
 | `w` / `q` | Select whole word / line; repeats extend |
 | `y` / `x` / `v` | Copy / cut / paste using the internal typed clipboard |
 | `c` | Delete selection and enter Insert; no selection just enters Insert |
+| `d` | Delete selection, or the grapheme at the caret; stay Normal, leave clipboard unchanged |
 | Ctrl+Backspace | Delete the selection, or back to the previous Ctrl+Left word boundary; one undo; enter Normal |
 | Ctrl+D | Duplicate selected lines below (keeping the copy selected), or the current line at the same display column; clear character selections; one undo |
 | Ctrl+Z / Ctrl+R | Undo / redo |

@@ -418,3 +418,17 @@ ELF shared-library dependencies or interpreter. Release installation uses
 
 Language intelligence, desktop clipboard and configuration are not added to this
 queue by implication.
+
+
+### T7 — Normal d deletes — done
+
+- Bind Normal d to the existing Delete command: selection or one forward grapheme.
+- Keep Normal, clipboard contents, ordinary undo/redo and repeat integration.
+- Retain literal d in Insert/prompts/pickers and existing Ctrl+D duplication.
+- Follow existing Delete behaviour at line endings/EOF and for unsupported counts.
+- Verified 177 native tests (65 ME + 112 imported) and the focused Normal d PTY
+  scenario on debug/release builds. Coverage includes Unicode graphemes, selected
+  text, EOF, clipboard preservation, undo/redo, repeat, literal Insert/prompt text
+  and unsupported counts. Formatting/idempotence, type checking, Python compilation
+  and diff checks passed. Required commit/push and release installation follow,
+  with the installed deletion scenario checked afterwards.

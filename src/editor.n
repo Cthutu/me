@@ -3529,3 +3529,86 @@ test "corrected repeat recipes reproduce content and caret after mixed editing a
         }
     }
 }
+
+test "Normal d deletes selected text or one grapheme with ordinary history and repeat" {
+    scratch : arena
+    defer scratch.done()
+    editor : Editor
+    editor.workspace.lock_fd = -1
+    defer editor.release()
+    editor.workspace.add_empty()
+    doc := ^editor.workspace.active_document().text
+    on doc.load("a👩‍💻bc\r\nz") {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    own(^editor.clipboard.bytes, "kept")
+    view := ^editor.workspace.active_view().interaction
+    view.state = Interaction.Normal
+    view.place(doc, 1, no)
+    editor.character(^scratch, 'd'.as(u32))
+    assert doc.text() == "abc\r\nz" && doc.applied == 1
+    assert view.state == Interaction.Normal && bytes_text(editor.clipboard.bytes) == "kept"
+    on editor.execute(^scratch, Command.Undo) {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    assert doc.text() == "a👩‍💻bc\r\nz"
+    on editor.execute(^scratch, Command.Redo) {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    view.selection = Selection { anchor: 3 active: 1 }
+    editor.character(^scratch, 'd'.as(u32))
+    assert doc.text() == "a\r\nz" && view.selection.empty()
+    on editor.execute(^scratch, Command.Undo) {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    assert doc.text() == "abc\r\nz"
+    view.place(doc, doc.text().count, no)
+    applied := doc.applied
+    editor.character(^scratch, 'd'.as(u32))
+    assert doc.text() == "abc\r\nz" && doc.applied == applied
+    view.place(doc, 0, no)
+    repeat_keys(^editor, ^scratch, "[d].")
+    assert doc.text() == "c\r\nz"
+    on editor.execute(^scratch, Command.Undo) {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    assert doc.text() == "bc\r\nz"
+    repeat_keys(^editor, ^scratch, "id")
+    assert doc.text() == "dbc\r\nz"
+    on editor.execute(^scratch, Command.Escape) {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    editor.prompt_open(':'.as(u32), initial = "s")
+    editor.character(^scratch, 'd'.as(u32))
+    assert bytes_text(editor.prompt) == "sd" && doc.text() == "dbc\r\nz"
+}

@@ -233,6 +233,7 @@ impl Keyboard {
             'y'.as(u32)                                                                   => Command.Copy
             'x'.as(u32)                                                                   => Command.Cut
             'v'.as(u32)                                                                   => Command.Paste
+            'd'.as(u32)                                                                   => Command.Delete
             'c'.as(u32)                                                                   => Command.Change
             ':'.as(u32), '/'.as(u32), '?'.as(u32)                                         => Command.Prompt(rune)
             'n'.as(u32)                                                                   => Command.SearchNext(no)

@@ -1537,3 +1537,15 @@ Initial delivery policies:
 Source: src/repeat.n owns recipes and correction metadata; src/editor.n handles
 capture, execution and scope; src/document.n groups history; src/keyboard.n and
 src/terminal.n provide bindings and the recording indicator.
+
+
+## 33. Normal d deletion (T7)
+
+Normal d invokes the existing Delete command: remove the active selection, or
+one forward grapheme when there is no selection. Stay in Normal and retain the
+internal clipboard. At end of buffer it is harmless; at a line ending it follows
+Delete's existing line-joining policy. It is one ordinary undo unit, with existing
+shared-view adjustment, recording and grouped playback support. Insert, prompts
+and picker queries retain literal d; Ctrl+D retains duplication. Counts use the
+existing non-counted command policy. No operator-pending d or dw/dd grammar is
+introduced by this alias.
