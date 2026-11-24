@@ -421,3 +421,19 @@ overlay stack remain separate choices. See design §26 and README for details.
 - Space b d was explicitly clarified as an example only. Do not add it, or other
   submenu actions, without agreement. Space Space remains the only active action.
 - The implementation uses a 180 ms row animation; see design §27 for details.
+
+
+## Pane controls and picker destination — settled (T5)
+
+Matt agreed to the Windows submenu and root directional focus controls in
+design §28: Space w h/v/s split above/below, side by side or automatically;
+Space w c closes a pane; Space w w picks a file before automatic splitting.
+Space h/j/k/l and Space plus cursor keys focus neighbouring panes.
+
+Splits focus a new independent view of the current shared buffer. Automatic
+orientation accounts for terminal cell proportions. Focus does not wrap at an
+edge. Closing preserves buffers and keeps the final pane open. File-picker
+cancellation/failure preserves the layout; only a successful selection/open
+creates and focuses its new pane. This records the design agreement, not an
+implementation delivery. Sizing/minimum dimensions, neighbour ties and resize
+policies remain implementation choices to document.

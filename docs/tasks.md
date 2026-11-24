@@ -330,12 +330,22 @@ ELF shared-library dependencies or interpreter. Release installation uses
   checks verify the updated timing.
 
 
-### T5 — Split-pane UI
+### T5 — Split-pane UI — queued; controls and behaviour agreed
 
 - Support pane creation, focus and closing, with independent views of shared text.
 - Keep shared buffer history and semantic position adjustment across views.
-- Agree commands/bindings, split directions and sizing before implementation.
-- Closing a pane is distinct from killing its buffer.
+- Space w opens the Windows submenu: h splits above/below; v side by side;
+  s chooses the longest axis, accounting for terminal cell proportions; c closes
+  the current pane; w picks a file before automatic splitting.
+- Space h/j/k/l or Space plus cursor keys focus the corresponding neighbour.
+  Stay put when none exists; do not wrap.
+- h/v/s share the current buffer with a new independent view and focus it.
+- Closing a pane keeps its buffer open. Keep the last pane rather than quitting.
+- Space w w creates/focuses a pane only after a successful file selection/open;
+  cancellation or failure preserves the layout. Space Space stays as it is.
+- Document initial ratios, minimum sizes, neighbour ties and resize policy while
+  implementing. See design §28 and questions for the agreed scope.
+- This design is recorded; the pane UI and bindings remain unimplemented.
 
 ### T6 — Explicit repeat recording and playback
 

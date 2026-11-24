@@ -1383,3 +1383,35 @@ Space Space remains the only active menu action. Matt explicitly clarified that
 Space b d was an example for future nested sequences; it is **not** a binding or
 an agreed buffer-deletion task. Future groups/actions require agreement before
 adding entries. This menu does not implement a general overlay stack or pane UI.
+
+
+## 28. Pane controls and behaviour — agreed, implementation queued (T5)
+
+Normal Space w opens the Windows submenu. The agreed commands are:
+
+| Sequence | Action |
+| --- | --- |
+| Space w h | Split horizontally: panes above and below |
+| Space w v | Split vertically: panes side by side |
+| Space w s | Automatically split along the current pane's longest axis |
+| Space w c | Close the current pane, keeping its buffer open |
+| Space w w | Open the file picker, then automatically split for the chosen file |
+| Space h/j/k/l or Space Left/Down/Up/Right | Focus the neighbouring pane in that direction |
+
+Automatic splitting accounts for terminal cells being taller than they are wide.
+The h/v/s commands show the current buffer in both panes and focus the new pane.
+The panes have independent caret, selection and scrolling state while sharing the
+buffer's edits and undo history. Directional focus stays put when no neighbour
+exists; it does not wrap. Closing the last pane leaves it open rather than quitting.
+Closing a pane never kills its buffer or implicitly saves/discards its contents.
+
+Space w w opens the picker before changing the layout. Capture its originating
+pane as the split destination. After a successful selection/open, create the
+automatically oriented pane for that file and focus it. Escape leaves the layout
+intact, as does an unsuccessful file open. The existing Space Space file opener
+keeps its current behaviour.
+
+These controls and behaviours are agreed but are not installed bindings yet.
+Initial split ratios, minimum pane dimensions, exact neighbour tie-breaking and
+small-terminal/resize policies still need implementation choices documented as
+such. Space b d remains an example only, unrelated to closing a pane.
