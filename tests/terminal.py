@@ -1869,6 +1869,38 @@ def pane_ctrl_w(binary, folder):
         session.quit()
 
 
+def new_buffer(binary, folder):
+    path = folder / "original.txt"
+    path.write_bytes(b"ORIGINAL")
+    with Session(binary, folder, "-r", path.name) as session:
+        session.send("iUNSAVED")
+        session.normal()
+        session.send(" wh")
+        session.send(b"\x0e")
+        shown = screen(session)
+        assert shown.count(b"UNSAVEDORIGINAL") == 1, shown
+        assert b"[unnamed]" in shown and b"INSERT" in shown, shown
+        session.send("FIRST")
+        # Enhanced key + associated text + release must create exactly one buffer.
+        session.send(b"\x1b[110;5;14u\x1b[110;5:3u")
+        session.send("SECOND")
+        session.normal()
+        session.send(",")
+        assert b"3/3" in screen(session), screen(session)
+        session.send(b"\x1b", 0.15)
+        session.send(b"\x13")
+        session.send("second.txt\r")
+        assert (folder / "second.txt").read_bytes() == b"SECOND"
+        assert path.read_bytes() == b"ORIGINAL", "Ctrl N wrote or discarded previous work"
+        session.quit()
+    with Session(binary, folder) as session:
+        assert b"SECOND" in screen(session) and b"UNSAVEDORIGINAL" in screen(session)
+        session.send(",")
+        session.send("\r")  # previous unnamed buffer is selected initially
+        assert b"FIRST" in screen(session), screen(session)
+        session.quit()
+
+
 def pane_file_picker(binary, folder):
     (folder / "first.txt").write_bytes(b"FIRST")
     (folder / "second.txt").write_bytes(b"SECOND")
@@ -1970,7 +2002,7 @@ def main():
     allowed = {"libc.so.6", "libm.so.6", "libgcc_s.so.1", "linux-vdso.so.1"}
     unexpected = {name for name in names if name not in allowed and not Path(name).name.startswith("ld-linux-")}
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
-    checks = [exit_input_cleanup, pane_controls, pane_ctrl_w, pane_file_picker, file_picker, file_picker_stale_and_cancel, cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
+    checks = [new_buffer, exit_input_cleanup, pane_controls, pane_ctrl_w, pane_file_picker, file_picker, file_picker_stale_and_cancel, cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
               search_replace_and_buffers, search_origins, slash_replacement, confirmation_recovery, byte_paths_and_checkpoint_failures,
               second_instance, crash_and_signals, undo_caret, word_delete, buffer_picker, buffer_picker_close_selected, buffer_picker_preview, buffer_picker_recovery, buffer_picker_unicode_bytes, enhanced_key_actions, keyboard_diagnostics, hjkl_and_line_selection, leader_overlay, control_hjkl, duplicate_selection, command_completion, live_completion_filter, file_completion, home_paths, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
     selected = [check for check in checks if args.filter in check.__name__]

@@ -36,13 +36,18 @@ impl Keyboard {
         shift := (key.modifiers & TERM_MOD_SHIFT) != 0
 
         on self.count > 0 &&
-            ((ctrl && (key.scan_code == TermScanCode.S || key.scan_code == TermScanCode.Z || key.scan_code == TermScanCode.R || key.scan_code == TermScanCode.D || key.scan_code == TermScanCode.W)) || key.scan_code == TermScanCode.Tab || key.scan_code == TermScanCode.Enter || key.scan_code == TermScanCode.Backspace || key.scan_code == TermScanCode.Delete) => {
+            ((ctrl && (key.scan_code == TermScanCode.S || key.scan_code == TermScanCode.Z || key.scan_code == TermScanCode.R || key.scan_code == TermScanCode.D || key.scan_code == TermScanCode.W || key.scan_code == TermScanCode.N)) || key.scan_code == TermScanCode.Tab || key.scan_code == TermScanCode.Enter || key.scan_code == TermScanCode.Backspace || key.scan_code == TermScanCode.Delete) => {
             self.count = 0
             self.suppress_text = key.character != nil
             return Command.Error("Command does not accept a count")
         }
         on ctrl => {
             on key.scan_code {
+                N => {
+                    self.suppress_text = key.character != nil
+                    return Command.NewBuffer
+                }
+
                 W => {
                     self.suppress_text = key.character != nil
                     return Command.ClosePane
@@ -172,6 +177,14 @@ impl Keyboard {
         }
         -- Traditional terminals send control bytes without modifier metadata.
         on rune {
+            14 => {
+                on self.count > 0 => {
+                    self.count = 0
+                    return Command.Error("Command does not accept a count")
+                }
+                return Command.NewBuffer
+            }
+
             23  => return Command.ClosePane
             19  => return Command.Save
             26  => return Command.Undo

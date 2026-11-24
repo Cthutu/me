@@ -388,6 +388,17 @@ ELF shared-library dependencies or interpreter. Release installation uses
 - Required commit/push and release installation follow verification, with installed
   Ctrl+W pane and selected-buffer popup regression checks.
 
+### T5c — Ctrl+N creates an unnamed buffer — done
+
+- Create/focus a new unnamed buffer in the current pane and enter Insert.
+- Preserve existing buffers, unsaved work and other panes.
+- Support legacy and enhanced reports; ignore releases and suppress paired text.
+- Retain normal continuation and popup input scope; reject counts.
+- Verified 168 native tests (56 ME + 112 imported), all 43 debug terminal groups,
+  the release Ctrl+N scenario, type checking, idempotent formatting, Python
+  compilation and diff checks. Required commit/push and release installation
+  follow, with the installed new-buffer scenario checked afterwards.
+
 ### T6 — Explicit repeat recording and playback
 
 - Implement the agreed recording/replay direction in design §12: Normal-state

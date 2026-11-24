@@ -53,6 +53,7 @@ pub Command :: enum {
     BufferPicker
     FilePicker
     ClosePane
+    NewBuffer
     Prompt(u32)
     SearchNext(bool)
     Error(string)

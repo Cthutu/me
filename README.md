@@ -111,6 +111,7 @@ these letters remain literal text in Insert and prompts.
 | Ctrl+D | Duplicate selected lines below (keeping the copy selected), or the current line at the same display column; clear character selections; one undo |
 | Ctrl+Z / Ctrl+R | Undo / redo |
 | Ctrl+S | Save active document; unnamed opens `:w ` |
+| Ctrl+N | New unnamed buffer in the current pane; enter Insert |
 | `,` | Normal-only buffer picker; Enter switches, Escape cancels |
 | Normal Space Space / `:files` | Open files; hold after the first Space for the key menu |
 | Space w h / v / s | Split side by side / above/below / automatically |
@@ -120,7 +121,8 @@ these letters remain literal text in Insert and prompts.
 | Ctrl+W | Close the current pane; in the buffer picker, remove the highlighted saved buffer |
 
 Only `i` preserves selection on Insert entry; other entry commands clear it.
-Ctrl-bound editing commands enter Normal even on failure/no-op. Ctrl navigation
+Ctrl-bound editing commands enter Normal even on failure/no-op; Ctrl+N starts
+a fresh unnamed buffer in Insert, retaining all existing work. Ctrl navigation
 preserves state. Each terminal character event, deletion, paste and duplicate is its own
 undo operation. Undo/redo clears selection and restores the operation's before/after
 caret, rather than replaying subsequent navigation. Older history without caret

@@ -1476,3 +1476,15 @@ scrolling intact. Keep the final pane open. Both legacy control bytes and enhanc
 key reports work; paired text and releases cannot close a second pane.
 The buffer popup retains its selected-buffer deletion and dirty-buffer refusal;
 `:kill[!]` remains explicit buffer deletion.
+
+
+## 31. New unnamed buffer shortcut (T5c)
+
+Ctrl+N creates and focuses a fresh unnamed buffer in the current pane, entering
+Insert. It works from Normal and Insert, retains existing buffers and unsaved
+work, and preserves other panes. Cancel an active command/search prompt before
+creation. Popups, leader menus and confirmation retain their existing input scope.
+Legacy byte 0x0e and enhanced Ctrl+N reports have the same action; ignore releases
+and suppress associated text so a single press creates one buffer. Counts are
+unsupported and consumed with an error. Each new buffer has its own empty
+history; normal continuation includes it.

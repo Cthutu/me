@@ -601,3 +601,25 @@ is idempotent; type checking, Python compilation and diff checks passed. A final
 prompt-cancellation preservation passed native and focused release checks.
 Commit/push and required release installation follow, with installed pane-close
 and picker-deletion regression checks.
+
+
+## New unnamed buffer shortcut (T5c)
+
+Ctrl+N creates/focuses a fresh unnamed buffer in the current pane and enters
+Insert from either editing mode. Existing buffers and unsaved work remain intact;
+other panes keep their buffers/views. Active command/search prompts cancel first;
+popup/leader/confirmation input keeps its scope. Both legacy 0x0e and enhanced
+reports work, with paired text suppressed and releases ignored. Counts error
+without creating a buffer. New buffers use normal continuation and independent
+history.
+
+Native coverage exercises Normal/Insert creation, preserved unsaved/shared work,
+paired reports, releases, unsupported counts and prompt cancellation. The PTY
+scenario verifies a split pane, multiple new buffers, filename save, unchanged
+original disk content and restoration of all unsaved buffers after restart.
+
+Verification: 168 native tests (56 ME + 112 imported), all 43 debug terminal
+groups and the focused release new-buffer scenario passed, alongside type
+checking, idempotent formatting, Python compilation and diff checks. Required
+commit/push and release installation follow, with the installed Ctrl+N scenario
+checked afterwards.

@@ -938,6 +938,12 @@ impl Editor {
             return
         }
         on command {
+            NewBuffer => {
+                on self.prompt_kind != 0 => self.prompt_cancel()
+                self.workspace.add_empty()
+                self.changed()
+                return
+            }
             BufferPicker => {
                 self.open_buffer_picker(scratch)
                 return
@@ -2951,4 +2957,55 @@ test "Ctrl W closes only the focused pane and retains shared and unsaved buffers
     editor.character(^scratch, 23)
     assert editor.workspace.surface.view_id == 0
     assert editor.workspace.active_document().text.text() == "A"
+}
+
+test "Ctrl N creates distinct unnamed Insert buffers in the focused pane without losing work" {
+    scratch : arena
+    defer scratch.done()
+    editor : Editor
+    editor.workspace.lock_fd = -1
+    defer editor.release()
+    editor.workspace.add_empty()
+    editor.character(^scratch, 'A'.as(u32))
+    editor.workspace.active_view().interaction.state = Interaction.Normal
+    on editor.pane_operation(LeaderOperation.SplitHorizontal) {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    editor.key(^scratch,
+               TermKeyEvent { scan_code: N action: Release modifiers: TERM_MOD_CONTROL ... })
+    assert editor.workspace.documents.count == 1
+    editor.key(^scratch,
+               TermKeyEvent { scan_code: N action: Press modifiers: TERM_MOD_CONTROL character: 14.as(u32) ... })
+    editor.character(^scratch, 14)
+    assert editor.workspace.documents.count == 2
+    assert editor.workspace.active_document().path.count == 0
+    assert editor.workspace.active_document().text.text() == ""
+    assert editor.workspace.active_view().interaction.state == Interaction.Insert
+    assert editor.workspace.panes.mounted(0)
+    assert editor.workspace.documents[0].text.text() == "A"
+    assert editor.dirty
+    editor.character(^scratch, 'B'.as(u32))
+    editor.character(^scratch, 14)
+    assert editor.workspace.documents.count == 3
+    assert editor.workspace.documents[1].text.text() == "B"
+    assert editor.workspace.active_document().text.text() == ""
+    editor.workspace.active_view().interaction.state = Interaction.Normal
+    editor.character(^scratch, '2'.as(u32))
+    editor.character(^scratch, 14)
+    assert editor.workspace.documents.count == 3
+    assert editor.workspace.active_view().keyboard.count == 0
+    editor.character(^scratch, '2'.as(u32))
+    editor.key(^scratch,
+               TermKeyEvent { scan_code: N action: Press modifiers: TERM_MOD_CONTROL character: 14.as(u32) ... })
+    editor.character(^scratch, 14)
+    assert editor.workspace.documents.count == 3
+    assert editor.workspace.active_view().keyboard.count == 0
+    editor.prompt_open(':'.as(u32), initial = "e unfinished")
+    editor.character(^scratch, 14)
+    assert editor.prompt_kind == 0 && editor.workspace.documents.count == 4
 }
