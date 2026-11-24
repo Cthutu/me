@@ -426,7 +426,7 @@ The split destination is settled under T5 below. See design §26 and README for 
 ## Pane controls and picker destination — settled (T5)
 
 Matt agreed to the Windows submenu and root directional focus controls in
-design §28: Space w h/v/s split above/below, side by side or automatically;
+design §28: Space w h/v/s split side by side, above/below or automatically;
 Space w c closes a pane; Space w w picks a file before automatic splitting.
 Space h/j/k/l and Space plus cursor keys focus neighbouring panes.
 
@@ -437,3 +437,11 @@ cancellation/failure preserves the layout; only a successful selection/open
 creates and focuses its new pane. Delivered under T5; design §28 records the
 initial sizing, minimum dimensions, neighbour ties and resize policies as
 implementation choices.
+
+
+## Pane follow-up corrections (T5a)
+
+Matt clarified that h means a horizontal arrangement (side by side) and v means a
+vertical arrangement (above/below), correcting the original T5 mapping. Brighten
+the focused pane background to distinguish it, and fix terminal input reports
+leaking into the shell on exit. These are agreed fixes, not proposed controls.

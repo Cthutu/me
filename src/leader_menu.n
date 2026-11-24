@@ -24,8 +24,8 @@ pub LeaderEntry :: plex {
 pub LEADER_ENTRIES :: [
     LeaderEntry { sequence : " "  label : "Open file"           operation : FilePicker },
     LeaderEntry { sequence : "w"  label : "Windows"             operation : Group },
-    LeaderEntry { sequence : "wh" label : "Split horizontally"  operation : SplitHorizontal },
-    LeaderEntry { sequence : "wv" label : "Split vertically"    operation : SplitVertical },
+    LeaderEntry { sequence : "wh" label : "Side by side"        operation : SplitHorizontal },
+    LeaderEntry { sequence : "wv" label : "Above and below"     operation : SplitVertical },
     LeaderEntry { sequence : "ws" label : "Split automatically" operation : SplitAutomatic },
     LeaderEntry { sequence : "wc" label : "Close pane"          operation : ClosePane },
     LeaderEntry { sequence : "ww" label : "Split and open file" operation : SplitPicker },

@@ -1070,7 +1070,7 @@ test {
             _error! => return "Fixture load failed"!
         }
         state.active_view().interaction.selection.collapse(2)
-        state.split_pane(SplitAxis.Vertical)?
+        state.split_pane(SplitAxis.Columns)?
         right := state.surface.view_id
         assert right != 0 && state.active_view().document_id == 0
         state.active_view().interaction.selection.collapse(7)
@@ -1131,13 +1131,13 @@ test {
         restored.close_pane()
         assert restored.documents.count == 1 && restored.active_document().modified()
         assert restored.active_view().interaction.selection.active == 2
-        restored.split_pane(SplitAxis.Horizontal)?
+        restored.split_pane(SplitAxis.Rows)?
         restored.add_empty()
         -- Buffer replacement affects only the mounted pane. Killing a shared
         -- buffer rebinds all its panes without collapsing the layout.
         assert restored.documents.count == 2
         restored.focus_pane(Direction.Up)
-        restored.split_pane(SplitAxis.Vertical)?
+        restored.split_pane(SplitAxis.Columns)?
         restored.kill_document(0, yes)?
         assert restored.documents.count == 1
         mounted : usize = 0

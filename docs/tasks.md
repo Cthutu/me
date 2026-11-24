@@ -193,7 +193,7 @@ fresh discovery on reopening, safe acceptance and no-match handling.
 ## Agreed MS2 work
 
 The following tasks were explicitly accepted after T1/T2. T3's detailed
-interaction is now agreed and implemented; T4/T4a/T4b and T5 are complete; T6
+interaction is now agreed and implemented; T4/T4a/T4b and T5/T5a are complete; T6
 remains queued. T2's filename
 completion still uses the existing message area, separate from the reusable popup.
 
@@ -334,7 +334,7 @@ ELF shared-library dependencies or interpreter. Release installation uses
 
 - Support pane creation, focus and closing, with independent views of shared text.
 - Keep shared buffer history and semantic position adjustment across views.
-- Space w opens the Windows submenu: h splits above/below; v side by side;
+- Space w opens the Windows submenu: h splits side by side; v above/below;
   s chooses the longest axis, accounting for terminal cell proportions; c closes
   the current pane; w picks a file before automatic splitting.
 - Space h/j/k/l or Space plus cursor keys focus the corresponding neighbour.
@@ -356,6 +356,22 @@ ELF shared-library dependencies or interpreter. Release installation uses
   three-pane preview. The final relative-status-path refinement has native and
   focused debug/release pane coverage. Required release installation follows
   commit/push, with both pane groups checked against the installed executable.
+
+### T5a — Pane feedback, split naming and terminal exit — done
+
+- Brighten the focused pane background, including blank space and composite glyphs.
+- Correct Space w h to side by side and Space w v to above/below. Retain automatic
+  orientation and existing layouts; make menu/help descriptions unambiguous.
+- Fix queued/delayed terminal reports reaching the shell on exit, in Nerd std.term.
+  Verify normal, forced and signal exits with clean subsequent shell input.
+- Nerd terminal cleanup `68c2f47d` and assertion-value fix `2b3f6987` each passed
+  the full 77-stage gate with two platform skips. Both are pushed on their fix
+  branches and remove-linux-libc, integrated into local main and installed directly
+  in ~/nerd on remove-linux-libc. Completed worktrees/local branches are removed.
+- ME verification: 166 native tests, all 41 debug and 41 release terminal groups,
+  formatting/type checking/idempotence, Python compilation and diff checks passed.
+  A rendered preview was visually checked. Required ME installation follows
+  commit/push, with installed exit/pane/leader smoke checks.
 
 ### T6 — Explicit repeat recording and playback
 

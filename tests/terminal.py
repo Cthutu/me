@@ -1776,7 +1776,7 @@ def pane_controls(binary, folder):
     path = folder / "shared.txt"
     path.write_bytes(b"alpha\nbeta\ngamma\n")
     with Session(binary, folder, "-r", path.name) as session:
-        session.send("l wv")
+        session.send("l wh")
         shown = screen(session)
         assert shown.splitlines()[0].count(b"alpha") == 2, shown
         session.send("liX")
@@ -1792,7 +1792,7 @@ def pane_controls(binary, folder):
         session.send(b"\x13")
         assert path.read_bytes() == b"alXpha\nbeta\ngamma\n"
         session.normal()
-        session.send(" wh")
+        session.send(" wv")
         session.send(" k")
         session.send("iU")
         session.normal()
@@ -1822,7 +1822,7 @@ def pane_controls(binary, folder):
         assert screen(session).count(path.read_bytes().splitlines()[0]) == 1
         session.send("iUNSAVED")
         session.normal()
-        session.send(" wv wc")
+        session.send(" wh wc")
         session.send(",")
         assert b"1/1" in screen(session), "closing a pane killed its buffer"
         session.send(b"\x1b", 0.15)
@@ -1866,6 +1866,56 @@ def pane_file_picker(binary, folder):
         session.send(b"\x1b", 0.15)
         session.quit()
 
+
+def exit_input_cleanup(binary, folder):
+    reports = b"\x1b[13;1:3u\x1b[<0;10;5m\x1b[?31u\x1b[?1;2c"
+    home = folder / "home"
+    home.mkdir(exist_ok=True)
+    for kind in ("q", "q!", "signal"):
+        master, slave = pty.openpty()
+        original = termios.tcgetattr(slave)
+        process = None
+        output = bytearray()
+        sent = False
+        late = kind != "signal"
+        try:
+            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+            process = subprocess.Popen([str(binary), "-r"], cwd=folder,
+                                       stdin=slave, stdout=slave, stderr=slave,
+                                       start_new_session=True,
+                                       env={**os.environ, "HOME": str(home), "TERM": "xterm-256color"})
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                if select.select([master], [], [], 0.01)[0]:
+                    output.extend(os.read(master, 65536))
+                if not sent and b"\x1b[?1006h" in output:
+                    if kind == "signal":
+                        os.killpg(process.pid, signal.SIGTERM)
+                    else:
+                        os.write(master, b"\x1b")
+                        time.sleep(0.15)
+                        os.write(master, (":" + kind + "\r").encode() + reports * 8)
+                    sent = True
+                if not late and b"\x1b[<u" in output:
+                    time.sleep(0.01)
+                    os.write(master, reports)
+                    late = True
+                if process.poll() is not None:
+                    break
+            assert sent and late and process.wait(timeout=1) == 0, bytes(output[-2000:])
+            assert termios.tcgetattr(slave) == original, "exit leaked terminal attributes"
+            assert b"\x1b[?1049l" in output and b"\x1b[<u" in output
+            os.write(master, b"shell-input\n")
+            assert select.select([slave], [], [], 1)[0]
+            leftover = os.read(slave, 4096)
+            assert leftover == b"shell-input\n", (kind, "reports leaked into shell", leftover)
+        finally:
+            if process is not None and process.poll() is None:
+                process.kill()
+                process.wait()
+            os.close(master)
+            os.close(slave)
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", required=True, type=Path)
@@ -1880,7 +1930,7 @@ def main():
     allowed = {"libc.so.6", "libm.so.6", "libgcc_s.so.1", "linux-vdso.so.1"}
     unexpected = {name for name in names if name not in allowed and not Path(name).name.startswith("ld-linux-")}
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
-    checks = [pane_controls, pane_file_picker, file_picker, file_picker_stale_and_cancel, cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
+    checks = [exit_input_cleanup, pane_controls, pane_file_picker, file_picker, file_picker_stale_and_cancel, cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
               search_replace_and_buffers, search_origins, slash_replacement, confirmation_recovery, byte_paths_and_checkpoint_failures,
               second_instance, crash_and_signals, undo_caret, word_delete, buffer_picker, buffer_picker_close_selected, buffer_picker_preview, buffer_picker_recovery, buffer_picker_unicode_bytes, enhanced_key_actions, keyboard_diagnostics, hjkl_and_line_selection, leader_overlay, control_hjkl, duplicate_selection, command_completion, live_completion_filter, file_completion, home_paths, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
     selected = [check for check in checks if args.filter in check.__name__]

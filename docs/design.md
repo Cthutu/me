@@ -1391,8 +1391,8 @@ Normal Space w opens the Windows submenu. The agreed commands are:
 
 | Sequence | Action |
 | --- | --- |
-| Space w h | Split horizontally: panes above and below |
-| Space w v | Split vertically: panes side by side |
+| Space w h | Split horizontally: panes side by side |
+| Space w v | Split vertically: panes above and below |
 | Space w s | Automatically split along the current pane's longest axis |
 | Space w c | Close the current pane, keeping its buffer open |
 | Space w w | Open the file picker, then automatically split for the chosen file |
@@ -1428,6 +1428,8 @@ Implementation choices (initial policy, not a general configuration interface):
   Resizing back restores all panes; directional focus still uses retained geometry.
 - The renderer clips each view within its rectangle, offsets composite Unicode
   glyphs, draws only the active caret, and dims inactive status backgrounds.
+  The focused pane uses a slightly brighter background for text, blank cells and
+  composite glyphs; inactive panes retain the darker workspace colour.
   Status paths inside the startup folder are relative to that folder.
   Bottom messages, completion, file/buffer popups and leader menus remain global.
 - Buffer replacement mounts only in the focused pane; an already-visible view is
@@ -1438,3 +1440,24 @@ Implementation choices (initial policy, not a general configuration interface):
   rejects duplicate/out-of-range view IDs, invalid kinds and excessive depth/nodes.
 
 Space b d remains an example only, unrelated to closing a pane.
+
+
+## 29. Pane feedback and clean terminal exit (T5a)
+
+Matt corrected the directional naming after using T5: Space w h arranges panes
+side by side; Space w v stacks them above and below. Automatic splitting retains
+its physical-axis policy and existing continuation layouts retain their geometry.
+Internal split requests name rows/columns to avoid confusing pane arrangement
+with the divider's direction. Menu labels describe the resulting arrangement.
+
+The focused pane is slightly brighter (`#1d2532`) than inactive panes (`#171d27`),
+including blank space, ordinary text and deferred composite graphemes. Focus
+changes recolour the complete pane; selections, matches and caret accents remain
+visible. Global message/popup surfaces keep their own palette.
+
+Terminal shutdown must stop keyboard/mouse reporting before giving the terminal
+back to the shell. Nerd's Linux std.term cleanup drains queued and in-flight
+reports with a 25 ms quiet period and a 100 ms drain bound, then atomically flushes
+unread input when restoring terminal mode. ME uses this library behaviour rather
+than a local escape/input workaround. PTY checks retain the slave after normal,
+forced and signal exits and verify that fresh shell input has no report prefix.

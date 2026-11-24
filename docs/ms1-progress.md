@@ -362,7 +362,7 @@ hard real-time guarantee. Complex-grapheme overlays add one simulation step.
 Document projection/index rebuilding remains correctness-first, not a claim
 about very large-file scalability.
 
-## Nerd fixes — fifteen completed
+## Nerd fixes — seventeen completed
 
 All compiler changes used dedicated worktrees. Each fix passed the unified full
 gate (**72 passed, 0 failed, 2 platform skips**), formatting and isolated installed
@@ -524,3 +524,60 @@ was performed. Required installation runs directly in `~/nerd` on that libc
 branch at `8f62716b`, with matching installed modules. The completed fix worktree and local temporary
 branch were removed after verifying clean state, retained commits and no users. ME retains the original assertion without a
 compiler workaround.
+
+
+## Pane feedback and exit cleanup (T5a)
+
+Matt corrected the split naming after using T5. Space w h now arranges panes side
+by side, while Space w v stacks panes above/below. Automatic splitting and stored
+v4 geometry are retained. Internal requests use Rows/Columns rather than divider
+directions; menu/help labels describe the arrangement explicitly.
+
+The focused pane's full background is slightly brighter (`#1d2532`) than inactive
+panes (`#171d27`). Text, blank space and deferred graphemes follow that palette;
+caret/selection/search accents and global overlay surfaces retain theirs. Native
+rendering checks switch focus and inspect blank cells and composite glyph colours.
+The corrected pane controls pass their focused debug PTYs and a rendered preview
+has been visually inspected.
+
+The shell-input leak was reproduced with queued Enter-release and mouse reports
+after :q. Nerd std.term previously restored canonical/echo mode without discarding
+the bytes still queued for the application. Fix `68c2f47d` disables reporting,
+drains until 25 ms quiet (100 ms input-drain bound), then uses TCSETSF to restore
+mode and atomically discard unread input. Public explicit raw-mode restoration
+keeps its previous immediate behaviour. Linux PTYs cover queued and delayed
+reports, continuous-input bounds, original attributes and fresh next-shell input
+on LLVM/C debug/release. ME's new exit group covers :q, :q! and SIGTERM.
+
+Nerd's full gate passed **77 stages, zero failures and two platform skips**;
+formatting, focused checks and Python compilation passed. The commit is pushed
+on `agent/fix/terminal-input-cleanup` and `remove-linux-libc`, integrated into local
+main and installed directly in ~/nerd on that libc branch with matching modules.
+Its clean completed worktree/local branch were removed after confirming commit
+retention and no process users. ME's exit group passes with the installed fix.
+
+The new pane-colour assertion exposed a second Nerd bug: a loop's discarded-value
+context suppressed nested on-expression values in assertion operands. Fix
+`2b3f6987` uses required-value evaluation for both condition and explicit message.
+Its regression covers conditional operands/messages inside loops and checks that
+they are evaluated once. The full gate passed **77 stages, zero failures and two
+platform skips**, including all C generation checks. Formatting passed. The fix
+was pushed on `agent/fix/loop-on-values`, fast-forwarded into local main and the
+existing `remove-linux-libc` checkout, pushed on that branch, and installed there
+directly with matching modules. Remote Nerd main retains its separate history.
+The clean completed worktree/local branch were removed after verifying retained
+commits and no process users. ME retains the original colour assertion; no
+compiler workaround was introduced.
+
+
+T5a final ME validation with the installed Nerd compiler/modules at `2b3f6987`:
+**166 native tests** (54 ME across 19 modules + 112 imported), all **41 debug and
+41 release terminal groups**, formatting/type checking, a byte-idempotent second
+formatting pass, Python compilation and diff checks passed. The original colour
+assertion compiles and verifies both backgrounds, focus changes and deferred
+Unicode glyph colours. The exit group verifies clean following-shell input for
+normal quit, forced quit and SIGTERM; existing recovery/mode/resize tests remain
+green. A rendered pane preview was inspected. Required release installation
+follows ME commit/push, with installed exit/pane/leader smoke checks. No direct
+libc usage, new external dependencies, private compiler override or ME escape
+handling workaround was introduced.

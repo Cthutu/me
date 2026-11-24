@@ -60,6 +60,7 @@ pub Terminal :: plex {
 
 INK          :: 0xd8dee9.as(Colour)
 PAPER        :: 0x171d27.as(Colour)
+ACTIVE_PAPER :: 0x1d2532.as(Colour)
 MUTED        :: 0x738299.as(Colour)
 GUTTER_PAPER :: 0x29394f.as(Colour)
 NORMAL_PAPER :: 0x214c38.as(Colour)
@@ -594,6 +595,15 @@ impl Terminal {
         self.height = height
         self.origin_x = rect.x
         self.origin_y = rect.y
+        base_paper := on active {
+            yes   => ACTIVE_PAPER
+            else  => PAPER
+        }
+        for y in [0.as(usize) .. height] {
+            for x in [0.as(usize) .. width] {
+                self.set(x, y, ' '.as(u32), INK, base_paper)
+            }
+        }
         editor    := ^self.editor
         text_view := ^editor.workspace.views[view_id]
         view      := ^text_view.interaction
@@ -677,7 +687,7 @@ impl Terminal {
                 }
                 paper := on current {
                     yes   => GUTTER_PAPER
-                    else  => PAPER
+                    else  => base_paper
                 }
                 on current => {
                     for x in [0.as(usize) .. gutter] {
@@ -716,7 +726,7 @@ impl Terminal {
                 cells := character_width(doc.text(), position, column)
 
                 on cells == 0 => cells = 1
-                paper := PAPER
+                paper := base_paper
                 ink   := INK
 
                 on active &&
@@ -1363,7 +1373,7 @@ test "pane rendering offsets Unicode glyphs, shows only the active caret and sur
     }
     terminal.editor.workspace.active_view().interaction.state = Interaction.Normal
     terminal.paint(80, 24)
-    on terminal.editor.workspace.split_pane(SplitAxis.Vertical) {
+    on terminal.editor.workspace.split_pane(SplitAxis.Columns) {
         _success => {
         }
 
@@ -1375,6 +1385,15 @@ test "pane rendering offsets Unicode glyphs, shows only the active caret and sur
     assert terminal.cells[39].rune == '│'.as(u32)
     assert terminal.cells[3].rune == 'a'.as(u32) && terminal.cells[43].rune == 'a'.as(u32)
     assert terminal.cells[3].paper == PAPER && terminal.cells[43].paper == NORMAL_CARET
+    assert terminal.cells[5 * 80 + 3].paper == PAPER && terminal.cells[5 * 80 + 43].paper == ACTIVE_PAPER
+    terminal.editor.workspace.focus_pane(Direction.Left)
+    terminal.paint(80, 24)
+    assert terminal.cells[5 * 80 + 3].paper == ACTIVE_PAPER && terminal.cells[5 * 80 + 43].paper == PAPER
+    for glyph in terminal.glyphs {
+        assert glyph.paper == (on glyph.x < 39 { yes => ACTIVE_PAPER else => PAPER })
+    }
+    terminal.editor.workspace.focus_pane(Direction.Right)
+    terminal.paint(80, 24)
     filename := no
     for x in [0.as(usize) .. 34] {
         on terminal.cells[22 * 80 + x].rune == 'd'.as(u32) &&
@@ -1404,7 +1423,7 @@ test "pane rendering offsets Unicode glyphs, shows only the active caret and sur
     assert !terminal.editor.workspace.panes.compact
     assert terminal.cells[39].rune == '│'.as(u32)
     terminal.editor.workspace.close_pane()
-    on terminal.editor.workspace.split_pane(SplitAxis.Horizontal) {
+    on terminal.editor.workspace.split_pane(SplitAxis.Rows) {
         _success => {
         }
 

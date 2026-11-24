@@ -8,8 +8,8 @@ pub PaneRect :: plex {
 }
 
 pub SplitAxis :: enum {
-    Horizontal
-    Vertical
+    Rows
+    Columns
     Automatic
 }
 
@@ -129,9 +129,9 @@ impl PaneLayout {
         on count >= 16 || self.compact => return no
         rect := self.nodes[self.focused].rect
         return on axis {
-            Horizontal  => (rect.height >= 9)
-            Vertical    => (rect.width >= 25)
-            Automatic   => (rect.height >= 9 || rect.width >= 25)
+            Rows       => (rect.height >= 9)
+            Columns    => (rect.width >= 25)
+            Automatic  => (rect.height >= 9 || rect.width >= 25)
         }
     }
 
@@ -151,8 +151,8 @@ impl PaneLayout {
         old    := self.nodes[parent]
 
         vertical := on axis {
-            Vertical    => yes
-            Horizontal  => no
+            Columns  => yes
+            Rows     => no
 
             Automatic => on old.rect.width >= old.rect.height * 2 {
                 yes   => (old.rect.width >= 25)
@@ -253,7 +253,7 @@ test "pane splits retain geometry, directional focus and buffers when collapsed"
     left := layout.neighbour(Direction.Left)
     assert left != layout.focused
     layout.focused = left
-    layout.divide(SplitAxis.Horizontal, 2)
+    layout.divide(SplitAxis.Rows, 2)
     assert layout.neighbour(Direction.Up) != layout.focused
     assert layout.neighbour(Direction.Right) != layout.focused
     assert layout.neighbour(Direction.Left) == layout.focused
@@ -274,7 +274,7 @@ test "automatic splits respect cell proportions, minimum sizes and bounded tree 
     assert !layout.nodes[0].vertical
     assert layout.close()
     layout.arrange(24, 9)
-    assert !layout.can_split(SplitAxis.Vertical) && layout.can_split(SplitAxis.Automatic)
+    assert !layout.can_split(SplitAxis.Columns) && layout.can_split(SplitAxis.Automatic)
     layout.divide(SplitAxis.Automatic, 1)
     assert !layout.nodes[0].vertical
     assert layout.close()
@@ -284,7 +284,7 @@ test "automatic splits respect cell proportions, minimum sizes and bounded tree 
     assert layout.close()
     for _ in [0 .. 100] {
         layout.arrange(80, 24)
-        layout.divide(SplitAxis.Vertical, 1)
+        layout.divide(SplitAxis.Columns, 1)
         assert layout.close()
     }
     assert layout.nodes.count == 3

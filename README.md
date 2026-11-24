@@ -113,7 +113,7 @@ these letters remain literal text in Insert and prompts.
 | Ctrl+S | Save active document; unnamed opens `:w ` |
 | `,` | Normal-only buffer picker; Enter switches, Escape cancels |
 | Normal Space Space / `:files` | Open files; hold after the first Space for the key menu |
-| Space w h / v / s | Split above/below / side by side / automatically |
+| Space w h / v / s | Split side by side / above/below / automatically |
 | Space w c | Close the pane, keeping its buffer; keep the last pane open |
 | Space w w | Pick a file, then open it in a new automatic split |
 | Space h/j/k/l or Space + cursor key | Focus the neighbouring pane without wrapping |
@@ -240,8 +240,8 @@ filesystem traversal to finish before returning input to the editor.
 
 ## Panes
 
-In Normal, **Space w** opens the Windows submenu. **h** creates panes above and
-below; **v** creates panes side by side; **s** chooses automatically using the
+In Normal, **Space w** opens the Windows submenu. **h** creates panes side by
+side; **v** stacks panes above and below; **s** chooses automatically using the
 pane's physical proportions (one cell is treated as twice as tall as wide).
 The new pane appears below/right, is focused, and shows the same buffer with an
 independent caret, selection and scroll position. Edits and undo history are shared.
@@ -262,7 +262,9 @@ when needed. When resizing leaves too little space, only the focused pane is
 shown; enlarging the terminal restores the retained tree. Directional focus uses
 that retained geometry. Layout, focus and each view's positions survive continuation.
 Status paths inside the startup folder are shown relative to it, keeping filenames
-visible in narrow panes. The status bars, shared bottom messages and popups stay distinct.
+visible in narrow panes. The focused pane has a slightly brighter background
+across its text and blank space; other panes keep the darker background. The status bars, shared bottom
+messages and popups stay distinct.
 
 ## Search and replacement
 
@@ -439,7 +441,9 @@ warns, and neither reads nor writes snapshots. There, `:q` refuses unsaved work;
 `:wq` or explicit `:q!` is required. Recovery/checkpoint failures remain indicated
 and unsafe normal quit is refused. A damaged snapshot is retained, not overwritten
 by a fallback session. SIGTERM/SIGHUP/SIGINT request a safe checkpoint/exit;
-SIGKILL recovery is limited to the last successful checkpoint.
+SIGKILL recovery is limited to the last successful checkpoint. Normal quit,
+`:q!` and handled-signal shutdowns disable input reporting and clear pending
+reports before restoring the terminal to the shell.
 
 ## Display, limits and development
 

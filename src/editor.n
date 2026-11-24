@@ -1318,8 +1318,8 @@ impl Editor {
     }
     pub pane_operation :: fn (self: ^Self, operation: LeaderOperation) -> void\string {
         on operation {
-            SplitHorizontal => self.workspace.split_pane(SplitAxis.Horizontal)?
-            SplitVertical => self.workspace.split_pane(SplitAxis.Vertical)?
+            SplitHorizontal => self.workspace.split_pane(SplitAxis.Columns)?
+            SplitVertical => self.workspace.split_pane(SplitAxis.Rows)?
             SplitAutomatic => self.workspace.split_pane(SplitAxis.Automatic)?
             ClosePane => self.workspace.close_pane()
             SplitPicker => {
