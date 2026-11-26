@@ -710,6 +710,7 @@ impl Editor {
         self.quit_safely(scratch)?
     }
     pub quit_safely :: fn (self: ^Self, scratch: ^arena) -> void\string {
+        self.cancel_recording()
         on self.workspace.persistent {
             yes => self.workspace.checkpoint(scratch)?
             else => {
@@ -729,6 +730,7 @@ impl Editor {
         self.prompt_kind = 0
         self.prompt.clear()
         self.save_all_pending = no
+        on self.recording.active && command != "q" && command != "q!" && command != "wq" => return "Command unavailable while recording; use ] to finish or Ctrl+G to cancel"!
         on command == "keys" => {
             self.diagnostics.start()
             self.workspace.active_view().keyboard.suppress_text = no
@@ -740,6 +742,7 @@ impl Editor {
             return
         }
         on command == "q!" => {
+            self.cancel_recording()
             self.workspace.abandon()?
             self.changed()
             on self.workspace.persistent => self.workspace.checkpoint(scratch)?
@@ -751,6 +754,7 @@ impl Editor {
             return
         }
         on command == "wq" => {
+            self.cancel_recording()
             self.save_all(scratch)?
             return
         }
@@ -928,6 +932,14 @@ impl Editor {
             }
         }
     }
+    pub cancel_recording :: fn (self: ^Self) {
+        on !self.recording.active => return
+        self.recording.clear_draft()
+        self.recording.active = no
+        self.workspace.active_view().keyboard.count = 0
+        self.workspace.active_view().keyboard.delete_count = 0
+        self.tell("Recording cancelled")
+    }
     pub start_recording :: fn (self: ^Self) -> void\string {
         on self.recording.active => return "Already recording; use ] to finish"!
         on self.workspace.active_view().interaction.state != Interaction.Normal => return "Start recording in Normal"!
@@ -985,13 +997,11 @@ impl Editor {
                     return "Recording cancelled: buffer or view changed "
                         +"externally"!
                 }
-                on self.recording.draft.count == 0 => {
-                    self.recording.active = no
-                    self.tell("Empty recording; previous sequence retained")
-                    return
-                }
                 self.recording.finish()
-                self.tell("Recording ready; . replays")
+                on self.recording.saved.count == 0 {
+                    yes => self.tell("Recording cleared")
+                    else => self.tell("Recording ready; . replays")
+                }
                 return
             }
             Replay => {
@@ -1004,6 +1014,30 @@ impl Editor {
         on !self.recording.active => {
             self.execute_inner(scratch, command)?
             return
+        }
+        -- Prompt editing is UI input, not part of the editing recipe. Quitting
+        -- cancels the draft in command_line; other commands remain guarded there.
+        on self.prompt_kind == ':'.as(u32) => {
+            on command {
+                InsertText(_), Move {
+                    direction: _, count: _, extend: _
+                }
+                ,
+                Escape, Backspace, DeleteWordBack, Delete, Tab => self.execute_inner(scratch, command)?
+                else => return "Command unavailable while recording; use ] to "
+                    +"finish or Ctrl+G to cancel"!
+            }
+            return
+        }
+        on command {
+            Prompt(kind) => {
+                on kind == ':'.as(u32) => {
+                    self.execute_inner(scratch, command)?
+                    return
+                }
+            }
+            else => {
+            }
         }
         doc := ^self.workspace.active_document().text
         on self.workspace.surface.view_id != self.recording.view_id || self.workspace.active_view().document_id != self.recording.document_id || doc.storage.revision() != self.recording.revision => {
@@ -1586,6 +1620,15 @@ impl Editor {
         }
         -- Diagnostics must observe releases; ordinary UI/command handlers must not.
         on key.action == TermKeyAction.Release => return
+        cancel := key.scan_code == TermScanCode.G && (key.modifiers & TERM_MOD_CONTROL) != 0
+        on key.character => [rune] {
+            cancel = cancel || rune == 7
+        }
+        on self.recording.active && cancel => {
+            self.suppress_character = key.character != nil
+            self.cancel_recording()
+            return
+        }
         on self.workspace.active_view().keyboard.delete_count > 0 => {
             on key.scan_code == TermScanCode.Escape => {
                 self.workspace.active_view().keyboard.delete_count = 0
@@ -1698,6 +1741,10 @@ impl Editor {
     pub character :: fn (self: ^Self, scratch: ^arena, rune: u32) {
         on self.suppress_character => {
             self.suppress_character = no
+            return
+        }
+        on self.recording.active && rune == 7 => {
+            self.cancel_recording()
             return
         }
         on self.picker.active => {
@@ -3197,10 +3244,20 @@ test "Ctrl N creates distinct unnamed Insert buffers in the focused pane without
         }
     }
     editor.key(^scratch,
-               TermKeyEvent { scan_code: N action: Release modifiers: TERM_MOD_CONTROL ... })
+               TermKeyEvent {
+        scan_code : N
+        action    : Release
+        modifiers : TERM_MOD_CONTROL
+        ...
+    })
     assert editor.workspace.documents.count == 1
-    editor.key(^scratch,
-               TermKeyEvent { scan_code: N action: Press modifiers: TERM_MOD_CONTROL character: 14.as(u32) ... })
+    editor.key(^scratch, TermKeyEvent {
+        scan_code : N
+        action    : Press
+        modifiers : TERM_MOD_CONTROL
+        character : 14.as(u32)
+        ...
+    })
     editor.character(^scratch, 14)
     assert editor.workspace.documents.count == 2
     assert editor.workspace.active_document().path.count == 0
@@ -3220,8 +3277,13 @@ test "Ctrl N creates distinct unnamed Insert buffers in the focused pane without
     assert editor.workspace.documents.count == 3
     assert editor.workspace.active_view().keyboard.count == 0
     editor.character(^scratch, '2'.as(u32))
-    editor.key(^scratch,
-               TermKeyEvent { scan_code: N action: Press modifiers: TERM_MOD_CONTROL character: 14.as(u32) ... })
+    editor.key(^scratch, TermKeyEvent {
+        scan_code : N
+        action    : Press
+        modifiers : TERM_MOD_CONTROL
+        character : 14.as(u32)
+        ...
+    })
     editor.character(^scratch, 14)
     assert editor.workspace.documents.count == 3
     assert editor.workspace.active_view().keyboard.count == 0
@@ -3235,7 +3297,11 @@ test {
     repeat_keys :: fn (editor: ^Editor, scratch: ^arena, keys: string) {
         for byte in keys {
             on byte^ == 27 {
-                yes   => editor.key(scratch, TermKeyEvent { scan_code: Escape action: Press ... })
+                yes   => editor.key(scratch, TermKeyEvent {
+                    scan_code : Escape
+                    action    : Press
+                    ...
+                })
                 else  => editor.character(scratch, byte^.as(u32))
             }
         }
@@ -3301,9 +3367,17 @@ test {
         editor.workspace.add_empty()
         editor.workspace.active_view().interaction.state = Interaction.Normal
         repeat_keys(^editor, ^scratch, "[iA")
-        editor.execute(^scratch, Command.Move { direction: Left count: 1 extend: no })?
+        editor.execute(^scratch, Command.Move {
+            direction : Left
+            count     : 1
+            extend    : no
+        })?
         editor.execute(^scratch, Command.InsertText("B"))?
-        editor.execute(^scratch, Command.Move { direction: Right count: 1 extend: no })?
+        editor.execute(^scratch, Command.Move {
+            direction : Right
+            count     : 1
+            extend    : no
+        })?
         editor.execute(^scratch, Command.Undo)?
         editor.execute(^scratch, Command.Undo)?
         editor.execute(^scratch, Command.Redo)?
@@ -3327,8 +3401,16 @@ test {
         }
         assert editor.workspace.active_document().text.text() == "BA"
         editor.execute(^scratch, Command.RecordStop)?
-        editor.execute(^scratch, Command.Replay)?
-        assert editor.workspace.active_document().text.text() == "BBAA"
+        assert editor.recording.saved.count == 0
+        on editor.execute(^scratch, Command.Replay) {
+            _success => {
+                assert no
+            }
+
+            _error! => {
+            }
+        }
+        assert editor.workspace.active_document().text.text() == "BA"
     }
 
     exercise_repeat_failure :: fn () -> void\string {
@@ -3861,6 +3943,95 @@ test {
 
 test "pending d cancels without edits and counted dd records one semantic operation" {
     on exercise_dd() {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+}
+
+test {
+
+    exercise_recording_cancel :: fn () -> void\string {
+        scratch : arena
+        defer scratch.done()
+        editor : Editor
+        editor.workspace.lock_fd = -1
+        defer editor.release()
+        editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Normal
+        repeat_keys(^editor, ^scratch, "[iA")
+        editor.execute(^scratch, Command.Escape)?
+        editor.execute(^scratch, Command.RecordStop)?
+        saved := editor.recording.saved.count
+        repeat_keys(^editor, ^scratch, "[iB")
+        editor.key(^scratch,
+                   TermKeyEvent {
+            scan_code : G
+            action    : Release
+            modifiers : TERM_MOD_CONTROL
+            ...
+        })
+        assert editor.recording.active
+        editor.key(^scratch, TermKeyEvent {
+            scan_code : G
+            action    : Press
+            modifiers : TERM_MOD_CONTROL
+            character : 7.as(u32)
+            ...
+        })
+        editor.character(^scratch, 7)
+        assert !editor.recording.active && editor.recording.draft.count == 0
+        assert editor.recording.saved.count == saved
+        assert editor.workspace.active_view().interaction.state == Interaction.Insert
+        assert editor.workspace.active_document().text.text() == "AB"
+        editor.character(^scratch, 'C'.as(u32))
+        editor.execute(^scratch, Command.Escape)?
+        editor.execute(^scratch, Command.Replay)?
+        assert editor.workspace.active_document().text.text() == "ABCA"
+        editor.execute(^scratch, Command.RecordStart)?
+        editor.character(^scratch, 'd'.as(u32))
+        assert editor.workspace.active_view().keyboard.delete_count > 0
+        editor.character(^scratch, 7)
+        assert !editor.recording.active && editor.workspace.active_view().keyboard.delete_count == 0
+        assert editor.recording.saved.count == saved
+        -- Signal-driven quitting shares this path. Refused unsafe quitting still
+        -- cancels only the unfinished draft, preserving both edits and recipe.
+        editor.execute(^scratch, Command.RecordStart)?
+        on editor.quit_safely(^scratch) {
+            _success => {
+                assert no
+            }
+
+            _error! => {
+            }
+        }
+        assert !editor.quit && !editor.recording.active
+        assert editor.recording.saved.count == saved
+        for command in ["q", "q!", "wq"] {
+            editor.workspace.active_view().interaction.state = Interaction.Normal
+            editor.execute(^scratch, Command.RecordStart)?
+            editor.execute(^scratch, Command.Prompt(':'.as(u32)))?
+            repeat_keys(^editor, ^scratch, command^)
+            on editor.execute(^scratch, Command.InsertText("\n")) {
+                _success => {
+                }
+
+                _error! => {
+                }
+            }
+            assert !editor.recording.active && editor.recording.saved.count == saved
+            on editor.prompt_kind != 0 => editor.prompt_cancel()
+            editor.quit = no
+        }
+    }
+
+}
+
+test "Ctrl G cancels drafts in either mode and quitting preserves the previous recipe" {
+    on exercise_recording_cancel() {
         _success => {
         }
 

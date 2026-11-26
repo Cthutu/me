@@ -1525,8 +1525,13 @@ Initial delivery policies:
   recipe branch. Refuse undo before the draft's history boundary and redo outside
   its captured edits. Ordinary recording still uses individual history records.
 - Nested recording/replay and counts are refused. Starting a draft preserves the
-  previous completed sequence; an empty finished draft preserves it too. There is
-  no implicit last-change capture. Up to 4,096 actions (one reserved for final
+  previous completed sequence; an empty finished draft clears it (`[]`). Ctrl+G
+  cancels a draft in either interaction state, preserving edits, state and the
+  previous completed sequence. Quitting cancels the draft too, including signal
+  handling and :q/:q!/:wq. Failed quit/save attempts still cancel the draft;
+  ordinary save/discard policies are unchanged. The command prompt is available
+  for these quit commands; recording other : commands is an agreed follow-up.
+  There is no implicit last-change capture. Up to 4,096 actions (one reserved for final
   Escape) and 1 MiB of owned typed text bound memory and replay duration.
 - Playback executes synchronously in the editor callback with per-edit reports
   adjusting other shared views. Afterwards, collapse the newly appended history

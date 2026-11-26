@@ -1947,6 +1947,46 @@ def normal_delete(binary, folder):
         session.quit()
 
 
+def recording_cancel(binary, folder):
+    source = folder / "source.txt"
+    source.write_bytes(b"BASE")
+    with Session(binary, folder, "-r", source.name) as session:
+        session.send("[iA")
+        session.normal()
+        session.send("]")
+        session.send("[iB")
+        session.send(b"\x1b[103;5:3u")  # Release cannot cancel.
+        assert b" REC" in screen(session)
+        session.send(b"\x1b[103;5;7u\x1b[103;5:3u")
+        shown = screen(session)
+        assert b" REC" not in shown and b"INSERT" in shown, shown
+        assert b"Recording cancelled" in shown, shown
+        session.send("C")
+        session.normal()
+        session.send(".")
+        session.send(b"\x13")
+        assert source.read_bytes() == b"ABCA" + b"BASE"
+        session.send("[d")  # Cancel a draft with a pending delete prefix.
+        session.send(b"\x07")
+        assert b" REC" not in screen(session)
+        session.send(".")
+        session.send(b"\x13")
+        assert source.read_bytes() == b"ABCAA" + b"BASE"
+        session.send("[]")
+        assert b"Recording cleared" in screen(session)
+        session.send(".")
+        assert b"No recorded sequence" in screen(session)
+        session.quit()
+    for command in ("q", "q!", "wq"):
+        with Session(binary, folder, "-r", source.name) as session:
+            session.send("[iDRAFT")
+            session.quit(command)
+    with Session(binary, folder, "-r", source.name) as session:
+        session.send("[iSIGNAL")
+        os.kill(session.process.pid, signal.SIGTERM)
+        session.wait()
+
+
 def repeat_recording(binary, folder):
     path = folder / "original.txt"
     path.write_bytes(b"BASE\n")
@@ -2154,7 +2194,7 @@ def main():
     allowed = {"libc.so.6", "libm.so.6", "libgcc_s.so.1", "linux-vdso.so.1"}
     unexpected = {name for name in names if name not in allowed and not Path(name).name.startswith("ld-linux-")}
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
-    checks = [delete_lines, normal_delete, repeat_recording, repeat_failure, new_buffer, exit_input_cleanup, pane_controls, pane_ctrl_w, pane_file_picker, file_picker, file_picker_stale_and_cancel, cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
+    checks = [recording_cancel, delete_lines, normal_delete, repeat_recording, repeat_failure, new_buffer, exit_input_cleanup, pane_controls, pane_ctrl_w, pane_file_picker, file_picker, file_picker_stale_and_cancel, cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
               search_replace_and_buffers, search_origins, slash_replacement, confirmation_recovery, byte_paths_and_checkpoint_failures,
               second_instance, crash_and_signals, undo_caret, word_delete, buffer_picker, buffer_picker_close_selected, buffer_picker_preview, buffer_picker_recovery, buffer_picker_unicode_bytes, enhanced_key_actions, keyboard_diagnostics, hjkl_and_line_selection, leader_overlay, control_hjkl, duplicate_selection, command_completion, live_completion_filter, file_completion, home_paths, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
     selected = [check for check in checks if args.filter in check.__name__]

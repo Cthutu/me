@@ -115,6 +115,7 @@ these letters remain literal text in Insert and prompts.
 | Ctrl+S | Save active document; unnamed opens `:w ` |
 | Ctrl+N | New unnamed buffer in the current pane; enter Insert |
 | Normal `[` / `]` / `.` | Start recording / finish recording / replay |
+| Ctrl+G | Cancel unfinished recording; preserve edits and previous macro |
 | `,` | Normal-only buffer picker; Enter switches, Escape cancels |
 | Normal Space Space / `:files` | Open files; hold after the first Space for the key menu |
 | Space w h / v / s | Split side by side / above/below / automatically |
@@ -150,7 +151,11 @@ with `]` first. Navigation/editing uses the destination buffer's normal policies
 including line endings. Final state/selection follows the recorded commands.
 There is one completed recording per running session, reusable in another buffer;
 it is not saved in continuation. Starting a new recording retains the previous
-one until a non-empty recording finishes. Nested recording/replay and counted
+one until a recording finishes. `[]` clears the completed macro. Ctrl+G cancels
+the draft in Normal or Insert, keeping edits, interaction state and the previous
+macro. Quitting also cancels the draft; `:q`, `:q!` and `:wq` retain their usual
+save/discard behaviour. Other `:` commands remain unavailable during recording
+until the agreed command-playback follow-up. Nested recording/replay and counted
 record/replay commands are unsupported; `.` has no implicit last-change action.
 Recordings are bounded to 4,096 actions (including a reserved final Escape) and
 1 MiB of typed text. External changes to the recording buffer cancel the draft.

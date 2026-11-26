@@ -460,3 +460,25 @@ pending-command clarification; selected d remains immediate.
   the initial Markdown checklist and status edge cases before implementation.
 - This is agreed future work; it is not bundled into the current dd change.
   Later modes milestones remain unscoped. See design §35 and questions.
+
+
+### T10 — Cancel unfinished recordings — done
+
+- Ctrl+G cancels in Normal or Insert without reverting edits or replacing the
+  previous completed macro. Keep the current interaction state.
+- Quitting cancels the draft; `:q`, `:q!`, `:wq` and terminal signals preserve
+  their ordinary continuation/save/discard behaviour.
+- `[]` clears the completed macro. Release and paired text events act once;
+  cancellation also clears pending counts/delete commands.
+- Verified 181 native tests (69 ME + 112 imported), all 48 debug terminal
+  scenarios, release cancellation and both repeat scenarios, idempotent formatting,
+  type checking, Python compilation and diff checks. Required commit/push and
+  release installation follow, with installed cancellation checked afterwards.
+
+### Agreed bug follow-ups — pending
+
+- Existing save-as targets: consistent home-relative/relative paths and a
+  `File <file> exists - save? (Y/N)` confirmation.
+- Persist completed macros across restarts and record `:` commands for playback;
+  quitting must discard the draft and preserve the previous macro.
+- Backspace in Insert must keep Insert active.

@@ -708,3 +708,24 @@ Add status LF/CRLF and recognised file type in that milestone. Customisation,
 recognition, provider/lifecycle and Markdown feature details remain open before
 implementation; no mode or status services are added by T8. See design §35 and
 questions. Later modes milestones remain unscoped.
+
+
+## Recording cancellation and clearing (T10)
+
+Ctrl+G cancels the unfinished draft in Normal or Insert, keeping edits, the current
+interaction state and the previous completed macro. It clears pending counts and
+delete prefixes, ignores key releases and consumes paired text once. Both legacy
+control-byte and enhanced physical-key input work. `[]` clears the completed macro.
+
+The command prompt is available during recording for :q/:q!/:wq. These cancel the
+draft and keep ordinary continuation/save/discard semantics; terminal signals use
+the same cancellation path. An unsuccessful quit/save attempt also cancels only
+the draft. Other : commands are still guarded pending command-playback support.
+Completed-macro persistence, general : playback, save-as confirmation and Insert
+Backspace remain separately tracked agreed follow-ups.
+
+Verification: 181 native tests (69 ME + 112 imported), all 48 debug terminal
+scenarios, release cancellation and both existing repeat PTYs passed. Formatting
+is idempotent; type checking, Python compilation and diff checks passed. Required
+commit/push and release installation follow, with installed cancellation checked
+afterwards.

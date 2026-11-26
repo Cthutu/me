@@ -484,3 +484,14 @@ format/storage; mode and facet ownership; provider/service lifecycle and concret
 LSP/formatter/highlighter choices; the initial Markdown feature checklist; status
 representation for mixed/no line endings and unknown file types. Further modes
 milestones remain unscoped.
+
+
+## Recording follow-ups — agreed
+
+Ctrl+G cancels the unfinished recording in Normal or Insert, keeping edits,
+interaction state and the previous macro. Quitting also cancels the draft.
+Finishing an empty draft (`[]`) clears the previous macro.
+
+Still to deliver: persist completed macros across restart, and include `:` commands
+in playback. Quit commands execute once and cancel the draft, preserving the
+previous completed macro; they must never become playback actions.
