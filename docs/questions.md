@@ -177,8 +177,9 @@ Remaining:
 6. Ctrl+Z undo and Ctrl+R redo, both states, with no alternate bindings (settled).
    Navigation is independent of buffer history; invoking caret moves to the edit
    and selection clears (settled). Ctrl+Z/Ctrl+R enter Normal, even on a no-op.
-   All Ctrl-bound non-navigation commands enter Normal; Ctrl navigation preserves
-   state. Encode this distinction explicitly. Avoid redundant keybindings.
+   Save, undo, redo and duplicate enter Normal; Ctrl navigation and Backspace/
+   word deletion preserve state. Ctrl+N enters Insert; Ctrl+G cancellation keeps
+   the current state. Encode these distinctions explicitly. Avoid redundant keybindings.
 
 ## Navigation baseline updates
 

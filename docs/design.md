@@ -907,7 +907,9 @@ navigation assigns `l` to right movement and moves line selection to `q`.
   the contiguous selected range. Exact Unicode classification remains open.
 - Ctrl+Backspace deletes the active selection, or deletes back to the previous
   Ctrl+Left word boundary (including intervening whitespace). It is one undo
-  operation and enters Normal. In prompts it edits the prompt, not the buffer.
+  operation and preserves the interaction state, including on failure or a no-op.
+  All Backspace forms retain Insert so typing can continue. In prompts it edits
+  the prompt, not the buffer.
   Accept modified Backspace and legacy `0x08` (Ctrl+H), used by WezTerm's
   default Ctrl+Backspace encoding. Keep `0x7f` as ordinary Backspace. Legacy
   terminals sending `0x08` for plain Backspace cannot distinguish the keys.
@@ -919,9 +921,10 @@ navigation assigns `l` to right movement and moves line selection to `q`.
   Preserve source line endings; prepend a local/inferred ending when duplicating
   an unterminated final line or block.
 - Ctrl+command shortcuts apply in both Normal and Insert where appropriate.
-- **Ctrl-bound non-navigation commands leave Insert and execute in Normal**,
-  including save, undo, redo, word deletion and line duplication. Remain in Normal even on
-  failure or a no-op. This supersedes Ctrl+D's earlier state-preservation rule.
+- **Save, undo, redo and line duplication leave Insert and execute in Normal**,
+  including on failure or a no-op. This supersedes Ctrl+D's earlier state-preservation
+  rule. Backspace/word deletion preserve state, superseding their earlier Normal
+  transition. Ctrl+N enters Insert; Ctrl+G cancellation preserves the current state.
 - Ctrl-modified navigation, such as word movement, preserves the interaction
   state. Classify this explicitly in binding/action metadata rather than
   treating every Ctrl key as an instruction to leave Insert.

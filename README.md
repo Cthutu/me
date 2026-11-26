@@ -109,7 +109,7 @@ these letters remain literal text in Insert and prompts.
 | `c` | Delete selection and enter Insert; no selection just enters Insert |
 | `d` | Delete an existing selection immediately; otherwise begin pending `dd` |
 | `dd` / `3dd` | Delete the current line / three lines; retain Normal and clipboard |
-| Ctrl+Backspace | Delete the selection, or back to the previous Ctrl+Left word boundary; one undo; enter Normal |
+| Ctrl+Backspace | Delete the selection, or back to the previous Ctrl+Left word boundary; one undo; preserve mode |
 | Ctrl+D | Duplicate selected lines below (keeping the copy selected), or the current line at the same display column; clear character selections; one undo |
 | Ctrl+Z / Ctrl+R | Undo / redo |
 | Ctrl+S | Save active document; unnamed opens `:w ` |
@@ -168,8 +168,10 @@ In pickers, Ctrl+J/K select rows and Ctrl+H/L move the query caret, just like
 the corresponding modified arrows.
 
 Legacy byte `0x08` (Ctrl+H), used by WezTerm for Ctrl+Backspace, performs
-word deletion too. Byte `0x7f` remains ordinary Backspace. Terminals sending
-`0x08` for plain Backspace cannot distinguish it from this shortcut without
+word deletion too. Both forms of Backspace preserve the interaction state,
+including on a no-op; you can continue typing in Insert. Byte `0x7f` remains
+ordinary Backspace. Terminals sending `0x08` for plain Backspace cannot distinguish
+it from this shortcut without
 configuration or enhanced keyboard reporting.
 
 Positive Normal counts prefix arrows, `h`/`j`/`k`/`l`, word/paragraph/page

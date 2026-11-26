@@ -1141,7 +1141,7 @@ impl Editor {
         doc := ^entry.text
         -- These are state-changing command kinds, not a blanket Ctrl rule.
         on command {
-            Save, Undo, Redo, Duplicate, DeleteWordBack => view.state = Interaction.Normal else => {
+            Save, Undo, Redo, Duplicate => view.state = Interaction.Normal else => {
             }
         }
         on self.prompt_kind != 0 => {
@@ -2637,7 +2637,8 @@ test {
     anchor : ?usize = nil,
     linewise : bool = no,
     control : bool = yes,
-    legacy : bool = no) -> void\string {
+    legacy : bool = no,
+    state : Interaction = Interaction.Insert) -> void\string {
         editor : Editor
         editor.workspace.lock_fd = - 1
         defer editor.release()
@@ -2652,6 +2653,7 @@ test {
             _error! => return "Word deletion fixture failed"!
         }
         view := ^editor.workspace.active_view().interaction
+        view.state = state
         view.place(doc, caret, no)
         on anchor => [position] {
             view.selection.anchor = position
@@ -2675,9 +2677,7 @@ test {
         assert doc.text() == expected
         assert view.selection.empty() && !view.linewise
         assert view.selection.active == destination
-        assert view.state == (on control {
-            yes => Interaction.Normal else => Interaction.Insert
-        })
+        assert view.state == state
         assert doc.history.count == (on text == expected {
             yes => 0 else => 1
         })
@@ -2689,6 +2689,7 @@ test {
 
     exercise_word_delete :: fn () -> void\string {
         check_word_delete("alpha beta", 10, "alpha ", 6)?
+        check_word_delete("alpha beta", 10, "alpha ", 6, anchor = nil, linewise = no, control = yes, legacy = no, state = Interaction.Normal)?
         check_word_delete("alpha beta", 10, "alpha ", 6, anchor = nil, linewise = no, control = yes, legacy = yes)?
         check_word_delete("alpha, ", 7, "alpha", 5)?
         check_word_delete("alpha  \r\n  beta", 11, "beta", 0)?
@@ -2836,7 +2837,7 @@ test "undo and redo restore the initiating caret without replaying navigation or
     }
 }
 
-test "Ctrl+Backspace deletes previous Unicode words or selections as one Normal-state edit" {
+test "Ctrl+Backspace deletes previous Unicode words or selections as one mode-preserving edit" {
     on exercise_word_delete() {
         _success => {
         }

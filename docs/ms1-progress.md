@@ -729,3 +729,24 @@ scenarios, release cancellation and both existing repeat PTYs passed. Formatting
 is idempotent; type checking, Python compilation and diff checks passed. Required
 commit/push and release installation follow, with installed cancellation checked
 afterwards.
+
+
+## Backspace preserves Insert (T11)
+
+The legacy 0x08 Backspace report uses DeleteWordBack, which previously forced
+Normal before deleting. Remove that state transition so ordinary and word
+Backspace preserve the current interaction state, including no-ops. Existing
+word/grapheme boundaries, selection deletion, prompt handling and history remain.
+The revised policy supersedes word deletion's earlier Ctrl-command mode rule.
+
+The new PTY regression fails on the previous installed release at legacy 0x08.
+It passes with the fix across ordinary, legacy and enhanced reports, paired text
+and releases, empty buffers, immediate continued typing, recorded playback and
+one-step replay undo. Existing native Unicode/selection/history cases now assert
+state preservation and explicitly check Normal too.
+
+Verification: all 181 native tests, four focused debug and four release terminal
+groups (Backspace, word deletion, repeat recording and repeat failure), type
+checking, idempotent formatting, Python compilation and diff checks passed.
+Required commit/push and installation follow, with installed Backspace checked
+once more afterwards.

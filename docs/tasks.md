@@ -481,4 +481,17 @@ pending-command clarification; selected d remains immediate.
   `File <file> exists - save? (Y/N)` confirmation.
 - Persist completed macros across restarts and record `:` commands for playback;
   quitting must discard the draft and preserve the previous macro.
-- Backspace in Insert must keep Insert active.
+
+### T11 — Backspace retains Insert — done
+
+- Ordinary, legacy and Ctrl+Backspace preserve the interaction state, including
+  at the start of a buffer or in an empty buffer.
+- Preserve existing grapheme/word deletion, selection, history and prompt behaviour.
+- Verified typing immediately afterwards, including macro playback and empty-buffer
+  no-ops, across ordinary/legacy/enhanced reports and paired release events.
+- The new terminal regression fails against the previous installed release.
+  All 181 native tests and four focused terminal groups on both debug and release
+  passed, including existing word-deletion and repeat checks. Formatting is
+  idempotent; type checking, Python compilation and diff checks passed.
+  Required commit/push and installation follow, with installed Backspace checked
+  afterwards.
