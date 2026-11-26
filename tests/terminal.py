@@ -783,12 +783,40 @@ def undo_caret(binary, folder):
     assert snapshot.read_bytes()[8:16] == b"ME/MS1/4", "v3 continuation was not upgraded"
 
 
+def backspace_modes(binary, folder):
+    path = folder / "modes.txt"
+    reports = (b"\x7f", b"\x08", b"\x1b[127;1;127u\x1b[127;1:3u",
+               b"\x1b[8;1;8u\x1b[8;1:3u", b"\x1b[127;5u", b"\x1b[8;5u")
+    for report in reports:
+        path.write_bytes(b"ab cd")
+        with Session(binary, folder, "-r", path.name) as session:
+            session.send(b"\x1b[F")
+            session.send(report)
+            assert b"NORMAL" in screen(session), (report, screen(session))
+            session.send(b"\x13")
+            assert path.read_bytes() == b"ab cd", (report, path.read_bytes())
+            session.send(b"\x1b[1;2D")  # Select the final character in Normal.
+            session.send(report)
+            session.send(b"\x13")
+            assert path.read_bytes() == b"ab c", (report, path.read_bytes())
+            session.send(b"\x1a")  # Restore the selected character.
+            session.send(b"\x1b[F\x1b[1;2D")
+            session.send("i")  # i retains the selection while entering Insert.
+            session.send(report)
+            assert b"INSERT" in screen(session), (report, screen(session))
+            session.send("X")
+            session.send(b"\x13")
+            assert path.read_bytes() == b"ab cX", (report, path.read_bytes())
+            session.quit()
+
+
 def backspace_insert(binary, folder):
     path = folder / "backspace.txt"
     reports = (
         (b"\x7f", b"ab c"),
-        (b"\x08", b"ab "),
+        (b"\x08", b"ab c"),
         (b"\x1b[127;1;127u\x1b[127;1:3u", b"ab c"),
+        (b"\x1b[8;1;8u\x1b[8;1:3u", b"ab c"),
         (b"\x1b[127;5;127u\x1b[127;5:3u", b"ab "),
         (b"\x1b[8;5;8u\x1b[8;5:3u", b"ab "),
     )
@@ -820,7 +848,7 @@ def backspace_insert(binary, folder):
         session.send(".")
         session.send(b"\x13")
         session.send("replayed.txt\r")
-        assert (folder / "replayed.txt").read_bytes() == b"C"
+        assert (folder / "replayed.txt").read_bytes() == b"AC"
         session.send(b"\x1a\x13")
         assert (folder / "replayed.txt").read_bytes() == b""
         session.quit()
@@ -829,7 +857,7 @@ def backspace_insert(binary, folder):
 def word_delete(binary, folder):
     path = folder / "words.txt"
     path.write_bytes(b"alpha beta")
-    for control_backspace in (b"\x1b[127;5u", b"\x1b[8;5u", b"\x08"):
+    for control_backspace in (b"\x1b[127;5u", b"\x1b[8;5u"):
         path.write_bytes(b"alpha beta")
         with Session(binary, folder, "-r", "words.txt") as session:
             session.send(b"\x1b[F")
@@ -2237,7 +2265,7 @@ def main():
     allowed = {"libc.so.6", "libm.so.6", "libgcc_s.so.1", "linux-vdso.so.1"}
     unexpected = {name for name in names if name not in allowed and not Path(name).name.startswith("ld-linux-")}
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
-    checks = [backspace_insert, recording_cancel, delete_lines, normal_delete, repeat_recording, repeat_failure, new_buffer, exit_input_cleanup, pane_controls, pane_ctrl_w, pane_file_picker, file_picker, file_picker_stale_and_cancel, cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
+    checks = [backspace_modes, backspace_insert, recording_cancel, delete_lines, normal_delete, repeat_recording, repeat_failure, new_buffer, exit_input_cleanup, pane_controls, pane_ctrl_w, pane_file_picker, file_picker, file_picker_stale_and_cancel, cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
               search_replace_and_buffers, search_origins, slash_replacement, confirmation_recovery, byte_paths_and_checkpoint_failures,
               second_instance, crash_and_signals, undo_caret, word_delete, buffer_picker, buffer_picker_close_selected, buffer_picker_preview, buffer_picker_recovery, buffer_picker_unicode_bytes, enhanced_key_actions, keyboard_diagnostics, hjkl_and_line_selection, leader_overlay, control_hjkl, duplicate_selection, command_completion, live_completion_filter, file_completion, home_paths, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
     selected = [check for check in checks if args.filter in check.__name__]

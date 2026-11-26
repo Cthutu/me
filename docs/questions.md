@@ -496,3 +496,13 @@ Finishing an empty draft (`[]`) clears the previous macro.
 Still to deliver: persist completed macros across restart, and include `:` commands
 in playback. Quit commands execute once and cancel the draft, preserving the
 previous completed macro; they must never become playback actions.
+
+
+## Backspace interaction clarified
+
+Ordinary Backspace deletes backwards or removes the selection in Insert. In
+Normal it only removes an existing selection, otherwise doing nothing. Legacy
+0x08 and 0x7f both mean ordinary Backspace. Explicit enhanced Ctrl+Backspace keeps
+word deletion in Insert and selection-only deletion in Normal. All forms preserve
+the current interaction state. Existing Tab-space grouping remains an Insert
+policy. This supersedes the old legacy-0x08 word-delete interpretation.

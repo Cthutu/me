@@ -495,3 +495,20 @@ pending-command clarification; selected d remains immediate.
   idempotent; type checking, Python compilation and diff checks passed.
   Required commit/push and installation follow, with installed Backspace checked
   afterwards.
+
+
+### T12 — Backspace selection rules and legacy reports — done
+
+- Insert Backspace deletes backwards or removes the selection; Normal Backspace
+  only removes a selection, with no effect on text/caret/history otherwise.
+- Legacy 0x08 and 0x7f both mean ordinary Backspace. Explicit Ctrl+Backspace retains
+  word deletion in Insert and selection-only deletion in Normal.
+- Retain interaction state, selection replacement, history, prompt editing and
+  playback; keep the existing Insert Tab-space grouping policy.
+
+- Verified 181 native tests and six focused terminal groups on both debug and
+  release (both Backspace groups, word deletion, both repeat groups and Normal
+  deletion). The new Normal no-selection regression fails on the previous release.
+  Formatting is idempotent; type checking, Python compilation and diff checks
+  passed. Required commit/push and installation follow, with installed Backspace
+  checked afterwards.

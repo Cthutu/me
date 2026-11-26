@@ -109,7 +109,8 @@ these letters remain literal text in Insert and prompts.
 | `c` | Delete selection and enter Insert; no selection just enters Insert |
 | `d` | Delete an existing selection immediately; otherwise begin pending `dd` |
 | `dd` / `3dd` | Delete the current line / three lines; retain Normal and clipboard |
-| Ctrl+Backspace | Delete the selection, or back to the previous Ctrl+Left word boundary; one undo; preserve mode |
+| Backspace | Insert: delete backwards or delete selection; Normal: delete selection only |
+| Ctrl+Backspace | Insert: delete selection or previous word; Normal: delete selection only; preserve mode |
 | Ctrl+D | Duplicate selected lines below (keeping the copy selected), or the current line at the same display column; clear character selections; one undo |
 | Ctrl+Z / Ctrl+R | Undo / redo |
 | Ctrl+S | Save active document; unnamed opens `:w ` |
@@ -167,12 +168,12 @@ keyboard reports; key releases are ignored and repeats repeat the movement.
 In pickers, Ctrl+J/K select rows and Ctrl+H/L move the query caret, just like
 the corresponding modified arrows.
 
-Legacy byte `0x08` (Ctrl+H), used by WezTerm for Ctrl+Backspace, performs
-word deletion too. Both forms of Backspace preserve the interaction state,
-including on a no-op; you can continue typing in Insert. Byte `0x7f` remains
-ordinary Backspace. Terminals sending `0x08` for plain Backspace cannot distinguish
-it from this shortcut without
-configuration or enhanced keyboard reporting.
+Legacy bytes `0x08` and `0x7f` both mean ordinary Backspace. In Insert it deletes
+backwards, or removes the selection; in Normal it removes only a selection and is
+otherwise a no-op. Enhanced Ctrl+Backspace retains word deletion in Insert.
+Backspace preserves the interaction state so typing can continue in Insert.
+Legacy Ctrl+H/Ctrl+Backspace remappings cannot be distinguished from ordinary
+Backspace without configuration or enhanced keyboard reporting.
 
 Positive Normal counts prefix arrows, `h`/`j`/`k`/`l`, word/paragraph/page
 movement and `w`/`q`. For example, `3j` moves down three lines and `3q` selects

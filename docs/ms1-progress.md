@@ -750,3 +750,26 @@ groups (Backspace, word deletion, repeat recording and repeat failure), type
 checking, idempotent formatting, Python compilation and diff checks passed.
 Required commit/push and installation follow, with installed Backspace checked
 once more afterwards.
+
+
+## Backspace selection rules and legacy reports (T12)
+
+T11 fixed the mode transition but retained two incorrect deletion behaviours.
+Backspace now does nothing in Normal without a selection, preserving text, caret
+and history. With a selection it deletes that selection in either state. Legacy
+0x08 now means ordinary Backspace, matching 0x7f: Insert deletes backwards rather
+than deleting a word. Explicit enhanced Ctrl+Backspace retains word deletion in
+Insert and selection-only deletion in Normal. Interaction state is preserved.
+Existing Insert Tab-space grouping and line-join behaviour remain agreed policies.
+
+The new terminal regression fails against T11's installed release on Normal
+Backspace without a selection. Extended tests cover both legacy encodings,
+enhanced reports with associated text/releases, Normal and Insert selections,
+empty-buffer no-ops, continued typing, recording/playback and grouped undo.
+Native cases also assert no history for Normal no-ops and exercise Unicode words,
+graphemes, selections, BOM/line endings and prompt editing.
+
+Verification: all 181 native tests and six focused debug plus six release terminal
+groups passed. Formatting is idempotent; type checking, Python compilation and
+diff checks passed. Required commit/push and release installation follow, with
+both installed Backspace groups checked afterwards.

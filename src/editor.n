@@ -1362,6 +1362,13 @@ impl Editor {
                 view.state = Interaction.Normal
             }
             Backspace, Delete, DeleteWordBack => {
+                on view.state == Interaction.Normal && view.selection.empty() => {
+                    on command {
+                        Backspace, DeleteWordBack => return
+                        else => {
+                        }
+                    }
+                }
                 on view.selection.empty() => {
                     position := view.selection.active
                     on command {
@@ -2689,8 +2696,11 @@ test {
 
     exercise_word_delete :: fn () -> void\string {
         check_word_delete("alpha beta", 10, "alpha ", 6)?
-        check_word_delete("alpha beta", 10, "alpha ", 6, anchor = nil, linewise = no, control = yes, legacy = no, state = Interaction.Normal)?
-        check_word_delete("alpha beta", 10, "alpha ", 6, anchor = nil, linewise = no, control = yes, legacy = yes)?
+        check_word_delete("alpha beta", 10, "alpha beta", 10, anchor = nil, linewise = no, control = yes, legacy = no, state = Interaction.Normal)?
+        check_word_delete("alpha beta", 10, "alpha beta", 10, anchor = nil, linewise = no, control = no, legacy = no, state = Interaction.Normal)?
+        check_word_delete("alpha beta", 10, "alpha beta", 10, anchor = nil, linewise = no, control = no, legacy = yes, state = Interaction.Normal)?
+        check_word_delete("one two", 7, "one ", 4, anchor = 4, linewise = no, control = no, legacy = yes, state = Interaction.Normal)?
+        check_word_delete("alpha beta", 10, "alpha bet", 9, anchor = nil, linewise = no, control = no, legacy = yes)?
         check_word_delete("alpha, ", 7, "alpha", 5)?
         check_word_delete("alpha  \r\n  beta", 11, "beta", 0)?
         check_word_delete("alphabet soup", 5, "bet soup", 0)?

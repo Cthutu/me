@@ -137,11 +137,7 @@ impl Keyboard {
 
             Backspace => {
                 self.suppress_text = key.character != nil
-                legacy_word := no
-                on key.character => [code] {
-                    legacy_word = code == 8 && key.modifiers == 0
-                }
-                return on ctrl || legacy_word {
+                return on ctrl {
                     yes   => Command.DeleteWordBack
                     else  => Command.Backspace
                 }

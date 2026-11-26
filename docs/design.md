@@ -905,14 +905,17 @@ navigation assigns `l` to right movement and moves line selection to `q`.
   `my_variable` is one word. Punctuation forms separate selectable runs;
   whitespace is skipped when extending to the next word, while remaining inside
   the contiguous selected range. Exact Unicode classification remains open.
-- Ctrl+Backspace deletes the active selection, or deletes back to the previous
-  Ctrl+Left word boundary (including intervening whitespace). It is one undo
-  operation and preserves the interaction state, including on failure or a no-op.
-  All Backspace forms retain Insert so typing can continue. In prompts it edits
-  the prompt, not the buffer.
-  Accept modified Backspace and legacy `0x08` (Ctrl+H), used by WezTerm's
-  default Ctrl+Backspace encoding. Keep `0x7f` as ordinary Backspace. Legacy
-  terminals sending `0x08` for plain Backspace cannot distinguish the keys.
+- Backspace in Insert deletes backwards, or removes the active selection. In
+  Normal it deletes only a selection; without one it leaves text, caret and
+  history unchanged. Preserve the interaction state. Existing Tab-space grouping
+  and line-join policies apply to Insert deletion.
+- Explicit Ctrl+Backspace in Insert deletes the selection, or back to the previous
+  Ctrl+Left word boundary (including intervening whitespace), as one undo operation.
+  In Normal it deletes only a selection. In prompts it edits the prompt.
+- Both legacy `0x08` and `0x7f` are ordinary Backspace. This supersedes the earlier
+  legacy-0x08 word-delete interpretation: a terminal sending the same byte for
+  plain Backspace and Ctrl+Backspace cannot distinguish them. Use enhanced Ctrl
+  reports for word deletion. Diagnostics continue to expose the ambiguity.
 - Ctrl+D duplicates the whole line-selection block below itself, retaining the
   copied block as a line selection so duplication can repeat. Without a non-empty
   line selection, duplicate only the caret's current line, clear any character
@@ -968,8 +971,8 @@ navigation assigns `l` to right movement and moves line selection to `q`.
   H/L move by word; J/K scroll without moving the caret. They preserve Normal
   or Insert, support Normal counts and use existing Shift selection semantics.
   Recognise enhanced physical key/modifier reports, suppress paired text events,
-  ignore releases and honour repeats. Legacy `0x08` keeps word deletion and
-  legacy newline keeps Enter; ambiguous control bytes are not reinterpreted.
+  ignore releases and honour repeats. Legacy `0x08` uses ordinary Backspace and
+  legacy newline keeps Enter; explicit Ctrl reports distinguish word deletion.
   In picker popups the same aliases use existing arrow semantics: J/K select
   rows and H/L move the query caret. Paired text remains suppressed there too.
 - Home uses smart-home behaviour: first non-whitespace, then column zero on
