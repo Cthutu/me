@@ -539,7 +539,11 @@ and [standard-library candidates](docs/standard-library-candidates.md).
 Active milestone T9: **Modes M1 — foundation and Markdown**. Built-in Markdown
 recognition uses `.md` and `.markdown` (case-insensitive). Source highlighting
 covers headings, list/quote markers, rules, fenced/indented/inline code, emphasis
-and links, without hiding or changing text. Split panes share syntax analysis.
+and links, without hiding or changing text. Markdown attaches an optional,
+line-indexed analysis cache shared by its panes; Plain Text allocates none.
+Edits reanalyse from a suitable earlier line until lexer state converges, retaining
+unchanged spans. Fences can propagate changes to EOF; setext headings retain
+backward dependencies. Document projection/index rebuilding is still linear.
 Markdown uses a two-space indentation fallback; existing indentation detection
 still takes precedence. Enter keeps its existing behaviour.
 
@@ -551,6 +555,7 @@ updates after successful save-as and snapshot restoration.
 This is the built-in Markdown delivery within T9. Customisation, recognition
 overrides, LSP and formatter configuration/execution remain open milestone work.
 The highlighter is a lightweight source lexer, without embedded-language parsing
-or complete CommonMark container/nested-emphasis handling. See
+or complete CommonMark container/nested-emphasis handling. Nerd mode and LSP
+support are agreed next, after incremental highlighting. See
 [design §35](docs/design.md#35-file-type-modes-m1-t9--in-progress) and
 [agreed tasks](docs/tasks.md).

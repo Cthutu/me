@@ -1,0 +1,66 @@
+use buffer
+
+-- Optional edit observation for a consumer of line metadata. Prefix/suffix are
+-- counts of unchanged lines, relative to the consumer's last accepted revision.
+-- No text, per-line data or heap storage is retained here.
+pub LineChanges :: plex {
+    base_revision     u64
+    observed_revision u64
+    prefix            usize
+    suffix            usize
+}
+
+impl LineChanges {
+
+    pub reset :: fn (self: ^Self, revision: u64, count: usize) {
+        self.base_revision = revision
+        self.observed_revision = revision
+        self.prefix = count
+        self.suffix = count
+    }
+
+    pub invalidate :: fn (self: ^Self, revision: u64) {
+        self.observed_revision = revision
+        self.prefix = 0
+        self.suffix = 0
+    }
+
+    pub record :: fn (self      : ^Self,
+                      change    : TextChange,
+                      first     : usize,
+                      last      : usize,
+                      old_count : usize) {
+        on change.before_revision != self.observed_revision || first > last || last >= old_count {
+            yes => self.invalidate(change.after_revision)
+
+            else => {
+                on first < self.prefix => self.prefix = first
+                remaining := old_count - last - 1
+                on remaining < self.suffix => self.suffix = remaining
+                self.observed_revision = change.after_revision
+            }
+        }
+    }
+
+}
+
+test "optional line observation accumulates unchanged prefixes and suffixes across edits" {
+    changes : LineChanges
+    changes.reset(10, 8)
+    changes.record({ range: { start: 0 end: 0 } inserted_bytes: 2 before_revision: 10 after_revision: 11 },
+                   3,
+                   3,
+                   8)
+    assert changes.base_revision == 10 && changes.observed_revision == 11
+    assert changes.prefix == 3 && changes.suffix == 4
+    changes.record({ range: { start: 0 end: 0 } inserted_bytes: 1 before_revision: 11 after_revision: 12 },
+                   1,
+                   1,
+                   9)
+    assert changes.prefix == 1 && changes.suffix == 4
+    changes.record({ range: { start: 0 end: 0 } inserted_bytes: 0 before_revision: 99 after_revision: 100 },
+                   1,
+                   1,
+                   9)
+    assert changes.prefix == 0 && changes.suffix == 0 && changes.observed_revision == 100
+}

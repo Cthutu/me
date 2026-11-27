@@ -465,13 +465,24 @@ pending-command clarification; selected d remains immediate.
   it. Narrow panes prioritise existing status and warnings over added metadata.
 - Configuration/schema, overrides and LSP/formatter providers remain open T9 work;
   this delivery does not complete the whole customisable modes milestone.
-- Later modes milestones remain unscoped; macro follow-ups stay queued.
+- Agreed follow-up: fully optional buffer-owned line metadata and incremental
+  Markdown highlighting. Then begin LSP support with Nerd mode (T16).
+  Other later modes milestones remain unscoped; macro follow-ups stay queued.
   See design §35 and questions.
 - Built-in delivery verified with 187 native tests, all 57 debug terminal groups
   and nine focused release groups, plus final Markdown/lexer regression checks.
   Type checking, idempotent formatting, Python compilation and diff checks passed.
   Required commit/push and release installation follow; detailed evidence is in
   ms1-progress.
+- Incremental follow-up delivered: optional typed line metadata, edit-derived
+  invalidation, line-relative spans and propagation until lexer state converges.
+  Plain Text allocates no cache; panes share analysis. Setext dependencies and
+  fences are retained. Document projection/index rebuilding remains linear.
+- Verified 189 native tests, all 58 debug terminal groups and 13 focused release
+  groups, including full-analysis comparisons through batched edits/history and
+  real terminal fence/setext undo. Type checking, idempotent formatting, Python
+  compilation and diff checks passed. Required commit/push/install follow, with
+  installed Markdown checks afterwards. T16 is the next agreed mode/LSP work.
 
 
 
@@ -557,3 +568,14 @@ Ordinary :q should checkpoint unsaved work and quit, as it did before T14.
   Type checking, idempotent formatting, Python compilation and diff checks passed.
   Required commit/push and installation follow, with installed recovery and
   confirmation checked afterwards.
+
+
+### T16 — Nerd mode and LSP support — queued after incremental highlighting
+
+- Matt selected LSP support with the future Nerd mode after incremental highlighting.
+- Design the Nerd mode and initial LSP integration, then implement the agreed
+  interactions using Nerd facilities and non-blocking provider lifecycle.
+- Concrete features, configuration and lifecycle policies remain open; this does
+  not select a Markdown provider or arbitrary additional LSP features.
+- Follow the optional/shared buffer-analysis and view-ownership boundaries in
+  design §35. This is agreed next work; macro follow-ups remain queued afterwards.

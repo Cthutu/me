@@ -4,7 +4,6 @@ use document
 use editor
 use key_diagnostics
 use leader_menu
-use markdown
 use modes
 use native
 use os.linux
@@ -14,6 +13,7 @@ use positions
 use std.term
 use std.text
 use std.time
+use syntax
 use unicode_data
 use view
 use workspace
@@ -638,7 +638,7 @@ impl Terminal {
         doc      := ^entry.text
         markdown := entry.file_mode() == FileMode.Markdown
 
-        on markdown => entry.syntax.ensure(doc.text(), doc.storage.revision())
+        _          := entry.update_syntax()
         caret_line := doc.line_at(view.selection.active)
 
         rows := on height > 1 {
@@ -747,7 +747,7 @@ impl Terminal {
                 on cells == 0 => cells = 1
                 paper := base_paper
                 ink := on markdown {
-                    yes   => syntax_ink(entry.syntax.style_at(position))
+                    yes   => syntax_ink(entry.syntax_style(line, position - doc.line_start(line)))
                     else  => INK
                 }
 
@@ -1511,7 +1511,7 @@ test "Markdown panes share revision analysis while retaining caret and narrow st
     assert terminal.cells[3].ink == syntax_ink(SyntaxStyle.Heading)
     assert terminal.cells[80 + 3].ink == syntax_ink(SyntaxStyle.Emphasis)
     assert terminal.cells[3 * 80 + 3].ink == syntax_ink(SyntaxStyle.Code)
-    assert entry.syntax.ready && entry.syntax.revision == entry.text.storage.revision()
+    assert entry.syntax != nil && entry_syntax_revision(entry) == entry.text.storage.revision()
     assert terminal.editor.indent_width() == 2
     own(^terminal.editor.last_search, "heading")
     terminal.editor.highlights = yes
@@ -1526,7 +1526,7 @@ test "Markdown panes share revision analysis while retaining caret and narrow st
     assert terminal.cells[5].paper == NORMAL_CARET && terminal.cells[5].ink == PAPER
     interaction.place(^entry.text, entry.text.text().count, no)
     terminal.editor.highlights = no
-    revision := entry.syntax.revision
+    revision := entry_syntax_revision(entry)
     gap      := entry.text.storage.gap_start
 
     on terminal.editor.workspace.split_pane(SplitAxis.Rows) {
@@ -1538,7 +1538,7 @@ test "Markdown panes share revision analysis while retaining caret and narrow st
         }
     }
     terminal.paint(80, 24)
-    assert entry.syntax.revision == revision && entry.text.storage.gap_start == gap
+    assert entry_syntax_revision(entry) == revision && entry.text.storage.gap_start == gap
     assert terminal.cells[3].ink == syntax_ink(SyntaxStyle.Heading)
     assert terminal.cells[12 * 80 + 3].ink == syntax_ink(SyntaxStyle.Heading)
     on entry.text.edit({ start: 0 end: 2 }, "") {
@@ -1553,7 +1553,7 @@ test "Markdown panes share revision analysis while retaining caret and narrow st
         }
     }
     terminal.paint(80, 24)
-    assert entry.syntax.revision != revision && terminal.cells[3].ink == INK
+    assert entry_syntax_revision(entry) != revision && terminal.cells[3].ink == INK
     on entry.text.undo_edit() {
         change => {
             for mounted in terminal.editor.workspace.views {
@@ -1589,4 +1589,12 @@ test "Markdown panes share revision analysis while retaining caret and narrow st
     terminal.paint(80, 24)
     assert terminal.editor.workspace.active_view().interaction.horizontal > 0
     assert terminal.cells[12 * 80 + 3].ink == syntax_ink(SyntaxStyle.Heading)
+}
+
+test {
+
+    entry_syntax_revision :: fn (entry: ^DocumentEntry) -> u64 {
+        return on entry.syntax { cache => cache.revision else => 0.as(u64) }
+    }
+
 }

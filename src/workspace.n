@@ -2,6 +2,7 @@ use buffer
 use codec
 use document
 use keyboard
+use line_metadata
 use markdown
 use modes
 use native
@@ -9,6 +10,7 @@ use os.linux
 use panes
 use positions
 use std.text
+use syntax
 use view
 
 pub SaveTarget :: plex {
@@ -26,16 +28,65 @@ pub DocumentEntry :: plex {
     conflict    bool
     stamp       ?Stat
     candidate   ?Stat
-    syntax      MarkdownSyntax
+    syntax      ?MarkdownSyntax
 }
 
 impl DocumentEntry {
 
     pub release :: fn (self: ^Self) {
         self.text.release()
-        self.syntax.release()
+        self.release_syntax()
         self.path.free()
         self.disk.free()
+    }
+
+    pub release_syntax :: fn (self: ^Self) {
+        on self.syntax {
+            cache => cache.release()
+
+            else => {
+            }
+        }
+        self.syntax = nil
+        self.text.line_changes = nil
+    }
+
+    -- This optional typed store is attached on demand. Plain Text never needs
+    -- line rows; leaving Markdown releases both metadata and edit observation.
+    pub update_syntax :: fn (self: ^Self) -> usize {
+        on self.file_mode() != FileMode.Markdown => {
+            self.release_syntax()
+            return 0
+        }
+        cache            := on self.syntax { current => current else => MarkdownSyntax { ... } }
+        observed         := on self.text.line_changes { current => current else => LineChanges { ... } }
+        prefix   : usize = 0
+        suffix   : usize = 0
+
+        on self.syntax != nil &&
+            observed.base_revision == cache.revision &&
+            observed.observed_revision == self.text.storage.revision() => {
+            prefix = observed.prefix
+            suffix = observed.suffix
+        }
+        analysed := cache.update(self.text.text(),
+                                 self.text.lines[..],
+                                 self.text.storage.revision(),
+                                 prefix,
+                                 suffix)
+        observed.reset(self.text.storage.revision(), self.text.lines.count)
+        self.text.line_changes = observed
+        self.syntax = cache
+        return analysed
+    }
+
+    pub syntax_style :: fn (self   : ^Self,
+                            line   : usize,
+                            offset : usize) -> SyntaxStyle {
+        return on self.syntax {
+            cache  => cache.line_style(line, offset)
+            else   => SyntaxStyle.Text
+        }
     }
 
     pub file_mode :: fn (self: ^Self) -> FileMode {
@@ -681,7 +732,10 @@ impl Workspace {
         }
         atomic_write(scratch, path, entry.text.text(), existing != nil && (same_path || force_conflict), expected_text = expected, expected_state = approved_state)?
         -- Path and baseline only advance after a successful durable write.
-        on reassociate => own(^entry.path, path)
+        on reassociate => {
+            own(^entry.path, path)
+            on entry.file_mode() != FileMode.Markdown => entry.release_syntax()
+        }
         own(^entry.disk, entry.text.text())
         entry.disk_exists = yes
         entry.missing = no
@@ -1194,6 +1248,175 @@ test "panes retain independent views and continuation, close without killing and
 
         error! => {
             assert no, error
+        }
+    }
+}
+
+test {
+
+    assert_incremental_analysis :: fn (entry: ^DocumentEntry) -> usize {
+        analysed                   := entry.update_syntax()
+        reference : MarkdownSyntax
+
+        defer reference.release()
+        _ := reference.update(entry.text.text(),
+                              entry.text.lines[..],
+                              entry.text.storage.revision(),
+                              0,
+                              0)
+        on entry.syntax {
+            cache => {
+                assert cache.lines.count == reference.lines.count
+                for index, actual in cache.lines {
+                    expected := ^reference.lines[index]
+                    assert actual.input == expected.input && actual.output == expected.output
+                    assert actual.setext == expected.setext && actual.length == expected.length
+                    assert actual.spans.count == expected.spans.count
+                    for span_index, span in actual.spans {
+                        assert span^ == expected.spans[span_index]
+                    }
+                    for offset in [0.as(usize) .. actual.length + 1] {
+                        assert cache.line_style(index, offset) == reference.line_style(index, offset)
+                    }
+                }
+            }
+
+            else => {
+                assert no
+            }
+        }
+        return analysed
+    }
+
+    exercise_incremental_analysis :: fn () -> void\EditError {
+        entry : DocumentEntry
+        defer entry.release()
+        entry.text.load("""
+            plain
+            """)?
+        assert entry.syntax == nil && entry.text.line_changes == nil
+        assert entry.update_syntax() == 0
+        assert entry.syntax == nil && entry.text.line_changes == nil
+        own(^entry.path, "/notes.md")
+        entry.text.load("Title\n===\n\nend")?
+        _ := assert_incremental_analysis(^entry)
+        assert entry.syntax_style(0, 0) == SyntaxStyle.Heading
+        _ := entry.text.edit({ start: 6 end: 9 }, "")?
+        _ := assert_incremental_analysis(^entry)
+
+        assert entry.syntax_style(0, 0) == SyntaxStyle.Text
+        _ := entry.text.undo_edit()
+        _ := assert_incremental_analysis(^entry)
+
+        assert entry.syntax_style(0, 0) == SyntaxStyle.Heading
+        source : [..]u8
+        defer source.free()
+        for _line in [0 .. 200] {
+            for byte in """
+    ordinary *text*
+    """ {
+                source.push(byte^)
+            }
+        }
+        entry.text.load(source[..].as(string))?
+        assert assert_incremental_analysis(^entry) == 201
+        assert entry.update_syntax() == 0
+        gap      := entry.text.storage.gap_start
+        revision := entry.text.storage.revision()
+
+        assert entry.update_syntax() == 0
+        assert entry.text.storage.gap_start == gap && entry.text.storage.revision() == revision
+        middle := entry.text.line_start(100)
+        _      := entry.text.edit({ start: middle end: middle + 1 }, "O")?
+
+        assert assert_incremental_analysis(^entry) == 2
+        -- A fence changes the state of the whole remaining suffix.
+        _ := entry.text.edit({ start: middle end: middle }, """
+            ```
+            """)?
+        assert assert_incremental_analysis(^entry) > 50
+        _ := entry.text.undo_edit()
+        assert assert_incremental_analysis(^entry) > 50
+        _ := entry.text.redo_edit()
+        _ := assert_incremental_analysis(^entry)
+        -- Whole replacements invalidate safely, even while metadata is attached.
+        entry.text.load("﻿Title *é*\r\n===\r\n\r\n> ```\n> code\nplain\n")?
+        _ := assert_incremental_analysis(^entry)
+        -- Deterministic edits, batched between analyses, include line splits,
+        -- joins, fences, BOM boundaries, CRLF, Unicode, undo and redo.
+        seed : usize = 7
+        for step in [0 .. 240] {
+            seed = (seed * 251 + 17) % 65521
+            minimum := entry.text.line_start(0)
+            start   := minimum + seed % (entry.text.text().count - minimum + 1)
+
+            for start > minimum &&
+                start < entry.text.text().count &&
+                (entry.text.content[start] & 0xc0) == 0x80 {
+                start -= 1
+            }
+            end := start + seed % 7
+            on end > entry.text.text().count => end = entry.text.text().count
+            for end > start &&
+                end < entry.text.text().count &&
+                (entry.text.content[end] & 0xc0) == 0x80 {
+                end -= 1
+            }
+            replacements := [
+                "x",
+                "",
+                "\n",
+                "\r\n",
+                """
+                    ```
+                    """,
+                """
+                    > ~~~
+                    """,
+                "*é*",
+                """
+                    ===
+                    """,
+                """
+                    # title
+                    """,
+                "\t",
+            ]
+            replacement := replacements[seed % 10]
+            _           := entry.text.edit({ start end }, replacement)?
+
+            on step % 5 == 4 => {
+                _ := assert_incremental_analysis(^entry)
+            }
+            on step % 11 == 10 => {
+                _ := entry.text.undo_edit()
+            }
+            on step % 17 == 16 => {
+                _ := entry.text.redo_edit()
+            }
+        }
+        _ := assert_incremental_analysis(^entry)
+        own(^entry.path, "/notes.txt")
+        assert entry.update_syntax() == 0
+        assert entry.syntax == nil && entry.text.line_changes == nil
+        _ := entry.text.edit({
+            start : entry.text.text().count
+            end   : entry.text.text().count
+        }, "tail")?
+        assert entry.text.line_changes == nil
+        own(^entry.path, "/notes.markdown")
+        _ := assert_incremental_analysis(^entry)
+    }
+
+}
+
+test "optional Markdown metadata reuses stable lines and agrees with full analysis after batched edits and history" {
+    on exercise_incremental_analysis() {
+        _success => {
+        }
+
+        error! => {
+            assert no, error.show()
         }
     }
 }

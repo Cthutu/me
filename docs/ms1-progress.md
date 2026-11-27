@@ -887,3 +887,51 @@ fixture also passed all three lexer tests. Type checking, idempotent formatting,
 Python compilation, UTF-8 source validation and diff checks passed. Required
 commit/push and release installation follow, with installed Markdown checks
 and release-binary identity checked afterwards.
+
+
+## T9 follow-up: optional line metadata and incremental Markdown
+
+Matt confirmed that line metadata must be entirely optional, selected incremental
+highlighting next, and queued Nerd mode/LSP support afterwards (T16).
+
+`src/line_metadata.n` records unchanged prefix/suffix line counts from document
+TextChange notifications. Observation is optional, retains no text and allocates
+no heap storage. Ordinary edits, forward-history extensions, undo and redo supply
+their changes before projection/index rebuilding. Whole loads/restoration and
+revision discontinuities invalidate conservatively. Batched hidden-buffer edits
+accumulate against the last analysed revision without rescanning source for
+prefix/suffix matches.
+
+Document entries now hold optional typed Markdown analysis. Plain Text has no
+line rows or observer; analysis is attached lazily and released when leaving
+Markdown, including successful save-as. Snapshot data remains unchanged, and
+restoration reconstructs analysis on demand. `src/syntax.n` separates shared
+output categories/spans from the Markdown analyser. Views retain presentation
+geometry, selections and caret state; split panes share one analysis.
+
+Each Markdown line stores entering/leaving fence/quote/paragraph state,
+line-relative spans and a setext dependency flag. Analysis restarts one line
+before an edit and propagates until an unchanged suffix has matching state.
+Line-relative spans survive line insertions/deletions. Ordinary edits retain the
+row allocation; line-count changes transfer retained rows into a resized table.
+Setext presentation consults the following line rather than destructively
+replacing base spans, so removing an underline restores the prior highlighting.
+
+This is incremental lexing, not a syntax tree or complete CommonMark parser.
+Document projection/index rebuilding and row-table movement on line-count changes
+remain linear. The existing simplified Markdown language coverage is retained.
+
+Native verification compares incremental rows/states/spans and presentation with
+fresh full analysis through 240 deterministic edits, batching, line splits/joins,
+fences, Unicode/BOM, CRLF, undo/redo, loads and mode detachment/reattachment.
+A character edit in a 201-line document analyses two lines; an unclosed fence
+correctly propagates through the suffix. Repainting is cached and preserves gap
+position/revision. Real terminal coverage adds shared-pane fence/setext changes,
+undo, correct source bytes and restored colours.
+
+Verification: all 189 native tests (77 ME + 112 imported), all 58 debug terminal
+groups and 13 focused release groups passed. Release coverage includes all four
+Markdown groups, recording/playback, panes, line deletion and recovery. Type
+checking, idempotent formatting, Python compilation, UTF-8 source validation and
+diff checks passed. Required commit/push and release installation follow, with
+all four installed Markdown scenarios and release-binary identity checked afterwards.

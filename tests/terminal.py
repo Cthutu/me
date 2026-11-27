@@ -2382,6 +2382,33 @@ def exit_input_cleanup(binary, folder):
             os.close(master)
             os.close(slave)
 
+def markdown_incremental(binary, folder):
+    path = folder / "incremental.md"
+    original = b"Title\n===\n\nplain\n# Tail\n"
+    path.write_bytes(original)
+    with Session(binary, folder, "-r", path.name) as session:
+        session.send(" wv")
+        assert screen(session).count(b"Markdown LF") == 2
+        response = session.send("i```\r")
+        assert b"38;2;169;205;145" in response, "fence did not recolour the suffix"
+        session.send(b"\x13")
+        assert path.read_bytes() == b"```\n" + original, path.read_bytes()
+        response = session.send(b"\x1a" * 4)
+        assert b"38;2;130;185;240" in response, "undo did not restore headings"
+        session.send(b"\x13")
+        assert path.read_bytes() == original
+        session.normal()
+        response = session.send("jdd")
+        assert b"38;2;216;222;233" in response, "removing underline did not repaint preceding text"
+        session.send(b"\x13")
+        assert path.read_bytes() == b"Title\n\nplain\n# Tail\n"
+        response = session.send(b"\x1a")
+        assert b"38;2;130;185;240" in response, "undo did not restore setext styling"
+        session.send(b"\x13")
+        assert path.read_bytes() == original
+        session.quit()
+
+
 def markdown_source(binary, folder):
     path = folder / "notes.MARKDOWN"
     original = "# Héading\r\n*emphasis* and [link](target)\n```nerd\n# code\n```\n".encode()
@@ -2464,7 +2491,7 @@ def main():
     allowed = {"libc.so.6", "libm.so.6", "libgcc_s.so.1", "linux-vdso.so.1"}
     unexpected = {name for name in names if name not in allowed and not Path(name).name.startswith("ld-linux-")}
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
-    checks = [markdown_source, markdown_save_as, markdown_indentation, save_as_confirmation, save_as_changed_target, save_as_changed_source, save_as_quit, backspace_modes, backspace_insert, recording_cancel, delete_lines, normal_delete, repeat_recording, repeat_failure, new_buffer, exit_input_cleanup, pane_controls, pane_ctrl_w, pane_file_picker, file_picker, file_picker_stale_and_cancel, cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
+    checks = [markdown_incremental, markdown_source, markdown_save_as, markdown_indentation, save_as_confirmation, save_as_changed_target, save_as_changed_source, save_as_quit, backspace_modes, backspace_insert, recording_cancel, delete_lines, normal_delete, repeat_recording, repeat_failure, new_buffer, exit_input_cleanup, pane_controls, pane_ctrl_w, pane_file_picker, file_picker, file_picker_stale_and_cancel, cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
               search_replace_and_buffers, search_origins, slash_replacement, confirmation_recovery, byte_paths_and_checkpoint_failures,
               second_instance, crash_and_signals, undo_caret, word_delete, buffer_picker, buffer_picker_close_selected, buffer_picker_preview, buffer_picker_recovery, buffer_picker_unicode_bytes, enhanced_key_actions, keyboard_diagnostics, hjkl_and_line_selection, leader_overlay, control_hjkl, duplicate_selection, command_completion, live_completion_filter, file_completion, home_paths, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
     selected = [check for check in checks if args.filter in check.__name__]

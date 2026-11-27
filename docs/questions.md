@@ -490,7 +490,14 @@ Configuration schema/loading, global/project precedence, manual overrides and
 provider lifecycle/execution remain open. Earlier questions about JSON storage
 and provider configuration versus working external LSP/formatting have not been
 answered. No concrete provider, configuration schema or installation is implied
-by this delivery. Further modes milestones remain unscoped.
+by the first Markdown delivery.
+
+Settled follow-up: buffer-owned line metadata is entirely optional. Incremental
+Markdown highlighting is implemented. Afterwards begin LSP support with the Nerd
+mode (T16). Syntax trees and range-based services remain valid consumers without
+being forced into the line cache. Nerd-mode details, initial LSP interactions,
+configuration and provider lifecycle remain design questions. Other later modes
+milestones remain unscoped.
 
 
 ## Recording follow-ups — agreed

@@ -1,0 +1,18 @@
+-- Source highlighting only: byte ranges never rewrite or conceal source text.
+pub SyntaxStyle :: enum {
+    Text
+    Heading
+    Marker
+    Code
+    Emphasis
+    Strong
+    Link
+    Rule
+}
+
+-- Byte offsets relative to the owning source line; end is exclusive.
+pub SyntaxSpan :: plex {
+    start usize
+    end   usize
+    style SyntaxStyle
+}

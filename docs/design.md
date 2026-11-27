@@ -1637,8 +1637,9 @@ The remaining macro-persistence and command-playback fixes remain queued.
 - Each document entry owns one revision-keyed Markdown syntax cache, reused by
   all panes. Line-ending counts are derived during the existing document index
   refresh. Neither analysis mutates text/history or moves the storage gap.
-  Syntax currently rebuilds the whole file after an edit; incremental analysis
-  and large-file scalability are not claimed.
+  The initial whole-file lexer has been replaced by the optional incremental
+  line metadata described below. Document projection/index rebuilding still
+  limits large-file scalability.
 - Highlight visible source headings (ATX/setext), quote/list markers, thematic
   rules, fenced/indented/inline code, emphasis/strong emphasis and links/images.
   Fences retain state across lines and recognise delimiter size and quote depth.
@@ -1683,7 +1684,8 @@ already delivered above describe current built-in behaviour.
 - Propose a configuration data model for recognition rules, indentation policy,
   syntax styles, LSP command/arguments and formatter command/arguments. The open
   question is whether M1 executes external providers or initially stores their
-  selection/configuration. No concrete provider has been chosen. Provider
+  selection/configuration. A Markdown provider remains unchosen; Nerd mode/LSP
+  is now agreed next, with its concrete integration still to design. Provider
   execution would need cancellation, document/version tracking, bounded messages
   and non-blocking IO; the existing blocking std.process runner is insufficient
   for the terminal event loop. Do not introduce direct libc or external libraries.
@@ -1721,3 +1723,51 @@ already delivered above describe current built-in behaviour.
 
 These steps organise T9; they are not additional accepted tasks or a reduction of
 its agreed scope. Resolve the remaining configuration/provider choices before implementing them.
+
+
+### Optional line metadata and incremental analysis — agreed follow-up
+
+Matt explicitly requires line metadata to be optional and selected incremental
+highlighting as the next implementation step. Afterwards, add LSP support with
+the Nerd mode (T16). A line cache complements future syntax trees/range-based
+analysis; it must not force every kind of analysis into lines.
+
+- A document entry optionally owns typed Markdown line metadata. Attach it only
+  when Markdown presentation requests analysis. Plain Text has no line-analysis
+  rows or edit observer. Detach/free metadata when leaving Markdown; successful
+  save-as to Plain Text also detaches it immediately. Derived state is not saved
+  in snapshots and is reconstructed on demand after restoration.
+- `src/line_metadata.n` observes position-explicit TextChange notifications and
+  accumulates unchanged prefix/suffix line counts across edits, undo/redo and
+  grouped editing. Revisions must be contiguous; missing notifications or whole
+  replacement/restoration invalidate conservatively. It retains no text and
+  allocates no heap storage. Ordinary documents leave observation absent.
+- `src/markdown.n` stores line-relative syntax spans, entering/leaving typed
+  lexer state and a setext dependency flag. State retains fence delimiter/size,
+  quote depth and paragraph eligibility. `src/syntax.n` defines shared output
+  categories/ranges independently of the Markdown analyser.
+- Restart from the line preceding the earliest edit, preserving backward setext
+  dependencies. Reanalyse through the dirty region, then stop when an unchanged
+  suffix line has matching entering state. Unmatched fences can require analysis
+  to EOF. Line splits/joins remap retained suffix rows without rewriting spans.
+  Ordinary edits retain the line table allocation; changes in line count rebuild
+  the row table while transferring unaffected rows and their span allocations.
+- Analysis is shared across panes. Views still own wrapping, coordinates,
+  selection, caret and width-dependent presentation. Cache reads/repaints never
+  mutate document text/history or reposition the gap.
+- This delivers incremental lexing, not an incremental syntax tree or full
+  CommonMark parsing. The existing document projection/line index still rebuilds
+  after mutation; row-table movement on line-count changes is also linear.
+
+### T16 — Nerd mode and LSP support — agreed next
+
+After incremental highlighting, begin LSP support when adding the Nerd file-type
+mode. Keep provider execution out of this incremental Markdown change. Specific
+Nerd-mode behaviour, initial LSP interactions, configuration and process lifecycle
+need concrete design before implementation. Existing requirements still apply:
+Nerd standard-library/syscall facilities, non-blocking integration, bounded
+protocol input, version tracking, cancellation and protection against stale data.
+LSP synchronisation must observe document changes independently of the optional
+highlighting cache; it must still work when syntax metadata is absent. This
+agreement selects the next mode/provider work; it does not silently select
+Markdown providers, a configuration schema or additional LSP features.

@@ -1,20 +1,4 @@
--- Source highlighting only: byte ranges never rewrite or conceal Markdown.
-pub SyntaxStyle :: enum {
-    Text
-    Heading
-    Marker
-    Code
-    Emphasis
-    Strong
-    Link
-    Rule
-}
-
-pub SyntaxSpan :: plex {
-    start usize
-    end   usize
-    style SyntaxStyle
-}
+use syntax
 
 space :: fn (byte: u8) => byte == ' ' || byte == '\t' || byte == '\r'
 
@@ -56,16 +40,24 @@ underline_line :: fn (text: string, start: usize, end: usize) -> bool {
     return yes
 }
 
--- One cache per buffer. Its monotonic storage revision identifies the source;
--- panes borrow the resulting ranges without owning or duplicating analysis.
--- Rebuild the whole source after an edit; unchanged paints reuse the ranges.
-pub MarkdownSyntax :: plex {
-    ready    bool
-    revision u64
-    spans    [..]SyntaxSpan
+-- Typed line metadata is allocated only by buffers requesting Markdown
+-- analysis.
+pub MarkdownState :: plex {
+    fence        u8
+    fence_size   usize
+    fence_quotes usize
+    paragraph    bool
 }
 
-impl MarkdownSyntax {
+pub MarkdownLine :: plex {
+    input  MarkdownState
+    output MarkdownState
+    setext bool
+    length usize
+    spans  [..]SyntaxSpan
+}
+
+impl MarkdownLine {
 
     pub release :: fn (self: ^Self) {
         self.spans.free()
@@ -185,189 +177,237 @@ impl MarkdownSyntax {
         }
     }
 
-    pub ensure :: fn (self: ^Self, text: string, revision: u64) {
-        on self.ready && self.revision == revision => return
-        self.spans.clear()
-        self.ready = yes
-        self.revision = revision
-        start : usize = 0
-        on text.count >= 3 &&
-            text[0] == 0xef &&
-            text[1] == 0xbb &&
-            text[2] == 0xbf => start = 3
-        fence          : u8    = 0
-        fence_size     : usize = 0
-        fence_quotes   : usize = 0
-        previous_start         := start
-        previous_end           := start
+}
 
-        for start < text.count {
-            end := start
-            for end < text.count && text[end] != '\n' {
-                end += 1
+-- Analyse a physical line independently, retaining the state needed to resume.
+lex_line :: fn (text: string, input: MarkdownState) -> MarkdownLine {
+    line : MarkdownLine
+    line.input = input
+    line.output = input
+    end := text.count
+    on end > 0 && text[end - 1] == '\r' => end -= 1
+    line.length = end
+    for {
+        cursor : usize = 0
+        indent : usize = 0
+
+        for cursor < end &&
+            (text[cursor] == ' ' ||
+                text[cursor] == '\t') {
+            indent += on text[cursor] == '\t' { yes => 4 - indent % 4 else => 1 }
+            cursor += 1
+        }
+        on line.output.fence != 0 => {
+            quotes : usize = 0
+            for cursor < end && text[cursor] == '>' {
+                quotes += 1
+                cursor += 1
+                for cursor < end && space(text[cursor]) {
+                    cursor += 1
+                }
             }
-            content_end := end
-            on content_end > start &&
-                text[content_end - 1] == '\r' => content_end -= 1
-            cursor         := start
-            indent : usize = 0
+            on quotes < line.output.fence_quotes => {
+                line.output = MarkdownState { ... }
+                again
+            }
+            line.add(0, end, SyntaxStyle.Code)
+            on indent <= 3 &&
+                quotes == line.output.fence_quotes &&
+                cursor < end &&
+                text[cursor] == line.output.fence => {
+                after := run_end(text, cursor, end)
+                clean := yes
 
-            for cursor < content_end &&
-                (text[cursor] == ' ' ||
-                    text[cursor] == '\t') {
-                indent += on text[cursor] == '\t' { yes => 4 - indent % 4 else => 1 }
+                for byte in text[after..end] {
+                    on !space(byte^) => clean = no
+                }
+                on after - cursor >= line.output.fence_size &&
+                    clean => line.output = MarkdownState { ... }
+            }
+            line.output.paragraph = no
+            return line
+        }
+        on indent > 3 => {
+            line.add(0, end, SyntaxStyle.Code)
+            line.output = MarkdownState { ... }
+            return line
+        }
+        quote_depth : usize = 0
+        for cursor < end && text[cursor] == '>' {
+            line.add(cursor, cursor + 1, SyntaxStyle.Marker)
+            quote_depth += 1
+            cursor      += 1
+            for cursor < end && space(text[cursor]) {
                 cursor += 1
             }
-            on fence != 0 {
-                yes => {
-                    quotes : usize = 0
-                    for cursor < content_end && text[cursor] == '>' {
-                        quotes += 1
-                        cursor += 1
-                        for cursor < content_end &&
-                            space(text[cursor]) {
-                            cursor += 1
-                        }
-                    }
-                    on quotes < fence_quotes => {
-                        fence        = 0
-                        previous_end = previous_start
-                        again
-                    }
-                    self.add(start, content_end, SyntaxStyle.Code)
-                    on indent <= 3 &&
-                        quotes == fence_quotes &&
-                        cursor < content_end &&
-                        text[cursor] == fence => {
-                        after := run_end(text, cursor, content_end)
-                        clean := yes
+        }
+        on cursor < end &&
+            (text[cursor] == '`' || text[cursor] == '~') => {
+            after := run_end(text, cursor, end)
+            valid := after - cursor >= 3
 
-                        for byte in text[after..content_end] {
-                            on !space(byte^) => clean = no
-                        }
-                        on after - cursor >= fence_size && clean => fence = 0
-                    }
-                    previous_end = previous_start
-                }
-
-                else => {
-                    on indent > 3 => {
-                        self.add(start, content_end, SyntaxStyle.Code)
-                        previous_end = previous_start
-                        start        = end
-                        on start < text.count => start += 1
-                        again
-                    }
-                    quote_depth : usize = 0
-                    -- Quote/list markers stay separate from inline source.
-                    for cursor < content_end && text[cursor] == '>' {
-                        self.add(cursor, cursor + 1, SyntaxStyle.Marker)
-                        quote_depth += 1
-                        cursor      += 1
-                        for cursor < content_end &&
-                            space(text[cursor]) {
-                            cursor += 1
-                        }
-                    }
-                    opened := no
-                    on indent <= 3 &&
-                        cursor < content_end &&
-                        (text[cursor] == '`' || text[cursor] == '~') => {
-                        after := run_end(text, cursor, content_end)
-                        valid := after - cursor >= 3
-
-                        on text[cursor] == '`' => {
-                            for byte in text[after..content_end] {
-                                on byte^ == '`' => valid = no
-                            }
-                        }
-                        on valid => {
-                            fence        = text[cursor]
-                            fence_size   = after - cursor
-                            fence_quotes = quote_depth
-                            self.add(cursor, content_end, SyntaxStyle.Code)
-                            opened = yes
-                        }
-                    }
-                    on !opened {
-                        yes => {
-                            heading_end := cursor
-                            for heading_end < content_end &&
-                                text[heading_end] == '#' {
-                                heading_end += 1
-                            }
-                            heading   := indent <= 3 && heading_end > cursor && heading_end - cursor <= 6 && (heading_end == content_end || space(text[heading_end]))
-                            underline := indent <= 3 && previous_end > previous_start && underline_line(text, cursor, content_end)
-                            rule      := indent <= 3 && (marker_line(text, cursor, content_end, '*'.as(u8), 3) || marker_line(text, cursor, content_end, '-'.as(u8), 3) || marker_line(text, cursor, content_end, '_'.as(u8), 3))
-
-                            on {
-                                heading => self.add(cursor, content_end, SyntaxStyle.Heading)
-                                underline => {
-                                    for self.spans.count > 0 &&
-                                        self.spans[self.spans.count - 1].start >= previous_start {
-                                        _ := self.spans.pop()
-                                    }
-                                    self.add(previous_start,
-                                             previous_end,
-                                             SyntaxStyle.Heading)
-                                    self.add(cursor,
-                                             content_end,
-                                             SyntaxStyle.Marker)
-                                }
-                                rule => self.add(cursor, content_end, SyntaxStyle.Rule)
-                                else => {
-                                    marker_end := cursor
-                                    on cursor < content_end && (text[cursor] == '-' || text[cursor] == '+' || text[cursor] == '*') {
-                                        yes => marker_end = cursor + 1
-
-                                        else => {
-                                            for marker_end < content_end &&
-                                                text[marker_end] >= '0' &&
-                                                text[marker_end] <= '9' {
-                                                marker_end += 1
-                                            }
-                                            on marker_end > cursor && marker_end - cursor <= 9 && marker_end < content_end && (text[marker_end] == '.' || text[marker_end] == ')') {
-                                                yes   => marker_end += 1
-                                                else  => marker_end = cursor
-                                            }
-                                        }
-                                    }
-                                    on marker_end > cursor &&
-                                        (marker_end == content_end || space(text[marker_end])) => {
-                                        self.add(cursor,
-                                                 marker_end,
-                                                 SyntaxStyle.Marker)
-                                        cursor = marker_end
-                                    }
-                                    self.inline(text, cursor, content_end)
-                                }
-                            }
-                            previous_start = start
-                            previous_end   = on cursor == content_end || heading || underline || rule { yes => start else => content_end }
-                        }
-
-                        else => previous_end = previous_start
-                    }
+            on text[cursor] == '`' => {
+                for byte in text[after..end] {
+                    on byte^ == '`' => valid = no
                 }
             }
-            start = end
-            on start < text.count => start += 1
+            on valid => {
+                line.output = MarkdownState { fence: text[cursor] fence_size: after - cursor fence_quotes: quote_depth ... }
+                line.add(cursor, end, SyntaxStyle.Code)
+                return line
+            }
         }
+        heading_end := cursor
+        for heading_end < end && text[heading_end] == '#' {
+            heading_end += 1
+        }
+        heading   := heading_end > cursor && heading_end - cursor <= 6 && (heading_end == end || space(text[heading_end]))
+        underline := line.output.paragraph && underline_line(text, cursor, end)
+        rule      := marker_line(text, cursor, end, '*'.as(u8), 3) || marker_line(text, cursor, end, '-'.as(u8), 3) || marker_line(text, cursor, end, '_'.as(u8), 3)
+
+        on {
+            heading => line.add(cursor, end, SyntaxStyle.Heading)
+            underline => {
+                -- The next line controls setext presentation of this line.
+                -- Keep base spans intact so removing an underline restores them.
+                line.setext = yes
+                line.add(cursor, end, SyntaxStyle.Marker)
+            }
+            rule => line.add(cursor, end, SyntaxStyle.Rule)
+            else => {
+                marker_end := cursor
+                on cursor < end && (text[cursor] == '-' || text[cursor] == '+' || text[cursor] == '*') {
+                    yes => marker_end = cursor + 1
+
+                    else => {
+                        for marker_end < end &&
+                            text[marker_end] >= '0' &&
+                            text[marker_end] <= '9' {
+                            marker_end += 1
+                        }
+                        on marker_end > cursor && marker_end - cursor <= 9 && marker_end < end && (text[marker_end] == '.' || text[marker_end] == ')') {
+                            yes   => marker_end += 1
+                            else  => marker_end = cursor
+                        }
+                    }
+                }
+                on marker_end > cursor &&
+                    (marker_end == end || space(text[marker_end])) => {
+                    line.add(cursor, marker_end, SyntaxStyle.Marker)
+                    cursor = marker_end
+                }
+                line.inline(text, cursor, end)
+            }
+        }
+        line.output.paragraph = cursor < end && !heading && !underline && !rule
+        return line
+    }
+}
+
+pub MarkdownSyntax :: plex {
+    ready    bool
+    revision u64
+    lines    [..]MarkdownLine
+}
+
+impl MarkdownSyntax {
+
+    pub release :: fn (self: ^Self) {
+        for line in self.lines {
+            line.release()
+        }
+        self.lines.free()
     }
 
-    pub style_at :: fn (self: ^Self, position: usize) -> SyntaxStyle {
+    -- Prefix/suffix are known unchanged by edit notifications, never hashes.
+    -- Reuse suffix rows as soon as their entering lexer state matches again.
+    -- Return the number of lines actually analysed (zero on a cached repaint).
+    pub update :: fn (self     : ^Self,
+                      text     : string,
+                      starts   : []usize,
+                      revision : u64,
+                      prefix   : usize,
+                      suffix   : usize) -> usize {
+        on self.ready && self.revision == revision => return 0
+        first := on self.ready {
+            yes   => prefix
+            else  => 0.as(usize)
+        }
+        on first > self.lines.count => first = self.lines.count
+        on first > starts.count => first = starts.count
+        -- A line can acquire setext presentation from its following line.
+        on first > 0 => first -= 1
+        retained := on self.ready {
+            yes   => suffix
+            else  => 0.as(usize)
+        }
+        on retained > self.lines.count - first => retained = self.lines.count - first
+        on retained > starts.count - first => retained = starts.count - first
+        on starts.count == self.lines.count {
+            yes => {
+                -- Ordinary character edits retain the line table allocation.
+                for index in [first .. self.lines.count - retained] {
+                    self.lines[index].release()
+                    self.lines[index] = MarkdownLine { ... }
+                }
+            }
+
+            else => {
+                next : [..]MarkdownLine
+                next.resize_to(starts.count)
+                for index in [0.as(usize) .. first] {
+                    next[index] = self.lines[index]
+                }
+                for index in [0.as(usize) .. retained] {
+                    next[starts.count - retained + index] = self.lines[self.lines.count - retained + index]
+                }
+                for index in [first .. self.lines.count - retained] {
+                    self.lines[index].release()
+                }
+                self.lines.free()
+                self.lines = next
+            }
+        }
+        state : MarkdownState
+        on first > 0 => state = self.lines[first - 1].output
+        analysed : usize = 0
+        for index in [first .. starts.count] {
+            on index >= starts.count - retained &&
+                self.lines[index].input == state => break
+            self.lines[index].release()
+            end := on index + 1 < starts.count {
+                yes   => starts[index + 1] - 1
+                else  => text.count
+            }
+            self.lines[index] = lex_line(text[starts[index]..end], state)
+            state    = self.lines[index].output
+            analysed += 1
+        }
+        self.ready = yes
+        self.revision = revision
+        return analysed
+    }
+
+    pub line_style :: fn (self     : ^Self,
+                          line     : usize,
+                          position : usize) -> SyntaxStyle {
+        on line >= self.lines.count ||
+            position >= self.lines[line].length => return SyntaxStyle.Text
+        on line + 1 < self.lines.count &&
+            self.lines[line + 1].setext => return SyntaxStyle.Heading
+        spans         := self.lines[line].spans[..]
         lower : usize = 0
-        upper         := self.spans.count
+        upper         := spans.count
 
         for lower < upper {
             middle := lower + (upper - lower) / 2
-            on self.spans[middle].end <= position {
+            on spans[middle].end <= position {
                 yes   => lower = middle + 1
                 else  => upper = middle
             }
         }
-        on lower < self.spans.count &&
-            self.spans[lower].start <= position => return self.spans[lower].style
+        on lower < spans.count &&
+            spans[lower].start <= position => return spans[lower].style
         return SyntaxStyle.Text
     }
 
@@ -383,13 +423,63 @@ test {
         abort("Missing syntax test sample")
     }
 
-    assert_syntax_ranges :: fn (syntax: ^MarkdownSyntax, text: string) {
-        end : usize = 0
-        for span in syntax.spans {
-            assert span.start >= end && span.end > span.start && span.end <= text.count
-            assert text[span.start] < 128 || text[span.start] >= 192
-            assert span.end == text.count || text[span.end] < 128 || text[span.end] >= 192
-            end = span.end
+    sample_lines :: fn (text: string) -> [..]usize {
+        starts   : [..]usize
+        preamble : usize     = 0
+
+        on text.count >= 3 &&
+            text[0] == 0xef &&
+            text[1] == 0xbb &&
+            text[2] == 0xbf => preamble = 3
+        starts.push(preamble)
+        for index, byte in text {
+            on byte^ == '\n' => starts.push(index + 1)
+        }
+        return starts
+    }
+
+    analyse :: fn (cache: ^MarkdownSyntax, text: string, revision: u64) {
+        starts := sample_lines(text)
+        defer starts.free()
+        _ := cache.update(text, starts[..], revision, 0, 0)
+    }
+
+    sample_style :: fn (cache    : ^MarkdownSyntax,
+                        text     : string,
+                        position : usize) -> SyntaxStyle {
+        starts := sample_lines(text)
+        defer starts.free()
+        on position < starts[0] => return SyntaxStyle.Text
+        line : usize = 0
+        for line + 1 < starts.count && starts[line + 1] <= position {
+            line += 1
+        }
+        return cache.line_style(line, position - starts[line])
+    }
+
+    span_count :: fn (cache: ^MarkdownSyntax) -> usize {
+        count : usize = 0
+        for line in cache.lines {
+            count += line.spans.count
+        }
+        return count
+    }
+
+    assert_syntax_ranges :: fn (cache: ^MarkdownSyntax, text: string) {
+        starts := sample_lines(text)
+        defer starts.free()
+        assert cache.lines.count == starts.count
+        for index, line in cache.lines {
+            end : usize = 0
+            for span in line.spans {
+                assert span.start >= end && span.end > span.start && span.end <= line.length
+                start  := starts[index] + span.start
+                finish := starts[index] + span.end
+
+                assert text[start] < 128 || text[start] >= 192
+                assert finish == text.count || text[finish] < 128 || text[finish] >= 192
+                end = span.end
+            }
         }
     }
 
@@ -400,26 +490,26 @@ test "Markdown source ranges cover block and inline syntax without changing Unic
     syntax : MarkdownSyntax
 
     defer syntax.release()
-    syntax.ensure(text, 1)
-    assert syntax.style_at(0) == SyntaxStyle.Text
-    assert syntax.style_at(3) == SyntaxStyle.Heading
-    assert syntax.style_at(syntax_position(text, "plain")) == SyntaxStyle.Text
-    assert syntax.style_at(syntax_position(text, "émphasis")) == SyntaxStyle.Emphasis
-    assert syntax.style_at(syntax_position(text, "strong")) == SyntaxStyle.Strong
-    assert syntax.style_at(syntax_position(text, "界")) == SyntaxStyle.Code
-    assert syntax.style_at(syntax_position(text, "link")) == SyntaxStyle.Link
-    assert syntax.style_at(syntax_position(text, "image")) == SyntaxStyle.Link
-    assert syntax.style_at(syntax_position(text, ">")) == SyntaxStyle.Marker
-    assert syntax.style_at(syntax_position(text, "- quote")) == SyntaxStyle.Marker
-    assert syntax.style_at(syntax_position(text, "12.")) == SyntaxStyle.Marker
-    assert syntax.style_at(syntax_position(text, "---")) == SyntaxStyle.Rule
-    assert syntax.style_at(syntax_position(text, "indented")) == SyntaxStyle.Code
-    assert syntax.style_at(text.count) == SyntaxStyle.Text
+    analyse(^syntax, text, 1)
+    assert sample_style(^syntax, text, 0) == SyntaxStyle.Text
+    assert sample_style(^syntax, text, 3) == SyntaxStyle.Heading
+    assert sample_style(^syntax, text, syntax_position(text, "plain")) == SyntaxStyle.Text
+    assert sample_style(^syntax, text, syntax_position(text, "émphasis")) == SyntaxStyle.Emphasis
+    assert sample_style(^syntax, text, syntax_position(text, "strong")) == SyntaxStyle.Strong
+    assert sample_style(^syntax, text, syntax_position(text, "界")) == SyntaxStyle.Code
+    assert sample_style(^syntax, text, syntax_position(text, "link")) == SyntaxStyle.Link
+    assert sample_style(^syntax, text, syntax_position(text, "image")) == SyntaxStyle.Link
+    assert sample_style(^syntax, text, syntax_position(text, ">")) == SyntaxStyle.Marker
+    assert sample_style(^syntax, text, syntax_position(text, "- quote")) == SyntaxStyle.Marker
+    assert sample_style(^syntax, text, syntax_position(text, "12.")) == SyntaxStyle.Marker
+    assert sample_style(^syntax, text, syntax_position(text, "---")) == SyntaxStyle.Rule
+    assert sample_style(^syntax, text, syntax_position(text, "indented")) == SyntaxStyle.Code
+    assert sample_style(^syntax, text, text.count) == SyntaxStyle.Text
     assert_syntax_ranges(^syntax, text)
-    syntax.ensure("\t# code\n  \tcode\n # heading", 2)
-    assert syntax.style_at(1) == SyntaxStyle.Code
-    assert syntax.style_at(10) == SyntaxStyle.Code
-    assert syntax.style_at(17) == SyntaxStyle.Heading
+    analyse(^syntax, "\t# code\n  \tcode\n # heading", 2)
+    assert syntax.line_style(0, 1) == SyntaxStyle.Code
+    assert syntax.line_style(1, 2) == SyntaxStyle.Code
+    assert syntax.line_style(2, 1) == SyntaxStyle.Heading
 }
 
 test "Markdown fence state crosses lines, respects delimiter size and quote boundaries, and refreshes on revision" {
@@ -437,22 +527,22 @@ test "Markdown fence state crosses lines, respects delimiter size and quote boun
         """
     syntax : MarkdownSyntax
     defer syntax.release()
-    syntax.ensure(text, 7)
-    assert syntax.style_at(syntax_position(text, "# inside")) == SyntaxStyle.Code
-    assert syntax.style_at(syntax_position(text, "*still")) == SyntaxStyle.Code
-    assert syntax.style_at(syntax_position(text, "# outside")) == SyntaxStyle.Heading
-    assert syntax.style_at(syntax_position(text, "> code")) == SyntaxStyle.Code
-    assert syntax.style_at(syntax_position(text, "# after")) == SyntaxStyle.Heading
+    analyse(^syntax, text, 7)
+    assert sample_style(^syntax, text, syntax_position(text, "# inside")) == SyntaxStyle.Code
+    assert sample_style(^syntax, text, syntax_position(text, "*still")) == SyntaxStyle.Code
+    assert sample_style(^syntax, text, syntax_position(text, "# outside")) == SyntaxStyle.Heading
+    assert sample_style(^syntax, text, syntax_position(text, "> code")) == SyntaxStyle.Code
+    assert sample_style(^syntax, text, syntax_position(text, "# after")) == SyntaxStyle.Heading
     assert_syntax_ranges(^syntax, text)
-    spans := syntax.spans.count
-    syntax.ensure(text, 7)
-    assert syntax.revision == 7 && syntax.spans.count == spans
-    syntax.ensure("""
+    spans := span_count(^syntax)
+    analyse(^syntax, text, 7)
+    assert syntax.revision == 7 && span_count(^syntax) == spans
+    analyse(^syntax, """
         # now heading
         """, 8)
-    assert syntax.style_at(0) == SyntaxStyle.Heading && syntax.spans.count == 1
-    syntax.ensure(text, 9)
-    assert syntax.style_at(syntax_position(text, "# inside")) == SyntaxStyle.Code
+    assert sample_style(^syntax, text, 0) == SyntaxStyle.Heading && span_count(^syntax) == 1
+    analyse(^syntax, text, 9)
+    assert sample_style(^syntax, text, syntax_position(text, "# inside")) == SyntaxStyle.Code
 }
 
 test "Markdown setext headings and escaping leave malformed and intraword delimiters readable" {
@@ -460,14 +550,14 @@ test "Markdown setext headings and escaping leave malformed and intraword delimi
     syntax : MarkdownSyntax
 
     defer syntax.release()
-    syntax.ensure(text, 1)
-    assert syntax.style_at(0) == SyntaxStyle.Heading
-    assert syntax.style_at(syntax_position(text, "===")) == SyntaxStyle.Marker
-    assert syntax.style_at(syntax_position(text, "escaped")) == SyntaxStyle.Text
-    assert syntax.style_at(syntax_position(text, "case")) == SyntaxStyle.Text
-    assert syntax.style_at(syntax_position(text, "broken")) == SyntaxStyle.Text
-    assert syntax.style_at(syntax_position(text, "valid")) == SyntaxStyle.Code
-    assert syntax.style_at(syntax_position(text, "#######")) == SyntaxStyle.Text
+    analyse(^syntax, text, 1)
+    assert sample_style(^syntax, text, 0) == SyntaxStyle.Heading
+    assert sample_style(^syntax, text, syntax_position(text, "===")) == SyntaxStyle.Marker
+    assert sample_style(^syntax, text, syntax_position(text, "escaped")) == SyntaxStyle.Text
+    assert sample_style(^syntax, text, syntax_position(text, "case")) == SyntaxStyle.Text
+    assert sample_style(^syntax, text, syntax_position(text, "broken")) == SyntaxStyle.Text
+    assert sample_style(^syntax, text, syntax_position(text, "valid")) == SyntaxStyle.Code
+    assert sample_style(^syntax, text, syntax_position(text, "#######")) == SyntaxStyle.Text
     assert_syntax_ranges(^syntax, text)
     -- Repeated unmatched links must stay bounded and never produce bad ranges.
     adversarial : [..]u8
@@ -475,8 +565,8 @@ test "Markdown setext headings and escaping leave malformed and intraword delimi
     for _index in [0 .. 4096] {
         adversarial.push('['.as(u8))
     }
-    syntax.ensure(adversarial[..].as(string), 2)
-    assert syntax.spans.count == 0
-    syntax.ensure("", 3)
-    assert syntax.spans.count == 0 && syntax.style_at(0) == SyntaxStyle.Text
+    analyse(^syntax, adversarial[..].as(string), 2)
+    assert span_count(^syntax) == 0
+    analyse(^syntax, "", 3)
+    assert span_count(^syntax) == 0 && sample_style(^syntax, text, 0) == SyntaxStyle.Text
 }
