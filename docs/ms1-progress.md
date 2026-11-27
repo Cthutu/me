@@ -773,3 +773,28 @@ Verification: all 181 native tests and six focused debug plus six release termin
 groups passed. Formatting is idempotent; type checking, Python compilation and
 diff checks passed. Required commit/push and release installation follow, with
 both installed Backspace groups checked afterwards.
+
+
+## Existing save-as confirmation (T13)
+
+:w/:ww to a different existing target now ask File <file> exists - save? (Y/N).
+Relative, home-relative and absolute paths share Workspace.save_target resolution
+and same-inode detection. Y approves a write and reassociation; N/Escape preserve
+the buffer path and target. :w! still explicitly forces overwriting. :wq resumes
+only after successful approval, remaining open after cancellation or errors.
+
+Confirmation owns path, target baseline/metadata and source revision across
+frames. Unknown/modified keys and releases cannot approve or edit. Revalidate the
+source and target at approval, then carry expected metadata and bytes through the
+atomic writer's existing write-time checks. Changed/replaced/removed/retargeted
+files require review/retry. Background messages cannot hide the pending question.
+Existing save conflict, atomic replacement, ACL/attributes and symlink rules remain.
+
+Verification: 181 native tests and six debug plus six release terminal groups
+passed. Native atomic-writer tests exercise approved overwrite, stale identity and
+incorrect baseline refusal. PTYs cover path variants, spaces, completion, unnamed
+buffers, N/Escape/Y, input isolation/releases, reassociation, aliases/symlinks,
+changed source/target, :ww/:w! and :wq. Type checking, idempotent formatting,
+Python compilation and diff checks passed. Required commit/push and installation
+follow, with installed confirmation checked afterwards. T14's :q refusal follows
+as separately requested work.

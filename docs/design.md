@@ -606,8 +606,18 @@ external API names, protocol identifiers, and literal compatibility requirements
 - `:w <filename>` writes regardless of the current buffer's modified state.
   On success, that path becomes the document's backing file; future Ctrl+S uses
   it. Failed writes must not reassign the document's backing path.
-- Refuse to overwrite a different existing destination unless explicitly forced
-  with `:w! <filename>`.
+- Saving as a different existing destination with :w/:ww asks
+  `File <file> exists - save? (Y/N)`. Y authorises that overwrite and reassociates
+  only after a successful write; N/Escape cancel without changing path or target.
+  Relative, absolute and home-relative paths use the same resolved-path/inode
+  checks. An alias of the current backing file follows ordinary save/conflict
+  rules. :w! explicitly forces overwriting without a confirmation.
+- Confirmation owns the resolved path, target bytes/metadata and source revision
+  across input frames. Reject approval if the source revision or target identity,
+  metadata or bytes changed; do not silently approve a replacement. Block other
+  editing/navigation commands while waiting. Sanitize the displayed path only,
+  preserving Linux filename bytes. :wq continues only after a successful approved
+  save; cancellation leaves the editor open. Pending decisions are not persisted.
 - A new buffer without an existing backing file still needs a first write even
   if empty.
 - Safe writes: write a temporary file in the destination directory, then

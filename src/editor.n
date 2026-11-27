@@ -34,9 +34,36 @@ document_match :: fn (doc         : ^Document,
     }
 }
 
+pub SaveConfirmation :: plex {
+    active      bool
+    document_id usize
+    revision    u64
+    path        [..]u8
+    disk        [..]u8
+    stamp       Stat
+    pending     bool
+    force_write bool
+}
+
+impl SaveConfirmation {
+
+    reset :: fn (self: ^Self) {
+        self.active = no
+        self.path.clear()
+        self.disk.clear()
+    }
+
+    release :: fn (self: ^Self) {
+        self.path.free()
+        self.disk.free()
+    }
+
+}
+
 pub Editor :: plex {
     workspace          Workspace
     completion         PromptCompletion
+    overwrite          SaveConfirmation
     confirmation       ReplaceConfirmation
     diagnostics        KeyDiagnostics
     recording          RepeatRecording
@@ -74,6 +101,7 @@ impl Editor {
         self.workspace.release()
         self.completion.release()
         self.confirmation.release()
+        self.overwrite.release()
         self.diagnostics.release()
         self.recording.release()
         self.files.release()
@@ -850,10 +878,60 @@ impl Editor {
             self.save_all_pending = pending
             return
         }
+        on filename.count > 0 && verb != "w!" => {
+            target := self.workspace.save_target(scratch, id, filename)?
+            on target.existing => [stamp] {
+                on !target.same_path => {
+                    on (stamp.mode & 0xf000) != 0x8000 => return "Target is "
+                        +"not a regular file"!
+                    disk := read_file(scratch, target.path)?
+                    on metadata(scratch, target.path) {
+                        current => {
+                            on !same_file_state(stamp, current) => return "Save"
+                                +" target changed; retry after reviewing"!
+                        }
+                        else => return "Save target disappeared; retry after "
+                            +"reviewing"!
+                    }
+                    own(^self.overwrite.path, target.path)
+                    own(^self.overwrite.disk, disk)
+                    self.overwrite.document_id = id
+                    self.overwrite.revision = self.workspace.documents[id].text.storage.revision()
+                    self.overwrite.stamp = stamp
+                    self.overwrite.pending = pending
+                    self.overwrite.force_write = verb != "w"
+                    self.overwrite.active = yes
+                    self.show_save_confirmation(scratch)
+                    return
+                }
+            }
+        }
         self.workspace.save(scratch, id, filename, verb != "w", verb == "w!")?
         self.dirty = yes
         self.tell("Saved")
         on pending => self.save_all(scratch)?
+    }
+    show_save_confirmation :: fn (self: ^Self, scratch: ^arena) {
+        label := display_text(scratch, bytes_text(self.overwrite.path), single_line = yes)
+        self.tell(scratch.pr($"File {label} exists - save? (Y/N)"))
+    }
+    pub confirm_save :: fn (self: ^Self, scratch: ^arena, rune: u32) -> void\string {
+        on !self.overwrite.active => return
+        on rune == 27 || rune == 'n'.as(u32) || rune == 'N'.as(u32) => {
+            self.overwrite.reset()
+            self.tell("Save cancelled")
+            return
+        }
+        on rune != 'y'.as(u32) && rune != 'Y'.as(u32) => return
+        self.overwrite.active = no
+        defer self.overwrite.reset()
+        id := self.overwrite.document_id
+        on id >= self.workspace.documents.count || self.workspace.documents[id].text.storage.revision() != self.overwrite.revision => return "Buffer changed since confirmation; retry after reviewing"!
+        self.workspace.save(scratch, id, bytes_text(self.overwrite.path), self.overwrite.force_write, yes,
+        approved_state = self.overwrite.stamp, approved_text = bytes_text(self.overwrite.disk))?
+        self.dirty = yes
+        self.tell("Saved")
+        on self.overwrite.pending => self.save_all(scratch)?
     }
     pub indent_width :: fn (self: ^Self) -> usize {
         doc := ^self.workspace.active_document().text
@@ -985,6 +1063,17 @@ impl Editor {
         }
     }
     pub execute :: fn (self: ^Self, scratch: ^arena, command: Command) -> void\string {
+        on self.overwrite.active => {
+            on command {
+                Escape => self.confirm_save(scratch, 27)?
+                InsertText(text) => {
+                    on text.count == 1 => self.confirm_save(scratch, text[0].as(u32))?
+                }
+                else => {
+                }
+            }
+            return
+        }
         on command {
             RecordStart => {
                 self.start_recording()?
@@ -1627,6 +1716,18 @@ impl Editor {
         }
         -- Diagnostics must observe releases; ordinary UI/command handlers must not.
         on key.action == TermKeyAction.Release => return
+        on self.overwrite.active => {
+            on key.scan_code == TermScanCode.Escape => {
+                self.suppress_character = key.character != nil
+                on self.confirm_save(scratch, 27) {
+                    _success => {
+                    }
+                    error! => self.tell(error)
+                }
+            }
+            on (key.modifiers & (TERM_MOD_CONTROL | TERM_MOD_ALT)) != 0 => self.suppress_character = key.character != nil
+            return
+        }
         cancel := key.scan_code == TermScanCode.G && (key.modifiers & TERM_MOD_CONTROL) != 0
         on key.character => [rune] {
             cancel = cancel || rune == 7
@@ -1748,6 +1849,14 @@ impl Editor {
     pub character :: fn (self: ^Self, scratch: ^arena, rune: u32) {
         on self.suppress_character => {
             self.suppress_character = no
+            return
+        }
+        on self.overwrite.active => {
+            on self.confirm_save(scratch, rune) {
+                _success => {
+                }
+                error! => self.tell(error)
+            }
             return
         }
         on self.recording.active && rune == 7 => {
@@ -1876,6 +1985,8 @@ impl Editor {
             }
             self.checkpoint_at = current
         }
+        -- Monitoring/checkpoint messages must not hide a pending decision.
+        on self.overwrite.active => self.show_save_confirmation(scratch)
     }
 }
 

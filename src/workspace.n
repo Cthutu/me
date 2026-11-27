@@ -9,6 +9,12 @@ use positions
 use std.text
 use view
 
+pub SaveTarget :: plex {
+    path      string
+    existing  ?Stat
+    same_path bool
+}
+
 pub DocumentEntry :: plex {
     text        Document
     path        [..]u8
@@ -606,31 +612,46 @@ impl Workspace {
             +"layout"!
     }
 
-    pub save :: fn (self           : ^Self,
-                    scratch        : ^arena,
-                    document_id    : usize,
-                    filename       : string,
-                    force_write    : bool,
-                    force_conflict : bool) -> void\string {
+    pub save_target :: fn (self        : ^Self,
+                           scratch     : ^arena,
+                           document_id : usize,
+                           filename    : string) -> SaveTarget\string {
         entry := ^self.documents[document_id]
         path := on filename.count > 0 {
             yes   => absolute_path(scratch, bytes_text(self.folder), expand_home_path(scratch, filename)?)
             else  => bytes_text(entry.path)
         }
         on path.count == 0 => return "A filename is required"!
-        reassociate := filename.count > 0
-        same_path   := path == bytes_text(entry.path)
-        -- Verify bytes immediately before every save, even if a monitor tick
-        -- has not yet observed an atomic replacement.
-        existing := metadata(scratch, path)
+        existing  := metadata(scratch, path)
+        same_path := path == bytes_text(entry.path)
+
         on existing => [current] {
             on !same_path &&
                 entry.path.count > 0 => {
                 on metadata(scratch, bytes_text(entry.path)) => [backing] {
-                    on backing.dev == current.dev &&
-                        backing.ino == current.ino => same_path = yes
+                    same_path = backing.dev == current.dev && backing.ino == current.ino
                 }
             }
+        }
+        return SaveTarget { path existing same_path }
+    }
+
+    pub save :: fn (self           : ^Self,
+                    scratch        : ^arena,
+                    document_id    : usize,
+                    filename       : string,
+                    force_write    : bool,
+                    force_conflict : bool,
+                    approved_state : ?Stat = nil,
+                    approved_text  : ?string = nil) -> void\string {
+        entry       := ^self.documents[document_id]
+        target      := self.save_target(scratch, document_id, filename)?
+        path        := target.path
+        existing    := target.existing
+        same_path   := target.same_path
+        reassociate := filename.count > 0
+
+        on existing != nil => {
             on !same_path &&
                 !force_conflict => return "Different target "
                 +"exists; use :w! "
@@ -653,7 +674,10 @@ impl Workspace {
         on same_path &&
             existing != nil &&
             !force_conflict => expected = bytes_text(entry.disk)
-        atomic_write(scratch, path, entry.text.text(), existing != nil && (same_path || force_conflict), expected_text = expected)?
+        on approved_text => [text] {
+            expected = text
+        }
+        atomic_write(scratch, path, entry.text.text(), existing != nil && (same_path || force_conflict), expected_text = expected, expected_state = approved_state)?
         -- Path and baseline only advance after a successful durable write.
         on reassociate => own(^entry.path, path)
         own(^entry.disk, entry.text.text())

@@ -196,7 +196,8 @@ pub atomic_write :: fn (scratch        : ^arena,
                         path           : string,
                         text           : string,
                         allow_existing : bool,
-                        expected_text  : ?string = nil) -> void\string {
+                        expected_text  : ?string = nil,
+                        expected_state : ?Stat = nil) -> void\string {
     target            := path
     mode      : u32   = 0x180
     original  : ?Stat = nil
@@ -208,6 +209,10 @@ pub atomic_write :: fn (scratch        : ^arena,
 
     on metadata(scratch, path) {
         info => {
+            on expected_state => [approved] {
+                on !same_file_state(approved, info) => return "Save target "
+                    +"changed since confirmation; retry after reviewing"!
+            }
             on !allow_existing => return "Target already exists; use :w!"!
             on (info.mode & 0xf000) != 0x8000 => return "Target is not a "
                 +"regular file"!
@@ -228,6 +233,8 @@ pub atomic_write :: fn (scratch        : ^arena,
         }
 
         else => {
+            on expected_state != nil => return "Save target disappeared since "
+                +"confirmation; retry after reviewing"!
             -- Do not replace a dangling symlink as though it were an ordinary
             -- new file. Resolving chains of missing targets is not safe here.
             info : Stat
@@ -390,6 +397,27 @@ test {
             }
         }
         assert read_file(^scratch, target)? == bytes
+        approved := metadata(^scratch, target)
+        atomic_write(^scratch, target, "approved", yes, expected_text = bytes, expected_state = approved)?
+        on atomic_write(^scratch, target, "stale approval", yes, expected_text = "approved", expected_state = approved) {
+            _success => {
+                assert no
+            }
+
+            _error! => {
+            }
+        }
+        assert read_file(^scratch, target)? == "approved"
+        current := metadata(^scratch, target)
+        on atomic_write(^scratch, target, "wrong baseline", yes, expected_text = "different bytes", expected_state = current) {
+            _success => {
+                assert no
+            }
+
+            _error! => {
+            }
+        }
+        assert read_file(^scratch, target)? == "approved"
         pid      := syscall(SYS_GETPID, 0, 0, 0, 0, 0, 0)
         reserved := scratch.pr($"{folder}/.me-{pid}-0.tmp")
 

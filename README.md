@@ -377,7 +377,7 @@ capability reporting, not detection of every terminal-specific protocol.
 | `:w` | Save active document; unchanged existing files are not written |
 | `:ww` | Force a write, but do not bypass external conflicts |
 | `:w!` | Force writing including conflict overwrite |
-| `:w filename` | Write and reassociate; a different existing target needs `!` |
+| `:w filename` | Write and reassociate; confirm an existing different target with Y/N |
 | `:wq` | Save all modified documents and quit only on success |
 | `:q` | Quit, checkpointing unsaved/unnamed work and undo history |
 | `:q!` | Remove every unsaved buffer, including recovered work, and quit |
@@ -391,6 +391,14 @@ capability reporting, not detection of every terminal-specific protocol.
 Before a command's separating space, **Tab** completes command names. `:bu`
 offers `buffer` / `buffers`; Tab at an empty `:`
 prompt lists all supported names. Acceptance never executes the command.
+
+Saving as a different existing file asks `File <file> exists - save? (Y/N)`.
+Y saves and associates the buffer with that path; N or Escape cancels without
+changing the buffer path or target. Relative, absolute and home-relative paths
+follow the same rules. Approval is rejected if the target changes or disappears;
+retry after reviewing it. `:ww filename` also asks; `:w! filename` explicitly
+forces overwriting. Saving to the current backing file keeps its existing
+external-change conflict checks.
 
 After the separating space in `:e`, `:w`, `:w!` and `:ww`, **Tab** completes
 the path at the end of the prompt. For example, type `:e src/ter` and press Tab. Relative paths use the

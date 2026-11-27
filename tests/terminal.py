@@ -373,6 +373,137 @@ def external_files(binary, folder):
         session.quit()
 
 
+def save_as_confirmation(binary, folder):
+    home = folder / "home"
+    home.mkdir()
+    source = folder / "source.txt"
+    targets = (("target.txt", folder / "target.txt"),
+               ("~/target.txt", home / "target.txt"),
+               (str(folder / "absolute name.txt"), folder / "absolute name.txt"))
+    for argument, target in targets:
+        source.write_bytes(b"SOURCE")
+        target.write_bytes(b"OLD")
+        with Session(binary, folder, "-r", source.name) as session:
+            session.send("iNEW")
+            session.command("w " + argument)
+            shown = screen(session)
+            assert b"exists - save?" in shown, shown
+            assert target.read_bytes() == b"OLD" and source.read_bytes() == b"SOURCE"
+            session.send(b"x\r\x0e\x1b[121;5;121u")  # Other/modified keys cannot approve or edit.
+            assert target.read_bytes() == b"OLD"
+            session.send("n")
+            assert b"Save cancelled" in screen(session)
+            session.send(b"\x13")
+            assert source.read_bytes() == b"NEWSOURCE", "N changed buffer association"
+            session.command("w " + argument)
+            session.send(b"\x1b[121;1:3u")  # A release alone cannot approve.
+            assert target.read_bytes() == b"OLD"
+            session.send(b"\x1b[121;1;121u\x1b[121;1:3u")
+            assert target.read_bytes() == b"NEWSOURCE"
+            session.normal()
+            session.send("iZ")
+            session.send(b"\x13")
+            assert b"Z" in target.read_bytes() and source.read_bytes() == b"NEWSOURCE"
+            session.quit()
+    # A cancelled unnamed save stays unnamed; Tab completion also reaches the prompt.
+    target = home / "existing.txt"
+    target.write_bytes(b"OLD")
+    with Session(binary, folder, "-r") as session:
+        session.send("UNNAMED")
+        session.command("w ~/exis\t")
+        assert b"exists - save?" in screen(session), screen(session)
+        session.send(b"\x1b", 0.15)
+        session.send(b"\x13")
+        assert b":w " in screen(session), "Escape associated an unnamed buffer"
+        session.send("new.txt\r")
+        assert (folder / "new.txt").read_bytes() == b"UNNAMED"
+        assert target.read_bytes() == b"OLD"
+        session.command("ww ~/existing.txt")
+        assert b"exists - save?" in screen(session)
+        session.send("Y")
+        assert target.read_bytes() == b"UNNAMED"
+        session.command("w ~/existing.txt")  # Same backing file needs no confirmation.
+        assert b"exists - save?" not in screen(session)
+        session.quit()
+
+
+def save_as_changed_target(binary, folder):
+    source = folder / "source.txt"
+    source.write_bytes(b"SOURCE")
+    target = folder / "target.txt"
+    target.write_bytes(b"OLD")
+    with Session(binary, folder, "-r", source.name) as session:
+        for change in ("edit", "replace", "remove"):
+            target.write_bytes(b"OLD")
+            session.command("w target.txt")
+            assert b"exists - save?" in screen(session)
+            if change == "edit":
+                target.write_bytes(b"EXTERNAL")
+            elif change == "replace":
+                replacement = folder / "replacement.txt"
+                replacement.write_bytes(b"OLD")
+                replacement.replace(target)
+            else:
+                target.unlink()
+            session.send("y")
+            assert b"since confirmation" in screen(session), screen(session)
+            assert (not target.exists()) if change == "remove" else target.read_bytes() == (b"EXTERNAL" if change == "edit" else b"OLD")
+            assert source.read_bytes() == b"SOURCE"
+        first = folder / "first.txt"
+        second = folder / "second.txt"
+        first.write_bytes(b"FIRST")
+        second.write_bytes(b"SECOND")
+        link = folder / "link.txt"
+        link.symlink_to(first.name)
+        session.command("w link.txt")
+        link.unlink()
+        link.symlink_to(second.name)
+        session.send("Y")
+        assert b"since confirmation" in screen(session)
+        assert first.read_bytes() == b"FIRST" and second.read_bytes() == b"SECOND"
+        session.command("w link.txt")
+        session.send("y")
+        assert link.is_symlink() and second.read_bytes() == b"SOURCE"
+        alias = folder / "alias.txt"
+        alias.symlink_to(link.name)
+        session.command("w alias.txt")
+        assert b"exists - save?" not in screen(session), "same inode prompted"
+        session.quit()
+
+
+def save_as_changed_source(binary, folder):
+    source = folder / "source.txt"
+    target = folder / "target.txt"
+    source.write_bytes(b"SOURCE")
+    target.write_bytes(b"OLD")
+    with Session(binary, folder, "-r", source.name) as session:
+        session.command("w target.txt")
+        source.write_bytes(b"EXTERNAL")
+        session.drain(1.2)
+        assert b"exists - save?" in screen(session), "external reload hid confirmation"
+        session.send("Y")
+        assert b"Buffer changed since confirmation" in screen(session), screen(session)
+        assert target.read_bytes() == b"OLD"
+        session.quit()
+
+
+def save_as_quit(binary, folder):
+    target = folder / "existing.txt"
+    target.write_bytes(b"OLD")
+    with Session(binary, folder, "-r") as session:
+        session.send("NEW")
+        session.command("wq")
+        session.send("existing.txt\r")
+        assert b"exists - save?" in screen(session)
+        session.send("N")
+        assert session.process.poll() is None and target.read_bytes() == b"OLD"
+        session.command("wq")
+        session.send("existing.txt\r")
+        session.send("Y")
+        session.wait()
+        assert target.read_bytes() == b"NEW"
+
+
 def symlinks_and_save_as(binary, folder):
     target = folder / "target.txt"
     target.write_bytes(b"target")
@@ -2265,7 +2396,7 @@ def main():
     allowed = {"libc.so.6", "libm.so.6", "libgcc_s.so.1", "linux-vdso.so.1"}
     unexpected = {name for name in names if name not in allowed and not Path(name).name.startswith("ld-linux-")}
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
-    checks = [backspace_modes, backspace_insert, recording_cancel, delete_lines, normal_delete, repeat_recording, repeat_failure, new_buffer, exit_input_cleanup, pane_controls, pane_ctrl_w, pane_file_picker, file_picker, file_picker_stale_and_cancel, cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
+    checks = [save_as_confirmation, save_as_changed_target, save_as_changed_source, save_as_quit, backspace_modes, backspace_insert, recording_cancel, delete_lines, normal_delete, repeat_recording, repeat_failure, new_buffer, exit_input_cleanup, pane_controls, pane_ctrl_w, pane_file_picker, file_picker, file_picker_stale_and_cancel, cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
               search_replace_and_buffers, search_origins, slash_replacement, confirmation_recovery, byte_paths_and_checkpoint_failures,
               second_instance, crash_and_signals, undo_caret, word_delete, buffer_picker, buffer_picker_close_selected, buffer_picker_preview, buffer_picker_recovery, buffer_picker_unicode_bytes, enhanced_key_actions, keyboard_diagnostics, hjkl_and_line_selection, leader_overlay, control_hjkl, duplicate_selection, command_completion, live_completion_filter, file_completion, home_paths, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
     selected = [check for check in checks if args.filter in check.__name__]

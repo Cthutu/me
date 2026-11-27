@@ -477,8 +477,6 @@ pending-command clarification; selected d remains immediate.
 
 ### Agreed bug follow-ups — pending
 
-- Existing save-as targets: consistent home-relative/relative paths and a
-  `File <file> exists - save? (Y/N)` confirmation.
 - Persist completed macros across restarts and record `:` commands for playback;
   quitting must discard the draft and preserve the previous macro.
 
@@ -512,3 +510,24 @@ pending-command clarification; selected d remains immediate.
   Formatting is idempotent; type checking, Python compilation and diff checks
   passed. Required commit/push and installation follow, with installed Backspace
   checked afterwards.
+
+
+### T13 — Confirm existing save-as targets — done
+
+- :w/:ww to a different existing target show File <file> exists - save? (Y/N).
+- Resolve home-relative/relative/absolute paths consistently. Y saves and
+  reassociates; N/Escape preserve target and buffer path. Same-inode aliases use
+  ordinary save/conflict rules; :w! remains explicit force.
+- Revalidate source revision and approved target identity, metadata and bytes.
+  Keep confirmation input isolated and resume :wq only after successful approval.
+- Verified 181 native tests and six debug plus six release terminal groups,
+  including relative/home/absolute paths, spaces, completion, cancellation,
+  reassociation, same-inode aliases, symlink retargeting, target/source changes and
+  :wq continuation. Type checking, idempotent formatting, Python compilation and
+  diff checks passed. Required commit/push and installation follow, with an
+  installed confirmation check afterwards.
+
+### T14 — Refuse :q with unsaved changes — queued after T13
+
+- :q must not exit when any buffer has unsaved changes.
+- :wq saves and quits; :q! explicitly discards unsaved work.

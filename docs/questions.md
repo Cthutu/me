@@ -506,3 +506,15 @@ Normal it only removes an existing selection, otherwise doing nothing. Legacy
 word deletion in Insert and selection-only deletion in Normal. All forms preserve
 the current interaction state. Existing Tab-space grouping remains an Insert
 policy. This supersedes the old legacy-0x08 word-delete interpretation.
+
+
+## Existing save-as targets — settled
+
+:w/:ww to a different existing target prompt for Y/N; Escape also cancels. Resolve
+home-relative, relative and absolute paths consistently, treat same-inode aliases
+as ordinary saves and reassociate only after successful writing. Revalidate the
+approved target before overwriting. :w! remains the explicit force command.
+
+Next agreed correction: :q must refuse when any buffer has unsaved changes;
+:wq saves and quits, and :q! explicitly discards. This supersedes ordinary :q's
+earlier continuation-based permission to quit with dirty buffers.
