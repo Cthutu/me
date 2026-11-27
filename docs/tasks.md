@@ -449,7 +449,7 @@ pending-command clarification; selected d remains immediate.
   Python compilation and diff checks passed. Required commit/push and installation
   follow, with installed deletion checks afterwards.
 
-### T9 — Modes M1: foundation and Markdown — future milestone, queued
+### T9 — Modes M1: foundation and Markdown — active design
 
 - Introduce customisable systems based on recognised file type.
 - Modes determine LSP, formatting, syntax highlighting, indentation and related
@@ -458,8 +458,12 @@ pending-command clarification; selected d remains immediate.
 - Add LF/CRLF and recognised file type to the status line.
 - Agree recognition/customisation interfaces, concrete providers and lifecycle,
   the initial Markdown checklist and status edge cases before implementation.
-- This is agreed future work; it is not bundled into the current dd change.
-  Later modes milestones remain unscoped. See design §35 and questions.
+- Matt selected T9 after T15. Scope/interface decisions are in progress before
+  implementation; the remaining macro follow-ups stay queued.
+- Design §35 now contains a proposed delivery breakdown and acceptance checks.
+  Customisation storage, initial provider execution and status labels have been
+  put to Matt; proposals are not requirements until agreed.
+- Later modes milestones remain unscoped. See design §35 and questions.
 
 
 ### T10 — Cancel unfinished recordings — done

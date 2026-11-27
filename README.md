@@ -536,10 +536,11 @@ and [standard-library candidates](docs/standard-library-candidates.md).
 [its own licence](LICENSE-UNICODE.txt).
 
 
-Future agreed milestone: **Modes M1 — foundation and Markdown**. File-type modes
+Active milestone T9: **Modes M1 — foundation and Markdown**, currently settling
+interfaces and first-delivery scope before implementation. File-type modes
 will determine LSP, formatting, syntax highlighting, indentation and related
 behaviour, with customisable provider choices. The first milestone includes the
 mode foundation, Markdown support and status-line LF/CRLF/recognised file-type
-information. See [design §35](docs/design.md#35-future-file-type-mode-milestones--agreed-direction)
+information. See [design §35](docs/design.md#35-file-type-modes-m1-t9--active-design)
 and [agreed tasks](docs/tasks.md); concrete providers and feature details remain
 open before implementation.

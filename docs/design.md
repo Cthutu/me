@@ -1598,7 +1598,7 @@ A bare d with an existing selection deletes it immediately; an explicit numeric
 prefix starts counted dd even with a selection, using the active caret's line.
 
 
-## 35. Future file-type mode milestones — agreed direction
+## 35. File-type modes M1 (T9) — active design
 
 Add customisable file-type modes. A mode determines the LSP service, formatter,
 syntax highlighting, indentation and related file-type behaviour. These are
@@ -1607,8 +1607,8 @@ to use only the term facet is superseded for this system, while the relationship
 with view facets remains a design question.
 
 The first milestone in this programme is **Modes M1: foundation and Markdown**.
-This is a new future milestone; it does not rename the completed historical MS1
-editor foundation or the delivered MS2 work.
+Matt has selected this milestone after T15. It does not rename the completed
+historical MS1 editor foundation or the delivered MS2 work.
 
 Agreed scope:
 
@@ -1625,5 +1625,66 @@ recognition precedence and overrides, mode/facet ownership, provider lifecycle
 and concrete providers, the Markdown feature/verification checklist, and status
 behaviour for mixed/no line endings or unknown file types. These are open choices,
 not implied implementation promises. Later modes milestones are not yet scoped.
-This request records future work; it does not implement status or mode services
-inside T8's deletion change.
+Originally recorded as future work alongside T8, T9 is now the active milestone.
+The remaining macro-persistence and command-playback fixes remain queued.
+
+### Proposed implementation boundaries — awaiting agreement
+
+- A buffer owns its resolved file-type mode and content-derived analysis. Split
+  views share that work. A view owns presentation and interaction state; a mode
+  does not replace Normal/Insert or turn a popup into a facet. Workspace services
+  own the registry/configuration and any shared provider processes. This follows
+  the existing shared-analysis principle; the concrete interfaces remain proposed.
+- Propose recognition precedence: explicit buffer override, project rules, user
+  rules, built-in filename rules, then Plain Text. Start built-ins with Markdown
+  extensions (.md and .markdown, case-insensitive); content sniffing and shebangs
+  can be added through the same interface later. Exact override commands and
+  configuration schema need agreement before implementation.
+- Recompute automatic recognition after opening, restoration and successful
+  save-as. A manual override should remain explicit rather than being replaced
+  silently by a filename change. Failed/cancelled saves must not change the mode.
+- Keep document text/history and file-type services independent. Mode detection,
+  highlighting and status rendering must not edit the file. Cache syntax and
+  line-ending analysis by buffer revision; do not rescan a whole file per pane
+  on every terminal paint. Keep per-pane selection/search/caret layers legible.
+- Propose a configuration data model for recognition rules, indentation policy,
+  syntax styles, LSP command/arguments and formatter command/arguments. The open
+  question is whether M1 executes external providers or initially stores their
+  selection/configuration. No concrete provider has been chosen. Provider
+  execution would need cancellation, document/version tracking, bounded messages
+  and non-blocking IO; the existing blocking std.process runner is insufficient
+  for the terminal event loop. Do not introduce direct libc or external libraries.
+- If JSON is selected, implement a bounded local reader using Nerd facilities;
+  no JSON module was found in the current standard-library inventory. Record any
+  implemented library candidate locally rather than extending Nerd automatically.
+  Proposed paths are ~/.config/me/config.json and optional .me.json in the startup
+  folder, loaded at startup. Project/global precedence and error behaviour need
+  agreement; malformed configuration must produce a useful diagnostic.
+
+### Proposed Markdown checklist — awaiting agreement
+
+- Recognise Markdown and show the recognised type in each pane's status bar.
+- Source highlighting: headings, list/quote markers, fenced and inline code,
+  emphasis and links. Preserve source text and navigation; rendering/concealment,
+  previews, folding and embedded-language services are separate future choices.
+- Mode-specific indentation policy and configurable width, retaining plain-text
+  defaults. Whether Enter continues a list or copies indentation needs an explicit
+  choice; the existing editor default is no automatic indentation.
+- Propose status labels LF, CRLF, MIXED and NONE from actual buffer contents, and
+  Plain Text for unrecognised files. Mixed line endings remain byte-for-byte
+  preserved; labels do not silently select a conversion or alter Enter's existing
+  local/majority line-ending policy. Narrow panes retain error/modified indicators.
+- Verify new/opened/restored/renamed buffers, split views, malformed configuration,
+  overrides, unknown file types, LF/CRLF/mixed/empty files, Unicode, edits/undo,
+  horizontal scrolling and tiny terminal sizes. Provider execution, if selected,
+  needs deterministic fake-process tests for failure, cancellation and stale data.
+
+### Proposed delivery sequence — awaiting agreement
+
+1. Mode definitions, recognition/configuration and line-ending/type status.
+2. Shared Markdown syntax analysis and presentation.
+3. Markdown indentation behaviour and configuration.
+4. Provider configuration or working formatter/LSP integration, as agreed.
+
+These steps organise T9; they are not additional accepted tasks or a reduction of
+its agreed scope. Resolve the open choices before committing to implementation.

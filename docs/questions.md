@@ -473,18 +473,24 @@ Settled: d immediately deletes an existing selection; without a selection it
 waits for a second d. dd deletes a line, and a prefix such as 3dd deletes three.
 Design §34 records cancellation, line endings, clipboard and count policies.
 
-## Future file-type modes: first milestone foundation and Markdown
+## Active T9: file-type modes foundation and Markdown
 
 Matt explicitly requested modes that determine LSP, formatting, syntax
 highlighting, indentation and related behaviour, with file-type customisation.
 The first future modes milestone covers the foundation and Markdown support,
 including status LF/CRLF and recognised file type. See design §35.
 
-Open before implementation: recognition and override precedence; customisation
-format/storage; mode and facet ownership; provider/service lifecycle and concrete
-LSP/formatter/highlighter choices; the initial Markdown feature checklist; status
-representation for mixed/no line endings and unknown file types. Further modes
-milestones remain unscoped.
+T9 is now active after T15. Design §35 records an explicitly proposed ownership,
+recognition, configuration and delivery breakdown. Open before implementation:
+recognition/override precedence, mode/facet ownership, configuration schema and
+loading, provider lifecycle/execution, the Markdown feature checklist and its
+indentation behaviour. Further modes milestones remain unscoped.
+
+Questions put to Matt: built-in Markdown plus provider configuration versus working
+external LSP/formatting in M1; global JSON with optional project overrides versus
+another configuration policy; and actual LF/CRLF/MIXED/NONE plus Plain Text status
+labels versus preferred-insertion-ending labels. Answers are pending; the defaults
+shown in the questions are proposals, not accepted requirements.
 
 
 ## Recording follow-ups — agreed

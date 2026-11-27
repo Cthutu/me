@@ -818,3 +818,26 @@ checkpoint failures, non-persisting sessions, overwrite confirmation and :wq.
 Type checking, idempotent formatting, Python compilation and diff checks passed.
 Required commit/push and installation follow, with installed recovery and
 confirmation checked afterwards.
+
+
+## T9 activated: file-type modes foundation and Markdown
+
+Matt moved T9 to the current priority after the snapshot-based :q restoration.
+The remaining macro-persistence and command-playback fixes stay queued. No mode
+implementation is claimed yet: design §35 requires agreement on the interfaces
+and provider/Markdown checklist first.
+
+Inspected current status rendering, document/revision ownership, indentation,
+line-ending selection, process/discovery facilities and standard-library inventory.
+Prepared an explicitly proposed design covering buffer-owned analysis shared by
+panes, registry/configuration, recognition/save-as updates, Markdown support,
+status labels, provider lifecycle and verification. Configuration storage, initial
+provider execution and status choices have been put to Matt. All unresolved
+choices remain labelled as proposals. Existing source and installed behaviour are
+unchanged; this is an activation/design update.
+
+
+Activation verification: documentation changes only. Checked the updated README
+section link and diff formatting; application sources and tests are unchanged.
+No runtime tests were needed for this design update. Required commit/push and
+release installation follow. T9 remains active with design choices pending.
