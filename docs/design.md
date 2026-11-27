@@ -587,9 +587,13 @@ external API names, protocol identifiers, and literal compatibility requirements
   at the `:` prompt).
 - These commands provide the save/discard/cancel workflow rather than requiring
   a separate Save/Discard/Cancel dialogue.
-- With continuation (see section 15), ordinary quitting preserves unsaved work
-  for restoration rather than requiring a save/discard prompt. `:q!` remains an
-  explicit way to remove every unsaved buffer, including recovered work.
+- :q refuses to quit if any workspace buffer has unsaved changes, including
+  hidden, unnamed and missing-file buffers. Show which buffer needs attention
+  and point to :wq for saving or :q! for explicit discard. An untouched empty
+  unnamed buffer is clean. Continuation does not bypass this check.
+- Attempting :q cancels an unfinished macro even when unsaved work blocks exit.
+  Clean :q still checkpoints; checkpoint failures leave ME open. Handled-signal
+  shutdown retains checkpoint-based recovery for unsaved work.
 - `:w` and Ctrl+S save the active document.
 - `:wq` saves all modified documents, then quits only if every required save
   succeeds. Obtain filenames for unnamed documents; cancellation or any save
@@ -708,14 +712,16 @@ to contribute it later without implementing it for MS1.
 
 ME should support continuation, similar to Sublime Text:
 
-- Users can quit with unsaved documents and retrieve them on the next startup.
+- Checkpoints recover unsaved documents after crashes or handled-signal shutdown.
+  Interactive :q requires every buffer to be saved.
 - Store unsaved content privately in the user's configuration area, not in the
   document's original file. Include unnamed documents.
 - Restore layout and associated editor state.
 - Associate continuation state with the folder ME was started in. Starting in a
   different folder gets that folder's independent/default setup, not another
   folder's session. A previously visited folder can restore its own session.
-- Ordinary quit should preserve work rather than force the user to save/discard.
+- Interactive :q requires save/discard through :wq/:q! when buffers are dirty;
+  continuation remains recovery support, not permission to bypass that choice.
 - `:q!` removes every buffer with unsaved work entirely and quits, including
   recovered, unnamed, modified file-backed and missing-file buffers. It never
   deletes or reverts backing files. Saved unchanged buffers survive.
@@ -729,7 +735,8 @@ ME should support continuation, similar to Sublime Text:
   guarantees remain to be specified. Do not synchronously write each keystroke.
 - Continuation is part of **MS1**, not a deferred feature.
 
-This supersedes the earlier proposed conventional `:q` refusal on unsaved work.
+T14 supersedes the earlier continuation-based :q permission: unsaved work now
+blocks interactive :q.
 Continuation does not write unsaved content into original files and does not
 weaken the no-unexpected-file-changes rule.
 
@@ -1052,7 +1059,7 @@ navigation assigns `l` to right movement and moves line selection to `q`.
   recreate the file; saving must not incorrectly no-op merely because the user
   has not edited the retained content.
 - A document whose backing file was deleted follows new/unsaved-document
-  continuation rules: normal quit retains its in-memory content for recovery,
+  continuation rules: checkpoints retain its in-memory content for recovery,
   even if the user made no text edits. Preserve its known path and missing-file
   status, and do not silently recreate the file on quit or restoration.
 - Missing-file buffers count as unsaved work: `:q!` removes them entirely,

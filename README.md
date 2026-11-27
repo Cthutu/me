@@ -379,7 +379,7 @@ capability reporting, not detection of every terminal-specific protocol.
 | `:w!` | Force writing including conflict overwrite |
 | `:w filename` | Write and reassociate; confirm an existing different target with Y/N |
 | `:wq` | Save all modified documents and quit only on success |
-| `:q` | Quit, checkpointing unsaved/unnamed work and undo history |
+| `:q` | Quit only when every buffer is saved; checkpoint layout and undo history |
 | `:q!` | Remove every unsaved buffer, including recovered work, and quit |
 | `:buffers` | List retained workspace documents |
 | `:buffer N` | Focus a retained document's view in the single pane |
@@ -466,8 +466,11 @@ Continuation lives in `~/.config/me/<folder-hash>/`, keyed by the startup folder
 and verified against its full path. Checkpoints include document content/history,
 paths, view positions/scroll/preferred columns and active surface. Startup
 normalises interaction state as above; prompts are not resumed. Typing is debounced by 400 ms, with an attempted
-maximum two-second interval during continuous edits; normal quit checkpoints
-synchronously. Prompts, messages, search and clipboard are transient.
+maximum two-second interval during continuous edits. `:q` refuses any unsaved
+buffer, including hidden and unnamed buffers; use `:wq` to save everything or
+`:q!` to discard. A clean quit checkpoints synchronously. Handled signals still
+checkpoint unsaved work for recovery. Prompts, messages, search and clipboard are
+transient.
 
 Snapshots now use format **v3**, retaining v2 undo/redo caret hints and adding
 validated buffer access order. Existing v1/v2 snapshots are imported without

@@ -60,8 +60,13 @@ class Session:
         self.normal()
         return self.send(":" + command + "\r", 0.18)
 
-    def quit(self, command="q"):
-        self.command(command)
+    def quit(self, command=None):
+        # Fixture teardown preserves unsaved continuation using the supported
+        # signal path. Interactive :q refusal/exit is tested explicitly.
+        if command is None:
+            os.kill(self.process.pid, signal.SIGTERM)
+        else:
+            self.command(command)
         self.wait()
 
     def wait(self):
@@ -218,6 +223,48 @@ def cli_files(binary, folder):
     rejected = subprocess.run([str(binary), first.name, "--unknown", second.name],
                               cwd=folder, capture_output=True)
     assert rejected.returncode == 2 and b"[filename ...]" in rejected.stderr
+
+
+def quit_unsaved(binary, folder):
+    source = folder / "source.txt"
+    source.write_bytes(b"SOURCE")
+    clean = folder / "clean.txt"
+    clean.write_bytes(b"CLEAN")
+    with Session(binary, folder, "-r", source.name) as session:
+        session.send("iEDIT")
+        session.command("q")
+        assert session.process.poll() is None and b"Unsaved changes" in screen(session)
+        assert source.read_bytes() == b"SOURCE"
+        session.command("e clean.txt")
+        session.send(" wh")
+        session.command("q")
+        assert session.process.poll() is None and b"buffer 1" in screen(session)
+        session.command("wq")
+        session.wait()
+        assert source.read_bytes() == b"EDITSOURCE" and clean.read_bytes() == b"CLEAN"
+    with Session(binary, folder, "-r") as session:
+        session.send("UNNAMED")
+        session.command("q")
+        assert session.process.poll() is None and b"Unsaved changes" in screen(session)
+        session.command("wq")
+        assert b":w " in screen(session)
+        session.send("named.txt\r")
+        session.wait()
+        assert (folder / "named.txt").read_bytes() == b"UNNAMED"
+    with Session(binary, folder, "-r", source.name) as session:
+        session.send("iDISCARD")
+        session.quit("q!")
+        assert source.read_bytes() == b"EDITSOURCE"
+    with Session(binary, folder, "-r", source.name) as session:
+        source.unlink()
+        session.drain(0.8)
+        session.command("q")
+        assert session.process.poll() is None and b"Unsaved changes" in screen(session)
+        session.quit("q!")
+    with Session(binary, folder, "-r", clean.name) as session:
+        session.quit("q")
+    with Session(binary, folder, "-r") as session:
+        session.quit("q")  # Untouched empty unnamed buffer is clean.
 
 
 def recovery(binary, folder):
@@ -784,7 +831,7 @@ def second_instance(binary, folder):
             second.send("other")
             second.command("q")
             assert second.process.poll() is None, "non-persisting instance discarded unsaved work"
-            assert b"Cannot quit safely" in second.output
+            assert b"Unsaved changes" in screen(second), screen(second)
             second.quit("q!")
         snapshot = next((folder / "home/.config/me").glob("*/snapshot"))
         data = snapshot.read_bytes()
@@ -2182,7 +2229,13 @@ def recording_cancel(binary, folder):
     for command in ("q", "q!", "wq"):
         with Session(binary, folder, "-r", source.name) as session:
             session.send("[iDRAFT")
-            session.quit(command)
+            if command == "q":
+                session.command("q")
+                assert session.process.poll() is None and b"Unsaved changes" in screen(session)
+                assert b" REC" not in screen(session)
+                session.quit("q!")
+            else:
+                session.quit(command)
     with Session(binary, folder, "-r", source.name) as session:
         session.send("[iSIGNAL")
         os.kill(session.process.pid, signal.SIGTERM)
@@ -2396,7 +2449,7 @@ def main():
     allowed = {"libc.so.6", "libm.so.6", "libgcc_s.so.1", "linux-vdso.so.1"}
     unexpected = {name for name in names if name not in allowed and not Path(name).name.startswith("ld-linux-")}
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
-    checks = [save_as_confirmation, save_as_changed_target, save_as_changed_source, save_as_quit, backspace_modes, backspace_insert, recording_cancel, delete_lines, normal_delete, repeat_recording, repeat_failure, new_buffer, exit_input_cleanup, pane_controls, pane_ctrl_w, pane_file_picker, file_picker, file_picker_stale_and_cancel, cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
+    checks = [quit_unsaved, save_as_confirmation, save_as_changed_target, save_as_changed_source, save_as_quit, backspace_modes, backspace_insert, recording_cancel, delete_lines, normal_delete, repeat_recording, repeat_failure, new_buffer, exit_input_cleanup, pane_controls, pane_ctrl_w, pane_file_picker, file_picker, file_picker_stale_and_cancel, cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
               search_replace_and_buffers, search_origins, slash_replacement, confirmation_recovery, byte_paths_and_checkpoint_failures,
               second_instance, crash_and_signals, undo_caret, word_delete, buffer_picker, buffer_picker_close_selected, buffer_picker_preview, buffer_picker_recovery, buffer_picker_unicode_bytes, enhanced_key_actions, keyboard_diagnostics, hjkl_and_line_selection, leader_overlay, control_hjkl, duplicate_selection, command_completion, live_completion_filter, file_completion, home_paths, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
     selected = [check for check in checks if args.filter in check.__name__]

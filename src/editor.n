@@ -766,6 +766,10 @@ impl Editor {
             return
         }
         on command == "q" => {
+            self.cancel_recording()
+            for id, entry in self.workspace.documents {
+                on entry.modified() => return scratch.pr($"Unsaved changes in buffer {id + 1}; use :wq to save or :q! to discard")!
+            }
             self.quit_safely(scratch)?
             return
         }
@@ -4159,6 +4163,66 @@ test "Ctrl G cancels drafts in either mode and quitting preserves the previous r
 
         _error! => {
             assert no
+        }
+    }
+}
+
+test {
+
+    exercise_quit_guard :: fn () -> void\string {
+        scratch : arena
+        defer scratch.done()
+        editor : Editor
+        editor.workspace.lock_fd = -1
+        defer editor.release()
+        assert make_directory(^scratch, "_tmp")
+        snapshot := scratch.pr($"_tmp/quit-guard-{syscall(SYS_GETPID, 0, 0, 0, 0, 0, 0)}")
+        own(^editor.workspace.folder, "/quit-guard")
+        own(^editor.workspace.session_path, snapshot)
+        editor.workspace.persistent = yes
+        defer {
+            _ := syscall(SYS_UNLINK,
+                         snapshot.c_string().as(usize).as(u64),
+                         0,
+                         0,
+                         0,
+                         0,
+                         0)
+        }
+        editor.workspace.add_empty()
+        editor.execute(^scratch, Command.InsertText("draft"))?
+        -- Continuation being available must not bypass interactive refusal.
+        for _ in [0 .. 2] {
+            editor.prompt_open(':'.as(u32), initial = "q")
+            on editor.command_line(^scratch) {
+                _success => {
+                    assert no
+                }
+
+                error! => {
+                    assert error[..15] == "Unsaved changes"
+                }
+            }
+            assert !editor.quit && editor.workspace.documents[0].text.text() == "draft"
+            editor.workspace.add_empty()
+        }
+        editor.prompt_open(':'.as(u32), initial = "q!")
+        editor.command_line(^scratch)?
+        assert editor.quit
+        for entry in editor.workspace.documents {
+            assert !entry.modified()
+        }
+    }
+
+}
+
+test "interactive q refuses dirty hidden buffers even with working continuation" {
+    on exercise_quit_guard() {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
         }
     }
 }

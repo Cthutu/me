@@ -527,7 +527,13 @@ pending-command clarification; selected d remains immediate.
   diff checks passed. Required commit/push and installation follow, with an
   installed confirmation check afterwards.
 
-### T14 — Refuse :q with unsaved changes — queued after T13
+### T14 — Refuse :q with unsaved changes — done
 
 - :q must not exit when any buffer has unsaved changes.
 - :wq saves and quits; :q! explicitly discards unsaved work.
+- Keep handled-signal checkpoint recovery. Refused :q still cancels an unfinished
+  recording while preserving its previous completed macro.
+- Verified 182 native tests (70 ME + 112 imported), all 55 debug terminal groups
+  across initial/resumed runs, and four focused release groups. Type checking,
+  idempotent formatting, Python compilation and diff checks passed. Required
+  commit/push and installation follow, with installed quit checks afterwards.
