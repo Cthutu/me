@@ -1,8 +1,11 @@
+use buffer
 use characters
 use document
 use editor
 use key_diagnostics
 use leader_menu
+use markdown
+use modes
 use native
 use os.linux
 use panes
@@ -74,6 +77,19 @@ MENU_EDGE    :: 0x597a9c.as(Colour)
 MENU_KEY     :: 0xa8dbef.as(Colour)
 MENU_CAP     :: 0x344d69.as(Colour)
 GUTTER_INK   :: 0xd6b35a.as(Colour)
+
+syntax_ink :: fn (style: SyntaxStyle) -> Colour {
+    return on style {
+        Text      => INK
+        Heading   => 0x82b9f0.as(Colour)
+        Marker    => 0xd6b35a.as(Colour)
+        Code      => 0xa9cd91.as(Colour)
+        Emphasis  => 0xd6a2dd.as(Colour)
+        Strong    => 0xf0bd82.as(Colour)
+        Link      => 0x73c8ce.as(Colour)
+        Rule      => MUTED
+    }
+}
 
 message_rows :: fn (text: string, width: usize) -> [..]string {
     rows   : [..]string
@@ -618,8 +634,11 @@ impl Terminal {
 
             else => on inserting { yes => INSERT_PAPER else => NORMAL_PAPER }
         }
-        entry      := ^editor.workspace.documents[text_view.document_id]
-        doc        := ^entry.text
+        entry    := ^editor.workspace.documents[text_view.document_id]
+        doc      := ^entry.text
+        markdown := entry.file_mode() == FileMode.Markdown
+
+        on markdown => entry.syntax.ensure(doc.text(), doc.storage.revision())
         caret_line := doc.line_at(view.selection.active)
 
         rows := on height > 1 {
@@ -727,7 +746,10 @@ impl Terminal {
 
                 on cells == 0 => cells = 1
                 paper := base_paper
-                ink   := INK
+                ink := on markdown {
+                    yes   => syntax_ink(entry.syntax.style_at(position))
+                    else  => INK
+                }
 
                 on active &&
                     editor.highlights &&
@@ -825,7 +847,23 @@ impl Terminal {
             status    := self.scratch.pr($"{recording}{persistence}{conflict}{missing}{modified} │ {caret_line + 1}:{display_column(doc.text(), doc.line_start(caret_line), view.selection.active) + 1}{count} │ {text_view.document_id + 1}/{editor.workspace.documents.count} │ {path}")
 
             self.text(0, status_y, badge, PAPER, caret_paper, width)
-            on width > badge_width => self.text(badge_width, status_y, status, INK, status_paper, width - badge_width)
+            status_width := on width > badge_width {
+                yes   => width - badge_width
+                else  => 0
+            }
+            on width >= 72 => {
+                details       := self.scratch.pr($"│ {mode_label(entry.file_mode())} {doc.ending_label()} ")
+                details_width := display_column(details, 0, details.count)
+
+                status_width -= details_width
+                self.text(width - details_width,
+                          status_y,
+                          details,
+                          INK,
+                          status_paper,
+                          details_width)
+            }
+            on status_width > 0 => self.text(badge_width, status_y, status, INK, status_paper, status_width)
         }
         self.width = self.canvas_width
         self.height = saved_height
@@ -1443,4 +1481,112 @@ test "pane rendering offsets Unicode glyphs, shows only the active caret and sur
     terminal.paint(80, 24)
     assert terminal.cells[11 * 80].rune == '─'.as(u32)
     assert terminal.cells[12 * 80 + 3].rune == 'a'.as(u32)
+}
+
+test "Markdown panes share revision analysis while retaining caret and narrow status presentation" {
+    terminal : Terminal
+    terminal.signal_fd = -1
+    terminal.editor.workspace.lock_fd = -1
+    defer terminal.release()
+    terminal.editor.workspace.add_empty()
+    entry := terminal.editor.workspace.active_document()
+    own(^entry.path, "/notes.md")
+    on entry.text.load("""
+    # heading
+    *emphasis*
+    ```
+    code
+    ```
+    """) {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    terminal.editor.workspace.active_view().interaction
+                             .place(^entry.text, entry.text.text().count, no)
+    terminal.paint(80, 12)
+    assert terminal.cells[3].ink == syntax_ink(SyntaxStyle.Heading)
+    assert terminal.cells[80 + 3].ink == syntax_ink(SyntaxStyle.Emphasis)
+    assert terminal.cells[3 * 80 + 3].ink == syntax_ink(SyntaxStyle.Code)
+    assert entry.syntax.ready && entry.syntax.revision == entry.text.storage.revision()
+    assert terminal.editor.indent_width() == 2
+    own(^terminal.editor.last_search, "heading")
+    terminal.editor.highlights = yes
+    terminal.paint(80, 12)
+    assert terminal.cells[5].paper == MATCH && terminal.cells[5].ink == syntax_ink(SyntaxStyle.Heading)
+    interaction := ^terminal.editor.workspace.active_view().interaction
+    interaction.state = Interaction.Normal
+    interaction.selection.anchor = 0
+    interaction.selection.active = 2
+    terminal.paint(80, 12)
+    assert terminal.cells[3].paper == SELECT && terminal.cells[3].ink == syntax_ink(SyntaxStyle.Heading)
+    assert terminal.cells[5].paper == NORMAL_CARET && terminal.cells[5].ink == PAPER
+    interaction.place(^entry.text, entry.text.text().count, no)
+    terminal.editor.highlights = no
+    revision := entry.syntax.revision
+    gap      := entry.text.storage.gap_start
+
+    on terminal.editor.workspace.split_pane(SplitAxis.Rows) {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    terminal.paint(80, 24)
+    assert entry.syntax.revision == revision && entry.text.storage.gap_start == gap
+    assert terminal.cells[3].ink == syntax_ink(SyntaxStyle.Heading)
+    assert terminal.cells[12 * 80 + 3].ink == syntax_ink(SyntaxStyle.Heading)
+    on entry.text.edit({ start: 0 end: 2 }, "") {
+        change => {
+            for mounted in terminal.editor.workspace.views {
+                mounted.interaction.selection.adjust(change)
+            }
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    terminal.paint(80, 24)
+    assert entry.syntax.revision != revision && terminal.cells[3].ink == INK
+    on entry.text.undo_edit() {
+        change => {
+            for mounted in terminal.editor.workspace.views {
+                mounted.interaction.selection.adjust(change)
+            }
+        }
+
+        else => {
+            assert no
+        }
+    }
+    terminal.paint(80, 24)
+    assert terminal.cells[3].ink == syntax_ink(SyntaxStyle.Heading)
+    for width in [1.as(usize), 8, 40, 71, 72, 80] {
+        terminal.paint(width^, 8)
+    }
+    own(^entry.path, "/notes.txt")
+    terminal.paint(80, 24)
+    assert terminal.cells[3].ink == INK && terminal.editor.indent_width() == 4
+    own(^entry.path, "/notes.md")
+    on entry.text.load("# a long heading whose source remains highlighted when "
+    +"the caret scrolls horizontally to the far right") {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    for mounted in terminal.editor.workspace.views {
+        mounted.interaction.place(^entry.text, entry.text.text().count, no)
+    }
+    terminal.paint(80, 24)
+    assert terminal.editor.workspace.active_view().interaction.horizontal > 0
+    assert terminal.cells[12 * 80 + 3].ink == syntax_ink(SyntaxStyle.Heading)
 }

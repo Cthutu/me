@@ -1598,7 +1598,7 @@ A bare d with an existing selection deletes it immediately; an explicit numeric
 prefix starts counted dd even with a selection, using the active caret's line.
 
 
-## 35. File-type modes M1 (T9) — active design
+## 35. File-type modes M1 (T9) — in progress
 
 Add customisable file-type modes. A mode determines the LSP service, formatter,
 syntax highlighting, indentation and related file-type behaviour. These are
@@ -1620,13 +1620,46 @@ Agreed scope:
 - Extra status information, including LF/CRLF line endings and recognised file
   type, while retaining the editor's existing status information.
 
-Before implementation, settle customisation/storage interfaces, file-type
-recognition precedence and overrides, mode/facet ownership, provider lifecycle
-and concrete providers, the Markdown feature/verification checklist, and status
-behaviour for mixed/no line endings or unknown file types. These are open choices,
-not implied implementation promises. Later modes milestones are not yet scoped.
+Matt subsequently requested implementation of Markdown support. The built-in
+delivery below uses the stated defaults; customisation/storage interfaces,
+recognition overrides and provider lifecycle/concrete providers remain open.
+Later modes milestones are not yet scoped.
 Originally recorded as future work alongside T8, T9 is now the active milestone.
 The remaining macro-persistence and command-playback fixes remain queued.
+
+### Built-in Markdown delivery
+
+- `src/modes.n` defines file-type recognition, labels and indentation defaults,
+  independently of Normal/Insert. The final filename extension selects Markdown
+  for `.md`/`.markdown`, case-insensitively; unnamed/unknown files use Plain Text.
+  Recognition derives from the buffer path, so open, restore and successful
+  save-as take effect immediately. Failed/cancelled saves retain the prior mode.
+- Each document entry owns one revision-keyed Markdown syntax cache, reused by
+  all panes. Line-ending counts are derived during the existing document index
+  refresh. Neither analysis mutates text/history or moves the storage gap.
+  Syntax currently rebuilds the whole file after an edit; incremental analysis
+  and large-file scalability are not claimed.
+- Highlight visible source headings (ATX/setext), quote/list markers, thematic
+  rules, fenced/indented/inline code, emphasis/strong emphasis and links/images.
+  Fences retain state across lines and recognise delimiter size and quote depth.
+  Unterminated/malformed syntax remains readable. Inline lookahead has a work
+  budget to bound adversarial delimiter scans. Styles are built-in colours;
+  search/selection/caret layers retain their existing priority.
+- This is a lightweight source lexer, not a CommonMark parser. Nested container
+  indentation, nested emphasis/link labels and embedded-language syntax are
+  simplified. There is no concealment, preview, folding or list continuation.
+- Markdown's fallback indentation is two spaces, Plain Text's is four; existing
+  indentation detection (at least two useful samples) still takes precedence.
+  Enter retains the current no-autoindent and local/majority ending behaviour.
+- At pane width >=72, reserve status space for the file type and actual ending
+  label: LF, CRLF, MIXED or NONE. NONE means no LF/CRLF separators; lone CR bytes
+  keep existing non-separator semantics. Counts/labels never convert contents.
+  Narrow panes keep the existing status priorities and hide this added detail.
+- Configuration files/schema, manual overrides, provider commands and external
+  LSP/formatting remain open T9 work. No external provider is installed or run.
+
+The following broader configuration/provider proposals remain undecided; items
+already delivered above describe current built-in behaviour.
 
 ### Proposed implementation boundaries — awaiting agreement
 
@@ -1661,7 +1694,7 @@ The remaining macro-persistence and command-playback fixes remain queued.
   folder, loaded at startup. Project/global precedence and error behaviour need
   agreement; malformed configuration must produce a useful diagnostic.
 
-### Proposed Markdown checklist — awaiting agreement
+### Broader Markdown/configuration checklist — remaining proposals
 
 - Recognise Markdown and show the recognised type in each pane's status bar.
 - Source highlighting: headings, list/quote markers, fenced and inline code,
@@ -1687,4 +1720,4 @@ The remaining macro-persistence and command-playback fixes remain queued.
 4. Provider configuration or working formatter/LSP integration, as agreed.
 
 These steps organise T9; they are not additional accepted tasks or a reduction of
-its agreed scope. Resolve the open choices before committing to implementation.
+its agreed scope. Resolve the remaining configuration/provider choices before implementing them.

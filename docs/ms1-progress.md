@@ -841,3 +841,49 @@ Activation verification: documentation changes only. Checked the updated README
 section link and diff formatting; application sources and tests are unchanged.
 No runtime tests were needed for this design update. Required commit/push and
 release installation follow. T9 remains active with design choices pending.
+
+
+## T9 first delivery: built-in Markdown support
+
+Matt requested Markdown implementation. Added `src/modes.n` for file-type labels,
+case-insensitive final-extension recognition (.md/.markdown) and indentation
+fallbacks. Other/unnamed files remain Plain Text. Recognition derives from the
+buffer path, including restored and successfully renamed buffers; failed or
+cancelled save-as retains the association and mode.
+
+`src/markdown.n` analyses source into sorted byte ranges for headings, quote/list
+markers, rules, code, emphasis and links/images. Fence state crosses lines,
+retaining delimiter size/type and quote depth. Inline lookahead is bounded.
+This is a lightweight source highlighter, with simplified nested containers and
+nested inline constructs, rather than full CommonMark parsing. It never rewrites
+or hides text and does not parse embedded languages. Each document entry owns one
+revision-keyed analysis shared by its panes. Edits currently rebuild the whole
+source; unchanged paints reuse it. Selection/search/caret colours keep priority.
+
+Document refresh counts LF and CRLF alongside its existing line index. Per-pane
+status adds the recognised type and LF/CRLF/MIXED/NONE at width >=72; narrower
+panes prioritise existing information/warnings. Derived data is not serialised,
+so no snapshot-format migration is needed. Existing Enter ending selection is
+retained and can now use the counts without rescanning. Lone CR remains a byte,
+not a line separator. Markdown's indentation fallback is two spaces, Plain Text's
+four, with the existing detection heuristic retaining precedence. Enter keeps its
+current behaviour without automatic indentation or list continuation.
+
+T9 remains active: custom configuration/schema, recognition overrides and
+LSP/formatter providers are still open. No external provider was installed.
+The sole agreed-task PanelCraft panel tracks this partial milestone delivery.
+
+Native coverage includes recognition with raw path bytes, Unicode/CRLF range
+boundaries, block/inline syntax, malformed/adversarial delimiters, fence/quote
+state, edits/undo, line-ending labels, shared panes, selection/search/caret
+priority, horizontal scrolling and narrow layouts. Three new PTY scenarios cover
+real rendering, unchanged file bytes, shared editing/undo, snapshot restoration,
+save-as success/failure/cancellation and indentation detection/fallbacks.
+
+Verification: all 187 native tests (75 ME + 112 imported), all 57 debug terminal
+groups and nine focused release groups passed. Final Markdown debug/release
+checks passed after adding tab-indented code recognition; the final CRLF lexer
+fixture also passed all three lexer tests. Type checking, idempotent formatting,
+Python compilation, UTF-8 source validation and diff checks passed. Required
+commit/push and release installation follow, with installed Markdown checks
+and release-binary identity checked afterwards.

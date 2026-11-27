@@ -2,6 +2,8 @@ use buffer
 use codec
 use document
 use keyboard
+use markdown
+use modes
 use native
 use os.linux
 use panes
@@ -24,14 +26,20 @@ pub DocumentEntry :: plex {
     conflict    bool
     stamp       ?Stat
     candidate   ?Stat
+    syntax      MarkdownSyntax
 }
 
 impl DocumentEntry {
 
     pub release :: fn (self: ^Self) {
         self.text.release()
+        self.syntax.release()
         self.path.free()
         self.disk.free()
+    }
+
+    pub file_mode :: fn (self: ^Self) -> FileMode {
+        return recognise_mode(bytes_text(self.path))
     }
 
     pub modified :: fn (self: ^Self) -> bool {
@@ -49,13 +57,7 @@ impl DocumentEntry {
                 else  => "\n"
             }
         }
-        crlf : usize = 0
-        for index, byte in doc.content {
-            on byte^ == '\n' &&
-                index > 0 &&
-                doc.content[index - 1] == '\r' => crlf += 1
-        }
-        return on crlf * 2 > doc.lines.count - 1 { yes => "\r\n" else => "\n" }
+        return on doc.crlf_count > doc.lf_count { yes => "\r\n" else => "\n" }
     }
 
 }

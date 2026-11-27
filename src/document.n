@@ -14,11 +14,13 @@ pub EditRecord :: plex {
 -- rebuilt on mutation, never on navigation or repaint. Incremental indexing is
 -- an optimisation still required before claiming large-file performance.
 pub Document :: plex {
-    storage GapBuffer
-    content [..]u8
-    lines   [..]usize
-    history [..]EditRecord
-    applied usize
+    storage    GapBuffer
+    content    [..]u8
+    lines      [..]usize
+    history    [..]EditRecord
+    applied    usize
+    lf_count   usize
+    crlf_count usize
 }
 
 pub DocumentEdits :: trait {
@@ -55,6 +57,8 @@ impl Document {
             _error! => abort("Internal error: document projection range")
         }
         self.lines.clear()
+        self.lf_count = 0
+        self.crlf_count = 0
         -- A UTF-8 BOM is preserved in storage/history but is not editable
         -- line content. All ordinary view commands begin after the preamble.
         preamble : usize = 0
@@ -64,7 +68,13 @@ impl Document {
             self.content[2] == 0xbf => preamble = 3
         self.lines.push(preamble)
         for index, byte in self.content {
-            on byte^ == '\n' => self.lines.push(index + 1)
+            on byte^ == '\n' => {
+                self.lines.push(index + 1)
+                on index > 0 && self.content[index - 1] == '\r' {
+                    yes   => self.crlf_count += 1
+                    else  => self.lf_count += 1
+                }
+            }
         }
     }
 
@@ -77,6 +87,15 @@ impl Document {
         self.history.clear()
         self.applied = 0
         self.refresh()
+    }
+
+    pub ending_label :: fn (self: ^Self) -> string {
+        return on {
+            self.lf_count > 0 && self.crlf_count > 0  => "MIXED"
+            self.crlf_count > 0                       => "CRLF"
+            self.lf_count > 0                         => "LF"
+            else                                      => "NONE"
+        }
     }
 
     pub line_at :: fn (self: ^Self, position: usize) -> usize {
@@ -398,4 +417,55 @@ test "compound history preserves UTF-8 boundaries BOM CRLF and a navigation-only
             assert no
         }
     }
+}
+
+test "line-ending status derives from actual bytes through edits, undo and redo" {
+    doc : Document
+    defer doc.release()
+    assert doc.ending_label() == "NONE"
+    on doc.load("﻿one\r\ntwo\nlast\r") {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    assert doc.ending_label() == "MIXED" && doc.lf_count == 1 && doc.crlf_count == 1
+    revision := doc.storage.revision()
+    gap      := doc.storage.gap_start
+    _        := doc.ending_label()
+
+    assert doc.storage.revision() == revision && doc.storage.gap_start == gap
+    on doc.edit({ start: 6 end: 7 }, "") {
+        _change => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    assert doc.ending_label() == "LF" && doc.lf_count == 2
+    _ := doc.undo_edit()
+    assert doc.ending_label() == "MIXED"
+    _ := doc.redo_edit()
+    assert doc.ending_label() == "LF"
+    on doc.load("\r\n\r\n") {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    assert doc.ending_label() == "CRLF"
+    on doc.load("only\r") {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    assert doc.ending_label() == "NONE"
 }

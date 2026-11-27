@@ -6,6 +6,7 @@ use file_picker
 use key_diagnostics
 use keyboard
 use leader_menu
+use modes
 use native
 use os.linux
 use panes
@@ -956,7 +957,7 @@ impl Editor {
             samples += 1
         }
         return on samples >= 2 && width >= 2 && width <= 8 {
-            yes => width else => 4
+            yes => width else => default_indent(self.workspace.active_document().file_mode())
         }
     }
     pub duplicate :: fn (self: ^Self, scratch: ^arena) -> void\EditError {

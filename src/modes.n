@@ -1,0 +1,60 @@
+-- File-type modes are independent of Normal/Insert interaction states.
+pub FileMode :: enum {
+    PlainText
+    Markdown
+}
+
+pub recognise_mode :: fn (path: string) -> FileMode {
+    start : usize = 0
+    dot           := path.count
+
+    for index, byte in path {
+        on byte^ == '/' => {
+            start = index + 1
+            dot   = path.count
+        }
+        on byte^ == '.' => dot = index
+    }
+    on dot < start || dot == path.count => return FileMode.PlainText
+    suffix := path[dot..]
+    for expected in [".md", ".markdown"] {
+        on suffix.count != expected.count => again
+        matches := yes
+        for index, byte in suffix {
+            lower := byte^
+            on lower >= 'A' && lower <= 'Z' => lower += 32
+            on lower != expected^[index] => matches = no
+        }
+        on matches => return FileMode.Markdown
+    }
+    return FileMode.PlainText
+}
+
+pub mode_label :: fn (mode: FileMode) -> string {
+    return on mode { Markdown => "Markdown" PlainText => "Plain Text" }
+}
+
+pub default_indent :: fn (mode: FileMode) -> usize {
+    return on mode { Markdown => 2 PlainText => 4 }
+}
+
+test "file-type recognition uses the final extension and preserves path bytes" {
+    for path in ["notes.md", "/a.b/README.MD", ".md", "draft.MarkDown"] {
+        assert recognise_mode(path^) == FileMode.Markdown
+    }
+    raw : [7]u8 = ['r', 'a', 'w', 0xff, '.', 'm', 'd']
+    assert recognise_mode(raw[..].as(string)) == FileMode.Markdown
+    for path in [
+    "",
+    "notes.txt",
+    "/notes.md/file",
+    "x.md.bak",
+    "x.mdown",
+    "x.m"
+        +"d ",
+] {
+        assert recognise_mode(path^) == FileMode.PlainText
+    }
+    assert default_indent(FileMode.Markdown) == 2
+    assert default_indent(FileMode.PlainText) == 4
+}

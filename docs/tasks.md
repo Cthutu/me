@@ -449,21 +449,30 @@ pending-command clarification; selected d remains immediate.
   Python compilation and diff checks passed. Required commit/push and installation
   follow, with installed deletion checks afterwards.
 
-### T9 — Modes M1: foundation and Markdown — active design
+### T9 — Modes M1: foundation and Markdown — in progress
 
 - Introduce customisable systems based on recognised file type.
 - Modes determine LSP, formatting, syntax highlighting, indentation and related
   file-type behaviour and provider choices.
 - First modes milestone: foundations plus Markdown support as the first mode.
 - Add LF/CRLF and recognised file type to the status line.
-- Agree recognition/customisation interfaces, concrete providers and lifecycle,
-  the initial Markdown checklist and status edge cases before implementation.
-- Matt selected T9 after T15. Scope/interface decisions are in progress before
-  implementation; the remaining macro follow-ups stay queued.
-- Design §35 now contains a proposed delivery breakdown and acceptance checks.
-  Customisation storage, initial provider execution and status labels have been
-  put to Matt; proposals are not requirements until agreed.
-- Later modes milestones remain unscoped. See design §35 and questions.
+- Matt requested implementation of Markdown support after activating T9.
+- Built-in delivery: case-insensitive .md/.markdown recognition, buffer-owned
+  revision-cached source highlighting shared by panes, actual LF/CRLF/MIXED/NONE
+  status, Plain Text fallback and two-space Markdown indentation fallback.
+  Existing indentation detection and Enter behaviour remain in use.
+- Successful save-as and restoration rederive mode; failed/cancelled saves retain
+  it. Narrow panes prioritise existing status and warnings over added metadata.
+- Configuration/schema, overrides and LSP/formatter providers remain open T9 work;
+  this delivery does not complete the whole customisable modes milestone.
+- Later modes milestones remain unscoped; macro follow-ups stay queued.
+  See design §35 and questions.
+- Built-in delivery verified with 187 native tests, all 57 debug terminal groups
+  and nine focused release groups, plus final Markdown/lexer regression checks.
+  Type checking, idempotent formatting, Python compilation and diff checks passed.
+  Required commit/push and release installation follow; detailed evidence is in
+  ms1-progress.
+
 
 
 ### T10 — Cancel unfinished recordings — done

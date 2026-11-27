@@ -536,11 +536,21 @@ and [standard-library candidates](docs/standard-library-candidates.md).
 [its own licence](LICENSE-UNICODE.txt).
 
 
-Active milestone T9: **Modes M1 — foundation and Markdown**, currently settling
-interfaces and first-delivery scope before implementation. File-type modes
-will determine LSP, formatting, syntax highlighting, indentation and related
-behaviour, with customisable provider choices. The first milestone includes the
-mode foundation, Markdown support and status-line LF/CRLF/recognised file-type
-information. See [design §35](docs/design.md#35-file-type-modes-m1-t9--active-design)
-and [agreed tasks](docs/tasks.md); concrete providers and feature details remain
-open before implementation.
+Active milestone T9: **Modes M1 — foundation and Markdown**. Built-in Markdown
+recognition uses `.md` and `.markdown` (case-insensitive). Source highlighting
+covers headings, list/quote markers, rules, fenced/indented/inline code, emphasis
+and links, without hiding or changing text. Split panes share syntax analysis.
+Markdown uses a two-space indentation fallback; existing indentation detection
+still takes precedence. Enter keeps its existing behaviour.
+
+At 72 columns or wider, each pane's status includes the recognised file type and
+actual `LF`, `CRLF`, `MIXED` or `NONE` line endings; unknown/unnamed files use
+`Plain Text`. Narrow panes prioritise existing status and warnings. Recognition
+updates after successful save-as and snapshot restoration.
+
+This is the built-in Markdown delivery within T9. Customisation, recognition
+overrides, LSP and formatter configuration/execution remain open milestone work.
+The highlighter is a lightweight source lexer, without embedded-language parsing
+or complete CommonMark container/nested-emphasis handling. See
+[design §35](docs/design.md#35-file-type-modes-m1-t9--in-progress) and
+[agreed tasks](docs/tasks.md).

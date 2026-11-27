@@ -1,0 +1,482 @@
+-- Source highlighting only: byte ranges never rewrite or conceal Markdown.
+pub SyntaxStyle :: enum {
+    Text
+    Heading
+    Marker
+    Code
+    Emphasis
+    Strong
+    Link
+    Rule
+}
+
+pub SyntaxSpan :: plex {
+    start usize
+    end   usize
+    style SyntaxStyle
+}
+
+space :: fn (byte: u8) => byte == ' ' || byte == '\t' || byte == '\r'
+
+word_byte :: fn (byte: u8) => byte >= 128 || (byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z') || (byte >= '0' && byte <= '9') || byte == '_'
+
+run_end :: fn (text: string, start: usize, end: usize) -> usize {
+    offset := start
+    for offset < end && text[offset] == text[start] {
+        offset += 1
+    }
+    return offset
+}
+
+-- An entire line of a repeated marker, allowing spaces between markers.
+marker_line :: fn (text    : string,
+                   start   : usize,
+                   end     : usize,
+                   marker  : u8,
+                   minimum : usize) -> bool {
+    count : usize = 0
+    for byte in text[start..end] {
+        on byte^ == marker {
+            yes => count += 1
+
+            else => {
+                on !space(byte^) => return no
+            }
+        }
+    }
+    return count >= minimum
+}
+
+underline_line :: fn (text: string, start: usize, end: usize) -> bool {
+    on start == end || (text[start] != '=' && text[start] != '-') => return no
+    after := run_end(text, start, end)
+    for byte in text[after..end] {
+        on !space(byte^) => return no
+    }
+    return yes
+}
+
+-- One cache per buffer. Its monotonic storage revision identifies the source;
+-- panes borrow the resulting ranges without owning or duplicating analysis.
+-- Rebuild the whole source after an edit; unchanged paints reuse the ranges.
+pub MarkdownSyntax :: plex {
+    ready    bool
+    revision u64
+    spans    [..]SyntaxSpan
+}
+
+impl MarkdownSyntax {
+
+    pub release :: fn (self: ^Self) {
+        self.spans.free()
+    }
+
+    add :: fn (self: ^Self, start: usize, end: usize, style: SyntaxStyle) {
+        on end > start => self.spans.push(SyntaxSpan { start end style })
+    }
+
+    inline :: fn (self: ^Self, text: string, start: usize, end: usize) {
+        position := start
+        budget   := (end - start) * 4 + 64
+
+        for position < end {
+            byte := text[position]
+            on byte == '\\' &&
+                position + 1 < end &&
+                text[position + 1] < 128 => {
+                position += 2
+                again
+            }
+            on byte == '`' ||
+                byte == '*' ||
+                byte == '_' => {
+                after := run_end(text, position, end)
+                size  := after - position
+
+                on byte != '`' &&
+                    (size > 3 || after == end || space(text[after]) || (byte == '_' && position > start && word_byte(text[position - 1]))) => {
+                    position = after
+                    again
+                }
+                closing := after
+                found   := no
+
+                for closing < end {
+                    on budget == 0 => return
+                    budget -= 1
+                    on byte != '`' &&
+                        text[closing] == '\\' &&
+                        closing + 1 < end => {
+                        closing += 2
+                        again
+                    }
+                    on text[closing] == byte {
+                        yes => {
+                            finish := run_end(text, closing, end)
+                            on finish - closing == size &&
+                                closing > after &&
+                                (byte == '`' || (!space(text[closing - 1]) && (byte != '_' || finish == end || !word_byte(text[finish])))) => {
+                                style := on byte == '`' {
+                                    yes => SyntaxStyle.Code
+
+                                    else => on size >= 2 {
+                                        yes   => SyntaxStyle.Strong
+                                        else  => SyntaxStyle.Emphasis
+                                    }
+                                }
+                                self.add(position, finish, style)
+                                position = finish
+                                found    = yes
+                                break
+                            }
+                            closing = finish
+                        }
+
+                        else => closing += 1
+                    }
+                }
+                on !found => {
+                    -- Nothing else can close this run on the line. Avoid
+                    -- repeatedly rescanning unmatched delimiter runs.
+                    position = after
+                }
+                again
+            }
+            on byte == '[' ||
+                (byte == '!' && position + 1 < end && text[position + 1] == '[') => {
+                bracket := position
+                on byte == '!' => bracket += 1
+                closing := bracket + 1
+                for closing < end && text[closing] != ']' {
+                    on budget == 0 => return
+                    budget -= 1
+                    on text[closing] == '\\' &&
+                        closing + 1 < end => closing += 1
+                    closing += 1
+                }
+                on closing + 1 < end &&
+                    (text[closing + 1] == '(' || text[closing + 1] == '[') => {
+                    opener         := text[closing + 1]
+                    closer         := on opener == '(' { yes => ')'.as(u8) else => ']'.as(u8) }
+                    finish         := closing + 2
+                    depth  : usize = 1
+
+                    for finish < end && depth > 0 {
+                        on budget == 0 => return
+                        budget -= 1
+                        on text[finish] == '\\' && finish + 1 < end {
+                            yes => finish += 2
+
+                            else => {
+                                on text[finish] == opener => depth += 1
+                                on text[finish] == closer => depth -= 1
+                                finish += 1
+                            }
+                        }
+                    }
+                    on depth == 0 => {
+                        self.add(position, finish, SyntaxStyle.Link)
+                        position = finish
+                        again
+                    }
+                }
+            }
+            position += 1
+        }
+    }
+
+    pub ensure :: fn (self: ^Self, text: string, revision: u64) {
+        on self.ready && self.revision == revision => return
+        self.spans.clear()
+        self.ready = yes
+        self.revision = revision
+        start : usize = 0
+        on text.count >= 3 &&
+            text[0] == 0xef &&
+            text[1] == 0xbb &&
+            text[2] == 0xbf => start = 3
+        fence          : u8    = 0
+        fence_size     : usize = 0
+        fence_quotes   : usize = 0
+        previous_start         := start
+        previous_end           := start
+
+        for start < text.count {
+            end := start
+            for end < text.count && text[end] != '\n' {
+                end += 1
+            }
+            content_end := end
+            on content_end > start &&
+                text[content_end - 1] == '\r' => content_end -= 1
+            cursor         := start
+            indent : usize = 0
+
+            for cursor < content_end &&
+                (text[cursor] == ' ' ||
+                    text[cursor] == '\t') {
+                indent += on text[cursor] == '\t' { yes => 4 - indent % 4 else => 1 }
+                cursor += 1
+            }
+            on fence != 0 {
+                yes => {
+                    quotes : usize = 0
+                    for cursor < content_end && text[cursor] == '>' {
+                        quotes += 1
+                        cursor += 1
+                        for cursor < content_end &&
+                            space(text[cursor]) {
+                            cursor += 1
+                        }
+                    }
+                    on quotes < fence_quotes => {
+                        fence        = 0
+                        previous_end = previous_start
+                        again
+                    }
+                    self.add(start, content_end, SyntaxStyle.Code)
+                    on indent <= 3 &&
+                        quotes == fence_quotes &&
+                        cursor < content_end &&
+                        text[cursor] == fence => {
+                        after := run_end(text, cursor, content_end)
+                        clean := yes
+
+                        for byte in text[after..content_end] {
+                            on !space(byte^) => clean = no
+                        }
+                        on after - cursor >= fence_size && clean => fence = 0
+                    }
+                    previous_end = previous_start
+                }
+
+                else => {
+                    on indent > 3 => {
+                        self.add(start, content_end, SyntaxStyle.Code)
+                        previous_end = previous_start
+                        start        = end
+                        on start < text.count => start += 1
+                        again
+                    }
+                    quote_depth : usize = 0
+                    -- Quote/list markers stay separate from inline source.
+                    for cursor < content_end && text[cursor] == '>' {
+                        self.add(cursor, cursor + 1, SyntaxStyle.Marker)
+                        quote_depth += 1
+                        cursor      += 1
+                        for cursor < content_end &&
+                            space(text[cursor]) {
+                            cursor += 1
+                        }
+                    }
+                    opened := no
+                    on indent <= 3 &&
+                        cursor < content_end &&
+                        (text[cursor] == '`' || text[cursor] == '~') => {
+                        after := run_end(text, cursor, content_end)
+                        valid := after - cursor >= 3
+
+                        on text[cursor] == '`' => {
+                            for byte in text[after..content_end] {
+                                on byte^ == '`' => valid = no
+                            }
+                        }
+                        on valid => {
+                            fence        = text[cursor]
+                            fence_size   = after - cursor
+                            fence_quotes = quote_depth
+                            self.add(cursor, content_end, SyntaxStyle.Code)
+                            opened = yes
+                        }
+                    }
+                    on !opened {
+                        yes => {
+                            heading_end := cursor
+                            for heading_end < content_end &&
+                                text[heading_end] == '#' {
+                                heading_end += 1
+                            }
+                            heading   := indent <= 3 && heading_end > cursor && heading_end - cursor <= 6 && (heading_end == content_end || space(text[heading_end]))
+                            underline := indent <= 3 && previous_end > previous_start && underline_line(text, cursor, content_end)
+                            rule      := indent <= 3 && (marker_line(text, cursor, content_end, '*'.as(u8), 3) || marker_line(text, cursor, content_end, '-'.as(u8), 3) || marker_line(text, cursor, content_end, '_'.as(u8), 3))
+
+                            on {
+                                heading => self.add(cursor, content_end, SyntaxStyle.Heading)
+                                underline => {
+                                    for self.spans.count > 0 &&
+                                        self.spans[self.spans.count - 1].start >= previous_start {
+                                        _ := self.spans.pop()
+                                    }
+                                    self.add(previous_start,
+                                             previous_end,
+                                             SyntaxStyle.Heading)
+                                    self.add(cursor,
+                                             content_end,
+                                             SyntaxStyle.Marker)
+                                }
+                                rule => self.add(cursor, content_end, SyntaxStyle.Rule)
+                                else => {
+                                    marker_end := cursor
+                                    on cursor < content_end && (text[cursor] == '-' || text[cursor] == '+' || text[cursor] == '*') {
+                                        yes => marker_end = cursor + 1
+
+                                        else => {
+                                            for marker_end < content_end &&
+                                                text[marker_end] >= '0' &&
+                                                text[marker_end] <= '9' {
+                                                marker_end += 1
+                                            }
+                                            on marker_end > cursor && marker_end - cursor <= 9 && marker_end < content_end && (text[marker_end] == '.' || text[marker_end] == ')') {
+                                                yes   => marker_end += 1
+                                                else  => marker_end = cursor
+                                            }
+                                        }
+                                    }
+                                    on marker_end > cursor &&
+                                        (marker_end == content_end || space(text[marker_end])) => {
+                                        self.add(cursor,
+                                                 marker_end,
+                                                 SyntaxStyle.Marker)
+                                        cursor = marker_end
+                                    }
+                                    self.inline(text, cursor, content_end)
+                                }
+                            }
+                            previous_start = start
+                            previous_end   = on cursor == content_end || heading || underline || rule { yes => start else => content_end }
+                        }
+
+                        else => previous_end = previous_start
+                    }
+                }
+            }
+            start = end
+            on start < text.count => start += 1
+        }
+    }
+
+    pub style_at :: fn (self: ^Self, position: usize) -> SyntaxStyle {
+        lower : usize = 0
+        upper         := self.spans.count
+
+        for lower < upper {
+            middle := lower + (upper - lower) / 2
+            on self.spans[middle].end <= position {
+                yes   => lower = middle + 1
+                else  => upper = middle
+            }
+        }
+        on lower < self.spans.count &&
+            self.spans[lower].start <= position => return self.spans[lower].style
+        return SyntaxStyle.Text
+    }
+
+}
+
+test {
+
+    syntax_position :: fn (text: string, needle: string) -> usize {
+        for position in [0.as(usize) .. text.count] {
+            on position + needle.count <= text.count &&
+                text[position..position + needle.count] == needle => return position
+        }
+        abort("Missing syntax test sample")
+    }
+
+    assert_syntax_ranges :: fn (syntax: ^MarkdownSyntax, text: string) {
+        end : usize = 0
+        for span in syntax.spans {
+            assert span.start >= end && span.end > span.start && span.end <= text.count
+            assert text[span.start] < 128 || text[span.start] >= 192
+            assert span.end == text.count || text[span.end] < 128 || text[span.end] >= 192
+            end = span.end
+        }
+    }
+
+}
+
+test "Markdown source ranges cover block and inline syntax without changing Unicode or CRLF" {
+    text                    := "﻿# Héading\r\nplain *émphasis* **strong** `界` [link](a(b)) ![image][ref]\r\n> - quote\r\n12. item\r\n\r\n---\r\n    indented\r\n"
+    syntax : MarkdownSyntax
+
+    defer syntax.release()
+    syntax.ensure(text, 1)
+    assert syntax.style_at(0) == SyntaxStyle.Text
+    assert syntax.style_at(3) == SyntaxStyle.Heading
+    assert syntax.style_at(syntax_position(text, "plain")) == SyntaxStyle.Text
+    assert syntax.style_at(syntax_position(text, "émphasis")) == SyntaxStyle.Emphasis
+    assert syntax.style_at(syntax_position(text, "strong")) == SyntaxStyle.Strong
+    assert syntax.style_at(syntax_position(text, "界")) == SyntaxStyle.Code
+    assert syntax.style_at(syntax_position(text, "link")) == SyntaxStyle.Link
+    assert syntax.style_at(syntax_position(text, "image")) == SyntaxStyle.Link
+    assert syntax.style_at(syntax_position(text, ">")) == SyntaxStyle.Marker
+    assert syntax.style_at(syntax_position(text, "- quote")) == SyntaxStyle.Marker
+    assert syntax.style_at(syntax_position(text, "12.")) == SyntaxStyle.Marker
+    assert syntax.style_at(syntax_position(text, "---")) == SyntaxStyle.Rule
+    assert syntax.style_at(syntax_position(text, "indented")) == SyntaxStyle.Code
+    assert syntax.style_at(text.count) == SyntaxStyle.Text
+    assert_syntax_ranges(^syntax, text)
+    syntax.ensure("\t# code\n  \tcode\n # heading", 2)
+    assert syntax.style_at(1) == SyntaxStyle.Code
+    assert syntax.style_at(10) == SyntaxStyle.Code
+    assert syntax.style_at(17) == SyntaxStyle.Heading
+}
+
+test "Markdown fence state crosses lines, respects delimiter size and quote boundaries, and refreshes on revision" {
+    text :=
+        """
+        ````nerd
+        # inside
+        ```
+        *still code*
+        ````
+        # outside
+        > ~~~
+        > code
+        # after quote
+        """
+    syntax : MarkdownSyntax
+    defer syntax.release()
+    syntax.ensure(text, 7)
+    assert syntax.style_at(syntax_position(text, "# inside")) == SyntaxStyle.Code
+    assert syntax.style_at(syntax_position(text, "*still")) == SyntaxStyle.Code
+    assert syntax.style_at(syntax_position(text, "# outside")) == SyntaxStyle.Heading
+    assert syntax.style_at(syntax_position(text, "> code")) == SyntaxStyle.Code
+    assert syntax.style_at(syntax_position(text, "# after")) == SyntaxStyle.Heading
+    assert_syntax_ranges(^syntax, text)
+    spans := syntax.spans.count
+    syntax.ensure(text, 7)
+    assert syntax.revision == 7 && syntax.spans.count == spans
+    syntax.ensure("""
+        # now heading
+        """, 8)
+    assert syntax.style_at(0) == SyntaxStyle.Heading && syntax.spans.count == 1
+    syntax.ensure(text, 9)
+    assert syntax.style_at(syntax_position(text, "# inside")) == SyntaxStyle.Code
+}
+
+test "Markdown setext headings and escaping leave malformed and intraword delimiters readable" {
+    text                    := "Title *here*\r\n===\r\n\r\n\\*escaped* snake_case_word [broken](target `unclosed ``valid``\r\n####### nope\r\n"
+    syntax : MarkdownSyntax
+
+    defer syntax.release()
+    syntax.ensure(text, 1)
+    assert syntax.style_at(0) == SyntaxStyle.Heading
+    assert syntax.style_at(syntax_position(text, "===")) == SyntaxStyle.Marker
+    assert syntax.style_at(syntax_position(text, "escaped")) == SyntaxStyle.Text
+    assert syntax.style_at(syntax_position(text, "case")) == SyntaxStyle.Text
+    assert syntax.style_at(syntax_position(text, "broken")) == SyntaxStyle.Text
+    assert syntax.style_at(syntax_position(text, "valid")) == SyntaxStyle.Code
+    assert syntax.style_at(syntax_position(text, "#######")) == SyntaxStyle.Text
+    assert_syntax_ranges(^syntax, text)
+    -- Repeated unmatched links must stay bounded and never produce bad ranges.
+    adversarial : [..]u8
+    defer adversarial.free()
+    for _index in [0 .. 4096] {
+        adversarial.push('['.as(u8))
+    }
+    syntax.ensure(adversarial[..].as(string), 2)
+    assert syntax.spans.count == 0
+    syntax.ensure("", 3)
+    assert syntax.spans.count == 0 && syntax.style_at(0) == SyntaxStyle.Text
+}

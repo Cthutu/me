@@ -480,17 +480,17 @@ highlighting, indentation and related behaviour, with file-type customisation.
 The first future modes milestone covers the foundation and Markdown support,
 including status LF/CRLF and recognised file type. See design §35.
 
-T9 is now active after T15. Design §35 records an explicitly proposed ownership,
-recognition, configuration and delivery breakdown. Open before implementation:
-recognition/override precedence, mode/facet ownership, configuration schema and
-loading, provider lifecycle/execution, the Markdown feature checklist and its
-indentation behaviour. Further modes milestones remain unscoped.
+T9 is active after T15. Matt subsequently requested Markdown implementation.
+The built-in delivery is recorded in design §35: `.md`/`.markdown` recognition,
+shared source highlighting, two-space Markdown fallback indentation and actual
+LF/CRLF/MIXED/NONE plus Plain Text status. Enter retains its existing behaviour.
+These stated defaults allow the first Markdown delivery to proceed.
 
-Questions put to Matt: built-in Markdown plus provider configuration versus working
-external LSP/formatting in M1; global JSON with optional project overrides versus
-another configuration policy; and actual LF/CRLF/MIXED/NONE plus Plain Text status
-labels versus preferred-insertion-ending labels. Answers are pending; the defaults
-shown in the questions are proposals, not accepted requirements.
+Configuration schema/loading, global/project precedence, manual overrides and
+provider lifecycle/execution remain open. Earlier questions about JSON storage
+and provider configuration versus working external LSP/formatting have not been
+answered. No concrete provider, configuration schema or installation is implied
+by this delivery. Further modes milestones remain unscoped.
 
 
 ## Recording follow-ups — agreed
