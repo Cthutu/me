@@ -527,13 +527,20 @@ pending-command clarification; selected d remains immediate.
   diff checks passed. Required commit/push and installation follow, with an
   installed confirmation check afterwards.
 
-### T14 — Refuse :q with unsaved changes — done
+### T14 — Refuse :q with unsaved changes — withdrawn
 
-- :q must not exit when any buffer has unsaved changes.
-- :wq saves and quits; :q! explicitly discards unsaved work.
-- Keep handled-signal checkpoint recovery. Refused :q still cancels an unfinished
-  recording while preserving its previous completed macro.
-- Verified 182 native tests (70 ME + 112 imported), all 55 debug terminal groups
-  across initial/resumed runs, and four focused release groups. Type checking,
-  idempotent formatting, Python compilation and diff checks passed. Required
-  commit/push and installation follow, with installed quit checks afterwards.
+Delivered in 14e9410, then withdrawn by Matt after recalling snapshot recovery.
+Ordinary :q should checkpoint unsaved work and quit, as it did before T14.
+
+### T15 — Restore snapshot-based :q — done
+
+- Restore ordinary :q checkpointing unsaved/unnamed work before exit.
+- Keep refusal on checkpoint failures and for unsafe non-persisting sessions.
+- Keep macro draft cancellation, :wq/:q! behaviour and T13's overwrite confirmation.
+
+- Verified 181 native tests and nine focused terminal groups on both debug and
+  release, including actual :q recovery, unnamed work, macro cancellation,
+  checkpoint failures, non-persisting sessions and overwrite confirmation.
+  Type checking, idempotent formatting, Python compilation and diff checks passed.
+  Required commit/push and installation follow, with installed recovery and
+  confirmation checked afterwards.

@@ -800,29 +800,21 @@ follow, with installed confirmation checked afterwards. T14's :q refusal follows
 as separately requested work.
 
 
-## Interactive :q refuses unsaved work (T14)
+## Restore snapshot-based :q (T15; T14 withdrawn)
 
-:q now checks every workspace document before exiting, including buffers hidden
-in other panes or absent from the focused view. Unsaved named/unnamed/missing-file
-buffers keep ME open with a buffer number and :wq/:q! guidance. Untouched empty
-unnamed buffers are clean. Attempting :q still cancels an unfinished recording
-and retains its previous completed recipe, including when the dirty-buffer check
-refuses exit. Clean quits retain checkpoint failure protection.
+Matt withdrew the unsaved-buffer quit refusal delivered in 14e9410 after recalling
+snapshot recovery. Restore the previous :q checkpoint-and-exit behaviour, including
+unsaved named/unnamed/hidden buffers. Checkpoint failures and unsafe non-persisting
+sessions still refuse exit. Macro draft cancellation and :wq/:q! semantics remain.
+T13's save-as overwrite confirmation is retained.
 
-:wq still saves all modified buffers before quitting, including filename and
-overwrite confirmation. :q! remains explicit discard. Handled signals retain
-checkpoint-based recovery of unsaved work; continuation availability no longer
-bypasses the interactive :q decision. Recovery-oriented terminal fixture teardown
-now uses the supported signal path, with actual :q refusal/exit tested explicitly.
+Restore the original interactive-q recovery tests and normal PTY teardown instead
+of T14's signal-based fixture teardown. Source, terminal tests, README and design
+match the pre-T14 save-as delivery (176716e); task records retain the withdrawal.
 
-Native regression uses working continuation and both active and hidden dirty
-buffers, ensuring the old checkpoint-and-exit behaviour would fail. Terminal
-coverage includes named/unnamed/hidden/missing buffers, other panes, clean exits,
-:wq, :q!, recording cancellation and continuation.
-
-Verification: 182 native tests (70 ME + 112 imported), all 55 debug terminal
-scenarios and four focused release groups passed. The debug run resumed after
-correcting a warning assertion to inspect rendered cells instead of incremental
-raw terminal output; the preceding 32 groups and remaining 23 all passed. Type
-checking, idempotent formatting, Python compilation and diff checks passed.
-Required commit/push and installation follow, with installed quit checks afterwards.
+Verification: 181 native tests and nine focused debug plus nine release terminal
+groups passed, covering snapshot recovery, unnamed work, macro cancellation,
+checkpoint failures, non-persisting sessions, overwrite confirmation and :wq.
+Type checking, idempotent formatting, Python compilation and diff checks passed.
+Required commit/push and installation follow, with installed recovery and
+confirmation checked afterwards.

@@ -66,8 +66,7 @@ new user agreements and remain open to hands-on feedback.
 - Preserve individual mixed line endings; infer a default for inserted endings.
 - Continuation stores unsaved/unnamed documents in the user's configuration area,
   restores layout/state, and is scoped by startup folder.
-- :q refuses unsaved work in any buffer; :wq saves and quits, while :q!
-  explicitly drops changes. Checkpoints/signals retain recovery support.
+- Ordinary quit preserves unsaved work; `:q!` explicitly drops changes.
 
 ## Next: continuation contract
 
@@ -224,8 +223,8 @@ Remaining:
   missing, and allows explicit save to recreate it.
 - Settled: external reload preserves matching undo history. Reappearance reloads
   unedited buffers and flags conflicts for edited ones.
-- Externally deleted documents follow new/unsaved continuation rules: checkpoints
-  preserve in-memory content, known path, and missing status without
+- Externally deleted documents follow new/unsaved continuation rules: normal
+  quit preserves in-memory content, known path, and missing status without
   recreating the original file. `:q!` removes missing-file buffers entirely,
   regardless of recovery origin.
 - Discuss detection latency, partial writes, and view-position mapping.
@@ -516,6 +515,7 @@ home-relative, relative and absolute paths consistently, treat same-inode aliase
 as ordinary saves and reassociate only after successful writing. Revalidate the
 approved target before overwriting. :w! remains the explicit force command.
 
-T14 correction: :q must refuse when any buffer has unsaved changes;
-:wq saves and quits, and :q! explicitly discards. This supersedes ordinary :q's
-earlier continuation-based permission to quit with dirty buffers.
+Matt withdrew T14's request to refuse :q with unsaved work after recalling
+snapshots. Restore ordinary :q checkpointing and quitting, including dirty buffers.
+Checkpoint failures and unsafe non-persisting sessions still refuse exit. :wq
+saves and quits; :q! explicitly discards. The overwrite confirmation remains.
