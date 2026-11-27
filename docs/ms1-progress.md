@@ -935,3 +935,69 @@ Markdown groups, recording/playback, panes, line deletion and recovery. Type
 checking, idempotent formatting, Python compilation, UTF-8 source validation and
 diff checks passed. Required commit/push and release installation follow, with
 all four installed Markdown scenarios and release-binary identity checked afterwards.
+
+## T16 first delivery: Nerd highlighting and live diagnostics
+
+Matt requested starting Nerd support after incremental Markdown. `.n` now selects
+Nerd with a four-space indentation fallback. `src/nerd_syntax.n` is a stateful
+source lexer with line checkpoints for strings, triple strings, packed integers
+and nested interpolation. It reuses optional edit observation and unchanged
+prefix/suffix convergence; panes share the buffer cache. Plain Text keeps no
+cache. This is lexical highlighting rather than semantic tokens or syntax trees.
+
+`src/nerd_lsp.n` starts the installed `nerd lsp` from PATH for named Nerd buffers,
+using a non-blocking syscall-only bidirectional child transport. It synchronises
+open/close/full-content changes, independently of syntax metadata. Protocol input,
+queues, JSON and diagnostics are bounded. `src/json.n` is a local strict UTF-8 JSON
+reader with checked escapes/surrogates and duplicate-key rejection; library
+candidates are documented separately.
+
+Installed Nerd publishes versionless diagnostics synchronously from a sequential
+message loop. A following documentSymbol request acknowledges each change batch;
+results are shown only if all open named Nerd path/identity/revision snapshots still match.
+Editing any dependency invalidates the displayed batch immediately. This barrier
+is deliberately Nerd-specific. Gutter markers and wide status E/W counts show
+current results; `:diagnostics` shows details with explicitly labelled UTF-16
+columns. `:lsp-restart` retries after crashes, malformed input or timeouts. Editing
+stays available. Ordinary teardown attempts shutdown/exit with bounded waiting,
+then kills/reaps unresponsive providers; parent death also terminates the child.
+
+Compiler priority interrupted implementation three times, each independently
+reproduced and fixed without ME workarounds:
+
+- `14495576`: permit mutable indexed targets in compound assignment. Regression
+  covers arrays, slices, pointers, dynamic arrays and arithmetic/bitwise/logical
+  updates, including C at -O0/-O2. Full Nerd gate: 77 passed, 0 failed, 2 skips.
+- `cdfd9182`: restrict box type-argument recognition to symbol references. A field
+  AST base index had been incorrectly read as an interned symbol handle, making
+  unrelated code changes turn array indexing into an unknown-type error. The
+  collision fixture fails on the old compiler and passes both backends. Full
+  Nerd gate: 77 passed, 0 failed, 2 skips.
+- `4b373877`: packed literals could confuse source-test discovery, body boundaries
+  and main replacement, silently omitting the JSON and lexer tests. Added command
+  regressions for quote/brace/comment/escaped literals, helper blocks and main
+  replacement. Full Nerd gate: 77 passed, 0 failed, 2 skips. The installed
+  one-test quote reproducer now passes, and ME inventory includes all 195 tests.
+
+The validated fixes are backed up on their feature branches and
+`agent/remove-linux-libc`, integrated into local Nerd `main`, and installed
+**directly from `~/nerd` on `remove-linux-libc` at `4b373877`**. The feature
+backups are `agent/agent/fix/indexed-compound`, `agent/agent/fix/address-inference`
+and `agent/agent/fix/test-packed-literals`. Remote Nerd `main` remains
+unchanged. Completed dedicated worktrees and local temporary branches are removed.
+
+Completion, hover, navigation, formatting and configurable provider/recognition
+policies remain subsequent T16/T9 work. No Markdown provider or configuration
+schema has been selected.
+
+Verification: all 195 native tests (83 ME + 112 imported), all 62 debug terminal
+scenario groups and eight focused release groups (Nerd and Markdown) passed.
+Native coverage includes full/incremental comparison through 200 deterministic
+Nerd edits with undo/redo, mode-cache switching, bounded JSON/framing, stale
+acknowledgements, reused revisions after reopening, and diagnostics without syntax
+metadata. Terminal checks cover the real installed server, fragmented/delayed
+responses, Unicode/escaped file URIs, crashes, malformed headers, restart, stopped
+provider teardown, shared panes, source fidelity, save-as and recovery. Type
+checking, idempotent formatting, Python compilation, UTF-8 and diff checks passed.
+The completed change is committed/pushed and installed at task completion;
+installed ME Nerd scenarios and release-binary identity are checked afterwards.

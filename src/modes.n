@@ -2,6 +2,7 @@
 pub FileMode :: enum {
     PlainText
     Markdown
+    Nerd
 }
 
 pub recognise_mode :: fn (path: string) -> FileMode {
@@ -17,6 +18,7 @@ pub recognise_mode :: fn (path: string) -> FileMode {
     }
     on dot < start || dot == path.count => return FileMode.PlainText
     suffix := path[dot..]
+    on suffix == ".n" => return FileMode.Nerd
     for expected in [".md", ".markdown"] {
         on suffix.count != expected.count => again
         matches := yes
@@ -31,17 +33,29 @@ pub recognise_mode :: fn (path: string) -> FileMode {
 }
 
 pub mode_label :: fn (mode: FileMode) -> string {
-    return on mode { Markdown => "Markdown" PlainText => "Plain Text" }
+    return on mode {
+        Markdown   => "Markdown"
+        PlainText  => "Plain Text"
+        Nerd       => "Nerd"
+    }
 }
 
 pub default_indent :: fn (mode: FileMode) -> usize {
-    return on mode { Markdown => 2 PlainText => 4 }
+    return on mode {
+        Markdown   => 2
+        PlainText  => 4
+        Nerd       => 4
+    }
 }
 
 test "file-type recognition uses the final extension and preserves path bytes" {
     for path in ["notes.md", "/a.b/README.MD", ".md", "draft.MarkDown"] {
         assert recognise_mode(path^) == FileMode.Markdown
     }
+    assert recognise_mode("main.n") == FileMode.Nerd
+    assert recognise_mode("main.N") == FileMode.PlainText
+    assert recognise_mode("main.n.bak") == FileMode.PlainText
+    assert default_indent(FileMode.Nerd) == 4
     raw : [7]u8 = ['r', 'a', 'w', 0xff, '.', 'm', 'd']
     assert recognise_mode(raw[..].as(string)) == FileMode.Markdown
     for path in [

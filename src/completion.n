@@ -20,11 +20,13 @@ pub PathCommand :: plex {
 COMMAND_NAMES :: [
     "buffer",
     "buffers",
+    "diagnostics",
     "e",
     "files",
     "keys",
     "kill",
     "kill!",
+    "lsp-restart",
     "q",
     "q!",
     "w",

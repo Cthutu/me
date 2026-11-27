@@ -495,8 +495,10 @@ by the first Markdown delivery.
 Settled follow-up: buffer-owned line metadata is entirely optional. Incremental
 Markdown highlighting is implemented. Afterwards begin LSP support with the Nerd
 mode (T16). Syntax trees and range-based services remain valid consumers without
-being forced into the line cache. Nerd-mode details, initial LSP interactions,
-configuration and provider lifecycle remain design questions. Other later modes
+being forced into the line cache. T16 now starts Nerd lexical highlighting and
+live diagnostics using the installed `nerd lsp`; first-delivery defaults are
+recorded in design §35. Configuration, completion, hover, navigation and formatting
+remain open. Other later modes
 milestones remain unscoped.
 
 

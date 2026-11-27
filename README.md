@@ -371,6 +371,8 @@ capability reporting, not detection of every terminal-specific protocol.
 
 | Command | Behaviour |
 | --- | --- |
+| `:diagnostics` | Show live Nerd diagnostics (UTF-16 columns) |
+| `:lsp-restart` | Restart the installed Nerd language server after failure |
 | `:keys` | Inspect keyboard protocol/capabilities and decoded key events; Escape closes |
 | `:files` | Discover/filter files below the startup folder and open a selection |
 | `:e path` | Open/create a file-backed buffer, or focus its existing buffer without discarding other work |
@@ -552,10 +554,17 @@ actual `LF`, `CRLF`, `MIXED` or `NONE` line endings; unknown/unnamed files use
 `Plain Text`. Narrow panes prioritise existing status and warnings. Recognition
 updates after successful save-as and snapshot restoration.
 
-This is the built-in Markdown delivery within T9. Customisation, recognition
-overrides, LSP and formatter configuration/execution remain open milestone work.
+Customisation, recognition overrides and formatter/provider configuration remain
+open milestone work.
 The highlighter is a lightweight source lexer, without embedded-language parsing
-or complete CommonMark container/nested-emphasis handling. Nerd mode and LSP
-support are agreed next, after incremental highlighting. See
+or complete CommonMark container/nested-emphasis handling.
+
+T16 adds `.n` Nerd mode with incremental stateful lexical highlighting and a
+four-space indentation fallback. Named Nerd buffers start the installed
+`nerd lsp` from PATH. Live diagnostics show gutter markers and E/W status counts;
+`:diagnostics` shows details, and `:lsp-restart` retries a failed provider. Editing
+invalidates stale results immediately. The terminal stays responsive while the
+provider runs or fails. Completion, hover, navigation and formatting are subsequent
+work. See
 [design §35](docs/design.md#35-file-type-modes-m1-t9--in-progress) and
 [agreed tasks](docs/tasks.md).

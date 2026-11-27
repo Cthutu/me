@@ -1,0 +1,1107 @@
+use buffer
+use document
+use json
+use modes
+use native
+use os.linux
+use std.text
+use std.time
+use workspace
+
+O_NONBLOCK :: 0x800  -- Linux descriptor flag absent from the imported API.
+
+MAX_MESSAGE :: 1048576
+MAX_QUEUE   :: 8388608
+
+append :: fn (bytes: ^[..]u8, text: string) {
+    start := bytes.count
+    bytes.resize_undefined_to(start + text.count)
+    bytes^[start..] = text.as([]u8)
+}
+
+consume :: fn (bytes: ^[..]u8, count: usize) {
+    for index in [0.as(usize) .. bytes.count - count] {
+        bytes^[index] = bytes^[index + count]
+    }
+    bytes.resize_undefined_to(bytes.count - count)
+}
+
+pub file_uri :: fn (scratch: ^arena, path: string) -> string {
+    bytes := scratch.alloc_bytes(path.count * 3 + 7)
+    bytes[..7] = "file://".as([]u8)
+    used : usize = 7
+    hex          := "0123456789ABCDEF"
+
+    for byte in path {
+        on (byte^ >= 'a' && byte^ <= 'z') || (byte^ >= 'A' && byte^ <= 'Z') || (byte^ >= '0' && byte^ <= '9') || byte^ == '/' || byte^ == '-' || byte^ == '_' || byte^ == '.' || byte^ == '~' {
+            yes => {
+                bytes[used] = byte^
+                used += 1
+            }
+
+            else => {
+                bytes[used] = '%'
+                bytes[used + 1] = hex[byte^ / 16]
+                bytes[used + 2] = hex[byte^ % 16]
+                used += 3
+            }
+        }
+    }
+    return bytes[..used].as(string)
+}
+
+unhex :: fn (byte: u8) -> ?u8 {
+    on byte >= '0' && byte <= '9' => return byte - '0'
+    on byte >= 'A' && byte <= 'F' => return byte - 'A' + 10
+    on byte >= 'a' && byte <= 'f' => return byte - 'a' + 10
+    return nil
+}
+
+uri_path :: fn (scratch: ^arena, uri: string) -> string\string {
+    on uri.count < 8 ||
+        uri[..8] != "file:///" => return "Unsupported diagnostic URI"!
+    bytes         := scratch.alloc_bytes(uri.count - 7)
+    used  : usize = 0
+    index : usize = 7
+
+    for index < uri.count {
+        byte := uri[index]
+
+        index += 1
+        on byte == '%' => {
+            on index + 2 > uri.count => return "Invalid diagnostic URI"!
+            high := on unhex(uri[index]) {
+                value  => value
+                else   => return "Invalid diagnostic URI"!
+            }
+            low := on unhex(uri[index + 1]) {
+                value  => value
+                else   => return "Invalid diagnostic URI"!
+            }
+            byte  = high * 16 + low
+            index += 2
+        }
+        on byte == 0 => return "Invalid diagnostic URI"!
+        bytes[used] = byte
+        used += 1
+    }
+    return bytes[..used].as(string)
+}
+
+pub LanguageDiagnostic :: plex {
+    line      usize
+    character usize
+    severity  usize
+    message   [..]u8
+}
+
+pub DiagnosticGroup :: plex {
+    path  [..]u8
+    items [..]LanguageDiagnostic
+}
+
+impl DiagnosticGroup {
+
+    release :: fn (self: ^Self) {
+        for item in self.items {
+            item.message.free()
+        }
+        self.items.free()
+        self.path.free()
+    }
+
+}
+
+LspDocument :: plex {
+    path     [..]u8
+    uri      [..]u8
+    revision u64
+    version  u64
+    identity u64
+}
+
+impl LspDocument {
+
+    release :: fn (self: ^Self) {
+        self.path.free()
+        self.uri.free()
+    }
+
+}
+
+pub NerdLsp :: plex {
+    process     i32
+    socket      i32
+    ready       bool
+    failed      bool
+    valid       bool
+    published   bool
+    barrier     u64
+    serial      u64
+    identities  u64
+    outgoing    [..]u8
+    incoming    [..]u8
+    documents   [..]LspDocument
+    pending     [..]DiagnosticGroup
+    groups      [..]DiagnosticGroup
+    reader      Json
+    error       [..]u8
+    started     Instant
+    synced      Instant
+    body_start  usize
+    body_length usize
+}
+
+impl NerdLsp {
+
+    clear_groups :: fn (self: ^Self, pending: bool) {
+        on pending {
+            yes => {
+                for group in self.pending {
+                    group.release()
+                }
+                self.pending.clear()
+            }
+
+            else => {
+                for group in self.groups {
+                    group.release()
+                }
+                self.groups.clear()
+            }
+        }
+    }
+
+    queue :: fn (self: ^Self, scratch: ^arena, body: string) -> void\string {
+        on body.count > MAX_MESSAGE ||
+            self.outgoing.count + body.count + 64 > MAX_QUEUE => return "Nerd "
+            +"LSP message queue limit exceeded"!
+        append(^self.outgoing,
+               scratch.pr($"Content-Length: {body.count}\r\n\r\n"))
+        append(^self.outgoing, body)
+    }
+
+    notify :: fn (self    : ^Self,
+                  scratch : ^arena,
+                  method  : string,
+                  params  : string) -> void\string {
+        self.queue(scratch, scratch.pr($"\{\"jsonrpc\":\"2.0\",\"method\":{json_quote(scratch, method)},\"params\":{params}\}"))?
+    }
+
+    request :: fn (self    : ^Self,
+                   scratch : ^arena,
+                   id      : u64,
+                   method  : string,
+                   params  : string) -> void\string {
+        self.queue(scratch, scratch.pr($"\{\"jsonrpc\":\"2.0\",\"id\":{id},\"method\":{json_quote(scratch, method)},\"params\":{params}\}"))?
+    }
+
+    flush :: fn (self: ^Self) -> void\string {
+        on self.outgoing.count == 0 => return
+        size := on self.outgoing.count > 65536 {
+            yes   => 65536.as(usize)
+            else  => self.outgoing.count
+        }
+        written := syscall(SYS_SENDTO, self.socket.as(u64), self.outgoing.data.as(usize).as(u64), size.as(u64), 0x4000, 0, 0).as(i64)
+        on written < 0 {
+            yes => {
+                on last_error() != EAGAIN &&
+                    last_error() != EINTR => return "Nerd LSP input closed"!
+            }
+
+            else => consume(^self.outgoing, written.as(usize))
+        }
+    }
+
+    receive :: fn (self: ^Self) -> void\string {
+        buffer : [16384]u8
+        budget : usize     = 65536
+
+        for budget > 0 {
+            requested := on budget < buffer.count { yes => budget else => buffer.count }
+            count     := sys_read(self.socket, ^buffer, requested)
+
+            on count < 0 => {
+                on last_error() == EAGAIN || last_error() == EINTR => return
+                return "Cannot read Nerd LSP output"!
+            }
+            on count == 0 => return "Nerd LSP exited"!
+            on self.incoming.count + count.as(usize) > MAX_MESSAGE * 2 => return "Nerd LSP input limit exceeded"!
+            append(^self.incoming, buffer[..count.as(usize)].as(string))
+            budget -= count.as(usize)
+        }
+    }
+
+    frame :: fn (self: ^Self) -> bool\string {
+        text         := bytes_text(self.incoming)
+        end  : usize = 0
+
+        for end + 4 <= text.count && text[end..end + 4] != "\r\n\r\n" {
+            end += 1
+        }
+        on end + 4 > text.count => {
+            on text.count > 4096 => return "Nerd LSP header limit exceeded"!
+            return no
+        }
+        on end > 4096 => return "Nerd LSP header limit exceeded"!
+        length : ?usize = nil
+        start  : usize  = 0
+
+        for start < end {
+            finish := start
+            for finish < end && text[finish] != '\r' {
+                finish += 1
+            }
+            line          := text[start..finish]
+            colon : usize = 0
+
+            for colon < line.count && line[colon] != ':' {
+                colon += 1
+            }
+            on colon == line.count => return "Invalid Nerd LSP header"!
+            name     := line[..colon]
+            matches  := name.count == 14
+            expected := "content-length"
+
+            on matches => {
+                for index, byte in name {
+                    lower := byte^
+                    on lower >= 'A' && lower <= 'Z' => lower += 32
+                    on lower != expected[index] => matches = no
+                }
+            }
+            on matches => {
+                on length != nil => return "Duplicate Nerd LSP content length"!
+                raw := line[colon + 1..].trim()
+                on raw.count == 0 ||
+                    raw.count > 7 => return "Invalid Nerd LSP content length"!
+                value : usize = 0
+                for byte in raw {
+                    on byte^ < '0' ||
+                        byte^ > '9' => return "Invalid Nerd LSP content length"!
+                    value = value * 10 + (byte^ - '0').as(usize)
+                }
+                on value > MAX_MESSAGE => return "Nerd LSP message limit "
+                    +"exceeded"!
+                length = value
+            }
+            start = finish + 2
+        }
+        size := on length {
+            value  => value
+            else   => return "Missing Nerd LSP content length"!
+        }
+        self.body_start = end + 4
+        self.body_length = size
+        return text.count >= self.body_start + size
+    }
+
+    executable :: fn (_self: ^Self, scratch: ^arena) -> string\string {
+        path          := environment(scratch, "PATH")
+        start : usize = 0
+
+        for start <= path.count {
+            end := start
+            for end < path.count && path[end] != ':' {
+                end += 1
+            }
+            directory := on end == start { yes => "." else => path[start..end] }
+            candidate := scratch.pr($"{directory}/nerd")
+
+            on metadata(scratch, candidate) {
+                info => {
+                    on (info.mode & 0xf000) == 0x8000 &&
+                        (info.mode & 0x49) != 0 => return candidate
+                }
+
+                else => {
+                }
+            }
+            start = end + 1
+        }
+        return "Cannot find installed nerd on PATH"!
+    }
+
+    start :: fn (self: ^Self, scratch: ^arena, root: string) -> void\string {
+        executable            := self.executable(scratch)?
+        environment           := read_file(scratch, "/proc/self/environ")?
+        env         : [..]^i8
+
+        defer env.free()
+        offset : usize = 0
+        for offset < environment.count {
+            env.push(environment.data.as(^i8) + offset)
+            for offset < environment.count && environment[offset] != 0 {
+                offset += 1
+            }
+            offset += 1
+        }
+        env.push(nil)
+        arguments : [3]^i8 = [executable.c_string(), "lsp".c_string(), nil]
+        sockets   : [2]i32
+
+        on syscall(SYS_SOCKETPAIR, 1, 0x80001, 0, sockets.data.as(usize).as(u64), 0, 0).as(i64) < 0 => return "Cannot create Nerd LSP transport"!
+        parent  := syscall(SYS_GETPID, 0, 0, 0, 0, 0, 0)
+        process := sys_fork()
+
+        on process == 0 => {
+            _ := sys_close(sockets[0])
+            _ := syscall(SYS_SETPGID, 0, 0, 0, 0, 0, 0)
+            _ := syscall(SYS_PRCTL, 1, 9, 0, 0, 0, 0)
+
+            on syscall(SYS_GETPPID, 0, 0, 0, 0, 0, 0) != parent => {
+                sys_exit(127)
+                return
+            }
+            empty : u64 = 0
+            _           := syscall(SYS_RT_SIGPROCMASK, 2, (^empty).as(usize).as(u64), 0, 8, 0, 0)
+            _           := sys_dup2(sockets[1], 0)
+            _           := sys_dup2(sockets[1], 1)
+            _           := sys_close(sockets[1])
+            quiet       := sys_open("/dev/null".c_string(), O_WRONLY, 0)
+
+            on quiet >= 0 => {
+                _ := sys_dup2(quiet, 2)
+                _ := sys_close(quiet)
+            }
+            _ := sys_execve(arguments[0], arguments.data, env.data)
+            sys_exit(127)
+            return
+        }
+        _ := sys_close(sockets[1])
+        on process < 0 => {
+            _ := sys_close(sockets[0])
+            return "Cannot start Nerd LSP"!
+        }
+        self.process = process
+        self.socket = sockets[0]
+        on sys_fcntl(self.socket, 4, O_NONBLOCK) < 0 => return "Cannot make "
+            +"Nerd LSP non-blocking"!
+        self.started = now()
+        self.serial = 1
+        self.request(scratch, 1, "initialize", scratch.pr($"\{\"processId\":{parent},\"rootUri\":{json_quote(scratch, file_uri(scratch, root))},\"capabilities\":\{\"general\":\{\"positionEncodings\":[\"utf-16\"]\}\},\"clientInfo\":\{\"name\":\"ME\"\}\}"))?
+    }
+
+    shutdown :: fn (self: ^Self) -> void\string {
+        scratch : arena
+        defer scratch.done()
+        self.serial += 1
+        shutdown_id := self.serial
+        self.request(^scratch, shutdown_id, "shutdown", "null")?
+        started := now()
+        for elapsed(started, now()) < from_ms(100) {
+            self.flush()?
+            self.receive()?
+            for _index in [0 .. 4] {
+                on !self.frame()? => break
+                body := bytes_text(self.incoming)[self.body_start..self.body_start + self.body_length]
+                self.reader.parse(body)?
+                acknowledged := self.reader.integer(self.reader.field(0, "id")) == shutdown_id
+                consume(^self.incoming, self.body_start + self.body_length)
+                on acknowledged => {
+                    self.notify(^scratch, "exit", "null")?
+                    self.flush()?
+                    return
+                }
+            }
+            sleep_ms(1)
+        }
+    }
+
+    pub stop :: fn (self: ^Self, graceful: bool = yes) {
+        on self.process > 0 => {
+            reaped := no
+            on graceful &&
+                self.ready => {
+                on self.shutdown() {
+                    _success => {
+                        deadline := now()
+                        for elapsed(deadline, now()) < from_ms(20) {
+                            status : i32
+                            on sys_waitpid(self.process, ^status, 1) == self.process => {
+                                reaped = yes
+                                break
+                            }
+                            sleep_ms(1)
+                        }
+                    }
+
+                    _error! => {
+                    }
+                }
+            }
+            -- Reap even a stopped/crashed provider; graceful shutdown is bounded.
+            on !reaped => {
+                _            := syscall(SYS_KILL, (-self.process).as(u64), 9, 0, 0, 0, 0)
+                _            := syscall(SYS_KILL, self.process.as(u64), 9, 0, 0, 0, 0)
+                status : i32
+                waited       := sys_waitpid(self.process, ^status, 0)
+
+                for waited < 0 && last_error() == EINTR {
+                    waited = sys_waitpid(self.process, ^status, 0)
+                }
+            }
+            _ := sys_close(self.socket)
+        }
+        self.process = 0
+        self.ready = no
+        self.valid = no
+        self.barrier = 0
+        self.outgoing.clear()
+        self.incoming.clear()
+        for document in self.documents {
+            document.release()
+        }
+        self.documents.clear()
+        self.clear_groups(yes)
+        self.clear_groups(no)
+    }
+
+    pub release :: fn (self: ^Self) {
+        self.stop()
+        self.outgoing.free()
+        self.incoming.free()
+        self.documents.free()
+        self.pending.free()
+        self.groups.free()
+        self.error.free()
+        self.reader.release()
+    }
+
+    pub restart :: fn (self: ^Self) {
+        self.stop()
+        self.failed = no
+        self.error.clear()
+    }
+
+    fail :: fn (self: ^Self, error: string) {
+        self.stop(graceful = no)
+        self.failed = yes
+        own(^self.error, error)
+    }
+
+    pub current :: fn (self: ^Self, workspace: ^Workspace) -> bool {
+        on !self.ready || !self.valid || self.barrier != 0 => return no
+        count : usize = 0
+        for entry in workspace.documents {
+            on entry.file_mode() != FileMode.Nerd ||
+                entry.path.count == 0 => again
+            count += 1
+            found := no
+            for document in self.documents {
+                on bytes_text(entry.path) == bytes_text(document.path) &&
+                    entry.language_identity == document.identity &&
+                    entry.text.storage.revision() == document.revision => found = yes
+            }
+            on !found => return no
+        }
+        return count == self.documents.count
+    }
+
+    sync :: fn (self      : ^Self,
+                scratch   : ^arena,
+                workspace : ^Workspace) -> void\string {
+        changed         := no
+        closed          := no
+        index   : usize = 0
+
+        for index < self.documents.count {
+            found := no
+            for entry in workspace.documents {
+                on entry.file_mode() == FileMode.Nerd &&
+                    bytes_text(entry.path) == bytes_text(self.documents[index].path) => found = yes
+            }
+            on !found {
+                yes => {
+                    self.notify(scratch, "textDocument/didClose", scratch.pr($"\{\"textDocument\":\{\"uri\":{json_quote(scratch, bytes_text(self.documents[index].uri))}\}\}"))?
+                    self.documents[index].release()
+                    for next in [index + 1 .. self.documents.count] {
+                        self.documents[next - 1] = self.documents[next]
+                    }
+                    _ := self.documents.pop()
+
+                    changed = yes
+                    closed  = yes
+                }
+
+                else => index += 1
+            }
+        }
+        for entry in workspace.documents {
+            on entry.file_mode() != FileMode.Nerd ||
+                entry.path.count == 0 => again
+            on entry.language_identity == 0 => {
+                self.identities += 1
+                entry.language_identity = self.identities
+            }
+            found := self.documents.count
+            for index, document in self.documents {
+                on bytes_text(document.path) == bytes_text(entry.path) => found = index
+            }
+            opening := found == self.documents.count
+            on opening => {
+                on self.documents.count >= 32 => return "Nerd LSP document "
+                    +"limit exceeded"!
+                document : LspDocument
+                own(^document.path, bytes_text(entry.path))
+                own(^document.uri, file_uri(scratch, bytes_text(entry.path)))
+                self.documents.push(document)
+            }
+            document := ^self.documents[found]
+            on !opening &&
+                !closed &&
+                document.identity == entry.language_identity &&
+                document.revision == entry.text.storage.revision() => again
+            document.identity = entry.language_identity
+            document.revision = entry.text.storage.revision()
+            document.version += 1
+            uri  := json_quote(scratch, bytes_text(document.uri))
+            text := json_quote(scratch, entry.text.text())
+
+            on opening {
+                yes   => self.notify(scratch, "textDocument/didOpen", scratch.pr($"\{\"textDocument\":\{\"uri\":{uri},\"languageId\":\"nerd\",\"version\":{document.version},\"text\":{text}\}\}"))?
+                else  => self.notify(scratch, "textDocument/didChange", scratch.pr($"\{\"textDocument\":\{\"uri\":{uri},\"version\":{document.version}\},\"contentChanges\":[\{\"text\":{text}\}]\}"))?
+            }
+            changed = yes
+        }
+        on changed &&
+            self.documents.count > 0 => {
+            self.valid = no
+            self.published = no
+            self.clear_groups(yes)
+            self.serial += 1
+            self.barrier = self.serial
+            self.started = now()
+            -- Nerd processes messages sequentially and publishes diagnostics
+            -- synchronously. A following request acknowledges this exact batch.
+            self.request(scratch, self.barrier, "textDocument/documentSymbol", scratch.pr($"\{\"textDocument\":\{\"uri\":{json_quote(scratch, bytes_text(self.documents[0].uri))}\}\}"))?
+        }
+    }
+
+    diagnostics :: fn (self    : ^Self,
+                       scratch : ^arena,
+                       params  : usize) -> void\string {
+        on self.barrier == 0 => return
+        self.published = yes
+        reader := ^self.reader
+        path   := uri_path(scratch, reader.text(reader.field(params, "uri")))?
+        items  := reader.field(params, "diagnostics")
+
+        on items >= reader.nodes.count ||
+            reader.nodes[items].kind != JsonKind.Array => return "Invalid Nerd "
+            +"LSP diagnostics"!
+        group_index := self.pending.count
+        for index, group in self.pending {
+            on bytes_text(group.path) == path => group_index = index
+        }
+        on group_index == self.pending.count => {
+            on group_index >= 128 => return "Nerd LSP diagnostic file limit "
+                +"exceeded"!
+            group : DiagnosticGroup
+            own(^group.path, path)
+            self.pending.push(group)
+        }
+        group := ^self.pending[group_index]
+        for item in group.items {
+            item.message.free()
+        }
+        group.items.clear()
+        child := items + 1
+        for child < reader.nodes[items].after {
+            on group.items.count >= 128 => return "Nerd LSP diagnostic limit "
+                +"exceeded"!
+            start := reader.field(reader.field(child, "range"), "start")
+            line := on reader.integer(reader.field(start, "line")) {
+                value  => value
+                else   => return "Invalid Nerd LSP position"!
+            }
+            character := on reader.integer(reader.field(start, "character")) {
+                value  => value
+                else   => return "Invalid Nerd LSP position"!
+            }
+            severity := on reader.integer(reader.field(child, "severity")) {
+                value  => value
+                else   => 1.as(u64)
+            }
+            message := reader.text(reader.field(child, "message"))
+            on line > 2147483647 ||
+                character > 2147483647 ||
+                severity < 1 ||
+                severity > 4 ||
+                message.count > 8192 => return "Invalid Nerd LSP diagnostic"!
+            diagnostic := LanguageDiagnostic { line: line.as(usize) character: character.as(usize) severity: severity.as(usize) ... }
+            own(^diagnostic.message,
+                display_text(scratch, message, single_line = yes))
+            group.items.push(diagnostic)
+            child = reader.nodes[child].after
+        }
+    }
+
+    message :: fn (self      : ^Self,
+                   scratch   : ^arena,
+                   workspace : ^Workspace) -> void\string {
+        reader := ^self.reader
+        on reader.nodes.count == 0 ||
+            reader.nodes[0].kind != JsonKind.Object => return "Invalid Nerd "
+            +"LSP message"!
+        on reader.text(reader.field(0, "jsonrpc")) != "2.0" => return "Invalid "
+            +"Nerd LSP protocol version"!
+        method := reader.text(reader.field(0, "method"))
+        on method == "textDocument/publishDiagnostics" => {
+            self.diagnostics(scratch, reader.field(0, "params"))?
+            return
+        }
+        id := reader.field(0, "id")
+        on method.count > 0 &&
+            id < reader.nodes.count => {
+            node := reader.nodes[id]
+            on node.kind != JsonKind.Number &&
+                node.kind != JsonKind.String => return "Invalid Nerd LSP "
+                +"request ID"!
+            raw := on node.kind == JsonKind.String {
+                yes   => json_quote(scratch, node.text)
+                else  => node.text
+            }
+            self.queue(scratch, scratch.pr($"\{\"jsonrpc\":\"2.0\",\"id\":{raw},\"error\":\{\"code\":-32601,\"message\":\"Unsupported client request\"\}\}"))?
+            return
+        }
+        on reader.integer(id) {
+            value => {
+                on value == 1 => {
+                    on reader.field(0, "error") < reader.nodes.count => return "Nerd LSP initialisation failed"!
+                    capabilities := reader.field(reader.field(0, "result"),
+                                                 "capabilities")
+                    on capabilities >= reader.nodes.count ||
+                        reader.nodes[capabilities].kind != JsonKind.Object => return "Invalid Nerd LSP capabilities"!
+                    encoding := reader.text(reader.field(capabilities, "positionEncoding"))
+                    on encoding.count > 0 &&
+                        encoding != "utf-16" => return "Nerd LSP position "
+                        +"encoding is unsupported"!
+                    self.ready = yes
+                    self.notify(scratch, "initialized", "{}")?
+                }
+                on value == self.barrier &&
+                    self.barrier != 0 => {
+                    on !self.published => return "Nerd LSP did not publish "
+                        +"diagnostics"!
+                    self.barrier = 0
+                    self.valid = yes
+                    -- current compares all open snapshots, including dependencies.
+                    on self.current(workspace) {
+                        yes => {
+                            self.clear_groups(no)
+                            previous := self.groups
+                            self.groups = self.pending
+                            self.pending = previous
+                        }
+
+                        else => self.valid = no
+                    }
+                    self.clear_groups(yes)
+                }
+            }
+
+            else => {
+            }
+        }
+    }
+
+    pub poll :: fn (self: ^Self, scratch: ^arena, workspace: ^Workspace) {
+        needed := no
+        for entry in workspace.documents {
+            on entry.file_mode() == FileMode.Nerd &&
+                entry.path.count > 0 => needed = yes
+        }
+        on !needed => {
+            self.stop()
+            return
+        }
+        on self.failed => return
+        on self.process == 0 => {
+            on self.start(scratch, bytes_text(workspace.folder)) {
+                _success => {
+                }
+
+                error! => self.fail(error)
+            }
+            on self.failed => return
+        }
+        on elapsed(self.started, now()) > from_ms(10000) &&
+            (!self.ready || self.barrier != 0) => {
+            self.fail("Nerd LSP timed out; use :lsp-restart")
+            return
+        }
+        on self.flush() {
+            _success => {
+            }
+
+            error! => {
+                self.fail(error)
+                return
+            }
+        }
+        on self.receive() {
+            _success => {
+            }
+
+            error! => {
+                self.fail(error)
+                return
+            }
+        }
+        for _index in [0 .. 4] {
+            available := on self.frame() {
+                value => value
+
+                error! => {
+                    self.fail(error)
+                    return
+                }
+            }
+            on !available => break
+            text := bytes_text(self.incoming)[self.body_start..self.body_start + self.body_length]
+            on self.reader.parse(text) {
+                _success => {
+                }
+
+                error! => {
+                    self.fail(error)
+                    return
+                }
+            }
+            on self.message(scratch, workspace) {
+                _success => {
+                }
+
+                error! => {
+                    self.fail(error)
+                    return
+                }
+            }
+            consume(^self.incoming, self.body_start + self.body_length)
+        }
+        on self.ready &&
+            self.barrier == 0 &&
+            elapsed(self.synced, now()) >= from_ms(250) => {
+            on self.sync(scratch, workspace) {
+                _success => {
+                }
+
+                error! => self.fail(error)
+            }
+            self.synced = now()
+        }
+    }
+
+    pub line_severity :: fn (self: ^Self, path: string, line: usize) -> usize {
+        severity : usize = 0
+        for group in self.groups {
+            on bytes_text(group.path) != path => again
+            for item in group.items {
+                on item.line == line &&
+                    (severity == 0 || item.severity < severity) => severity = item.severity
+            }
+        }
+        return severity
+    }
+
+    pub counts :: fn (self: ^Self, path: string) -> (usize, usize) {
+        errors   : usize = 0
+        warnings : usize = 0
+
+        for group in self.groups {
+            on bytes_text(group.path) != path => again
+            for item in group.items {
+                on item.severity {
+                    1  => errors += 1
+                    2  => warnings += 1
+
+                    else => {
+                    }
+                }
+            }
+        }
+        return (errors, warnings)
+    }
+
+    pub report :: fn (self      : ^Self,
+                      scratch   : ^arena,
+                      workspace : ^Workspace) -> string {
+        on self.failed => return scratch.pr($"Nerd LSP: {bytes_text(self.error)} · :lsp-restart retries")
+        named := no
+        for entry in workspace.documents {
+            on entry.file_mode() == FileMode.Nerd &&
+                entry.path.count > 0 => named = yes
+        }
+        on !named => return "Nerd LSP: no named Nerd buffers open"
+        on !self.current(workspace) => return "Nerd LSP: diagnostics pending"
+        output : [..]u8
+        defer output.free()
+        append(^output, """
+            Nerd diagnostics (columns use UTF-16 units)
+            """)
+        count : usize = 0
+        for group in self.groups {
+            for item in group.items {
+                on count >= 256 ||
+                    output.count > 65536 => {
+                    append(^output, """
+                        More diagnostics omitted
+                        """)
+                    return scratch.pr(bytes_text(output))
+                }
+                label := on item.severity {
+                    1     => "Error"
+                    2     => "Warning"
+                    3     => "Information"
+                    else  => "Hint"
+                }
+                append(^output,
+                       scratch.pr($"{display_text(scratch, bytes_text(group.path), single_line = yes)}:{item.line + 1}:{item.character + 1} {label}: {bytes_text(item.message)}\n"))
+                count += 1
+            }
+        }
+        on count == 0 => append(^output, "No diagnostics")
+        return scratch.pr(bytes_text(output))
+    }
+
+}
+
+test "LSP framing handles fragments, multiple messages and bounded headers" {
+    client : NerdLsp
+    defer client.release()
+    append(^client.incoming, "Content-Len")
+    on client.frame() {
+        value => {
+            assert !value
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+    append(^client.incoming, "gth: 4\r\n\r\nnu")
+    on client.frame() {
+        value => {
+            assert !value
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+    append(^client.incoming, "llContent-Length: 2\r\n\r\n{}")
+    on client.frame() {
+        value => {
+            assert value
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+    assert bytes_text(client.incoming)[client.body_start..client.body_start + client.body_length] == "null"
+    consume(^client.incoming, client.body_start + client.body_length)
+    on client.frame() {
+        value => {
+            assert value
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+    assert client.body_length == 2
+    for invalid in ["Content-Length: 1048577\r\n\r\n", "Content-Length: 1\r\nContent-Length: 1\r\n\r\n", "Content-Length: -1\r\n\r\n", "Other: 1\r\n\r\n"] {
+        client.incoming.clear()
+        append(^client.incoming, invalid^)
+        on client.frame() {
+            _value => {
+                assert no
+            }
+
+            _error! => {
+            }
+        }
+    }
+    scratch : arena
+    defer scratch.done()
+    raw : [12]u8 = ['/', 't', 'm', 'p', '/', 'a', ' ', '#', '%', 0xff, '.', 'n']
+    uri          := file_uri(^scratch, raw[..].as(string))
+
+    assert uri == "file:///tmp/a%20%23%25%FF.n"
+    on uri_path(^scratch, uri) {
+        path => {
+            assert path == raw[..].as(string)
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+}
+
+test "Nerd diagnostics use synchronised snapshots and discard results after edits" {
+    workspace : Workspace
+    defer workspace.release()
+    entry : DocumentEntry
+    own(^entry.path, "/tmp/live.n")
+    on entry.text.load("""
+    main :: fn() {}
+    """) {
+        _success => {
+        }
+
+        error! => {
+            assert no, error.show()
+        }
+    }
+    workspace.documents.push(entry)
+    client : NerdLsp
+    defer client.release()
+    scratch : arena
+    defer scratch.done()
+    client.ready = yes
+    client.serial = 1
+    on client.sync(^scratch, ^workspace) {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+    assert client.barrier == 2 && client.documents.count == 1
+    notification := "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":\"file:///tmp/live.n\",\"diagnostics\":[{\"range\":{\"start\":{\"line\":0,\"character\":4}},\"severity\":1,\"message\":\"bad\\u001b[31m\"}]}}"
+    on client.reader.parse(notification) {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+    on client.message(^scratch, ^workspace) {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+    assert client.pending.count == 1 && client.groups.count == 0
+    -- Edit after publication but before the acknowledgement: discard that batch.
+    on workspace.documents[0].text.edit({ start: 0 end: 0 }, """
+    --
+    """) {
+        _success => {
+        }
+
+        error! => {
+            assert no, error.show()
+        }
+    }
+    on client.reader.parse("{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":[]}") {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+    on client.message(^scratch, ^workspace) {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+    assert !client.current(^workspace) && client.groups.count == 0
+    on client.sync(^scratch, ^workspace) {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+    on client.reader.parse(notification) {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+    on client.message(^scratch, ^workspace) {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+    on client.reader.parse("{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":[]}") {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+    on client.message(^scratch, ^workspace) {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+    assert client.current(^workspace) && client.line_severity("/tmp/live.n", 0) == 1
+    (errors, warnings) := client.counts("/tmp/live.n")
+    assert errors == 1 && warnings == 0
+    -- Publishing cannot inject terminal escape bytes into the message area.
+    for byte in client.groups[0].items[0].message {
+        assert byte^ != 27
+    }
+    assert workspace.documents[0].text.text() == """
+        --
+        main :: fn() {}
+        """
+
+    assert workspace.documents[0].nerd_syntax == nil && workspace.documents[0].text.line_changes == nil
+    -- Reopening can reuse the old revision; runtime identity must still differ.
+    replacement : DocumentEntry
+    own(^replacement.path, "/tmp/live.n")
+    on replacement.text.load("different") {
+        _success => {
+        }
+
+        error! => {
+            assert no, error.show()
+        }
+    }
+    on replacement.text.edit({ start: 0 end: 0 }, "!") {
+        _success => {
+        }
+
+        error! => {
+            assert no, error.show()
+        }
+    }
+    assert replacement.text.storage.revision() == client.documents[0].revision
+    workspace.documents[0].release()
+    workspace.documents[0] = replacement
+    assert !client.current(^workspace)
+    old_identity := client.documents[0].identity
+    on client.sync(^scratch, ^workspace) {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+    assert client.documents[0].identity != old_identity && client.barrier == 4
+}

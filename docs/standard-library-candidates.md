@@ -100,3 +100,22 @@ parent-death handling and bounded transport. `src/picker.n` adds incremental
 query filtering while preserving the synchronous buffer consumer. Tests cover
 partial frames/EOF, new query invalidation, stopped-worker cancellation,
 descriptor ownership, directory-link cycles and exact invalid/control-byte filenames.
+
+## Bounded JSON protocol reader — local candidate
+
+`src/json.n` provides a strict bounded UTF-8 JSON reader with arena-owned decoded
+strings, checked escapes/surrogate pairs, duplicate-key rejection and indexed
+subtrees. `json_quote` escapes outgoing protocol strings. The current standard
+library inventory has no JSON module; this implementation serves LSP transport
+without selecting JSON for ME configuration. Native protocol and round-trip
+checks evaluate it locally before any standard-library proposal.
+
+## Non-blocking provider transport — local candidate
+
+`src/nerd_lsp.n` uses Nerd Linux syscalls for a bidirectional child socket, bounded
+Content-Length framing, non-blocking reads/writes, process-group cancellation,
+parent-death handling and reaping. The existing synchronous process runner cannot
+serve the terminal loop. This remains a local evaluation, alongside cancellable
+file discovery; general child-process/framing facilities could later avoid their
+duplicated lifecycle primitives. LSP synchronisation and Nerd's diagnostics barrier
+are editor/provider policies, not proposed standard-library APIs.

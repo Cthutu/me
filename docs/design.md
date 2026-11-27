@@ -1759,15 +1759,53 @@ analysis; it must not force every kind of analysis into lines.
   CommonMark parsing. The existing document projection/line index still rebuilds
   after mutation; row-table movement on line-count changes is also linear.
 
-### T16 — Nerd mode and LSP support — agreed next
+### T16 — Nerd mode and LSP support — first delivery
 
-After incremental highlighting, begin LSP support when adding the Nerd file-type
-mode. Keep provider execution out of this incremental Markdown change. Specific
-Nerd-mode behaviour, initial LSP interactions, configuration and process lifecycle
-need concrete design before implementation. Existing requirements still apply:
-Nerd standard-library/syscall facilities, non-blocking integration, bounded
-protocol input, version tracking, cancellation and protection against stale data.
-LSP synchronisation must observe document changes independently of the optional
-highlighting cache; it must still work when syntax metadata is absent. This
-agreement selects the next mode/provider work; it does not silently select
-Markdown providers, a configuration schema or additional LSP features.
+Matt requested starting Nerd support after incremental highlighting. The initial
+implementation scope is source highlighting and live diagnostics; completion,
+hover, navigation, formatting actions and provider configuration remain later
+work. These are concrete first-delivery defaults, not a settled general-purpose
+mode configuration schema:
+
+- Recognise exact `.n` extensions as Nerd, including successful save-as and
+  restoration. Use a four-space indentation fallback, with existing detection
+  taking precedence. Source bytes and normal editing behaviour remain unchanged.
+- Attach an optional typed Nerd line cache, sharing the existing edit observer
+  and prefix/suffix convergence contract. Retain lexical context for comments,
+  strings, triple strings, packed integers and nested interpolation. Classify
+  keywords, built-in types, literals, numbers and operators. This is stateful
+  lexing, not regular-expression matching or semantic/tree-based highlighting.
+  Nesting checkpoints are bounded to 15 nested contexts; excessive nesting uses
+  conservative string colouring. Plain Text keeps no highlighting metadata.
+- Start one installed `nerd lsp` from PATH when named Nerd buffers are open.
+  Use the startup folder as root URI. Synchronisation reads document revisions
+  directly, independently of optional syntax metadata. Send didOpen/didClose
+  and debounced full-content didChange messages with monotonically increasing
+  per-document versions. An edit invalidates displayed diagnostics immediately.
+- Keep transport non-blocking in the terminal loop, with 250 ms synchronisation,
+  bounded queues/headers/JSON/messages and UTF-16 positions. Percent-encode file
+  URIs without losing filename bytes. Sanitise diagnostic text for presentation.
+  Limits: 32 open Nerd documents, 1 MiB messages, 8 MiB outgoing queue, 128
+  diagnostic files and 128 diagnostics per file. Exceeding a bound reports a
+  provider failure; it never changes source text.
+- Installed Nerd currently publishes diagnostics without document versions and
+  analyses synchronously in its sequential message loop. A subsequent
+  documentSymbol request acknowledges the exact synchronisation batch. Retain
+  diagnostics only when every open named Nerd path/identity/revision still matches that
+  batch, including dependency buffers. This barrier is Nerd-specific, not a
+  guarantee for arbitrary LSP providers. Imported-file diagnostics may appear
+  in the report. Diagnostic columns are explicitly labelled as UTF-16 units.
+- Show `!` in the affected line's gutter and E/W counts in the wide status line.
+  Pending results show `LSP…`; failures show `LSP!`. `:diagnostics` displays
+  details, and `:lsp-restart` explicitly retries. Keep editing available after
+  malformed protocol input, crashes or timeouts (10 seconds). No automatic
+  restart loop. Release the provider when no named Nerd buffers remain.
+- Use syscall-only child transport, isolate stdio from the terminal, preserve
+  the environment, and arrange parent-death termination. Try shutdown/exit on
+  ordinary teardown with a bounded acknowledgement/exit wait; kill and reap
+  unresponsive providers. No new external libraries or direct libc FFI.
+
+Configuration, manual recognition overrides, completion/navigation/hover,
+formatting and generic asynchronous/versioned-provider policies remain open.
+This does not choose a Markdown LSP or formatter. Syntax trees and range-based
+services remain independent of optional line caches.

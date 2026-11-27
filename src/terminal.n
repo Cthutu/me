@@ -6,6 +6,7 @@ use key_diagnostics
 use leader_menu
 use modes
 use native
+use nerd_lsp
 use os.linux
 use panes
 use picker
@@ -88,6 +89,13 @@ syntax_ink :: fn (style: SyntaxStyle) -> Colour {
         Strong    => 0xf0bd82.as(Colour)
         Link      => 0x73c8ce.as(Colour)
         Rule      => MUTED
+        Keyword   => 0xc792ea.as(Colour)
+        Type      => 0x82b9f0.as(Colour)
+        Literal   => 0xf0bd82.as(Colour)
+        Number    => 0xf0bd82.as(Colour)
+        String    => 0xa9cd91.as(Colour)
+        Comment   => MUTED
+        Operator  => 0x73c8ce.as(Colour)
     }
 }
 
@@ -185,6 +193,7 @@ impl Terminal {
                 error! => self.editor.tell(error)
             }
         }
+        self.editor.language.poll(^self.scratch, ^self.editor.workspace)
         self.editor.poll_file_picker()
         current := now()
         self.editor.poll_leader(current)
@@ -634,12 +643,13 @@ impl Terminal {
 
             else => on inserting { yes => INSERT_PAPER else => NORMAL_PAPER }
         }
-        entry    := ^editor.workspace.documents[text_view.document_id]
-        doc      := ^entry.text
-        markdown := entry.file_mode() == FileMode.Markdown
+        entry       := ^editor.workspace.documents[text_view.document_id]
+        doc         := ^entry.text
+        highlighted := entry.file_mode() != FileMode.PlainText
 
-        _          := entry.update_syntax()
-        caret_line := doc.line_at(view.selection.active)
+        _                := entry.update_syntax()
+        language_current := editor.language.current(^editor.workspace)
+        caret_line       := doc.line_at(view.selection.active)
 
         rows := on height > 1 {
             yes   => height - 1
@@ -720,6 +730,12 @@ impl Terminal {
                           ink,
                           paper,
                           label.count)
+                on entry.file_mode() == FileMode.Nerd &&
+                    language_current => {
+                    severity := editor.language.line_severity(bytes_text(entry.path),
+                                                              line)
+                    on severity > 0 => self.set(gutter - 1, row, '!'.as(u32), on severity == 1 { yes => INSERT_CARET else => GUTTER_INK }, paper)
+                }
             }
             horizontal := on line == caret_line {
                 yes   => view.horizontal
@@ -746,7 +762,7 @@ impl Terminal {
 
                 on cells == 0 => cells = 1
                 paper := base_paper
-                ink := on markdown {
+                ink := on highlighted {
                     yes   => syntax_ink(entry.syntax_style(line, position - doc.line_start(line)))
                     else  => INK
                 }
@@ -852,7 +868,22 @@ impl Terminal {
                 else  => 0
             }
             on width >= 72 => {
-                details       := self.scratch.pr($"│ {mode_label(entry.file_mode())} {doc.ending_label()} ")
+                language := ""
+                on entry.file_mode() == FileMode.Nerd => {
+                    language = on editor.language.failed {
+                        yes => " LSP!"
+
+                        else => on language_current {
+                            yes => {
+                                (errors, warnings) := editor.language.counts(bytes_text(entry.path))
+                                break self.scratch.pr($" E:{errors} W:{warnings}")
+                            }
+
+                            else => " LSP…"
+                        }
+                    }
+                }
+                details       := self.scratch.pr($"│ {mode_label(entry.file_mode())} {doc.ending_label()}{language} ")
                 details_width := display_column(details, 0, details.count)
 
                 status_width -= details_width

@@ -1,0 +1,428 @@
+use std.text
+
+pub JsonKind :: enum {
+    Null
+    Boolean
+    Number
+    String
+    Array
+    Object
+}
+
+pub JsonNode :: plex {
+    kind  JsonKind
+    key   string
+    text  string
+    after usize
+}
+
+-- A bounded, arena-backed reader for provider messages. Nodes use indices so
+-- growing the table never invalidates parent references during recursive
+-- parsing.
+pub Json :: plex {
+    nodes  [..]JsonNode
+    pool   arena
+    source string
+    cursor usize
+}
+
+hex_digit :: fn (byte: u8) -> ?u32 {
+    on byte >= '0' && byte <= '9' => return (byte - '0').as(u32)
+    on byte >= 'a' && byte <= 'f' => return (byte - 'a' + 10).as(u32)
+    on byte >= 'A' && byte <= 'F' => return (byte - 'A' + 10).as(u32)
+    return nil
+}
+
+impl Json {
+    pub release :: fn (self: ^Self) {
+        self.nodes.free() self.pool.done()
+    }
+    whitespace :: fn (self: ^Self) {
+        for self.cursor < self.source.count {
+            byte := self.source[self.cursor]
+            on byte == ' ' || byte == '\t' || byte == '\r' || byte == '\n' {
+                yes => self.cursor += 1 else => break
+            }
+        }
+    }
+    unicode_unit :: fn (self: ^Self, offset: usize) -> u32\string {
+        on offset + 4 > self.source.count => return "Incomplete JSON Unicode "
+            +"escape"!
+        value : u32 = 0
+        for byte in self.source[offset .. offset + 4] {
+            on hex_digit(byte^) {
+                digit => value = value * 16 + digit else => return "Invalid "
+                    +"JSON Unicode escape"!
+            }
+        }
+        return value
+    }
+    string_value :: fn (self: ^Self) -> string\string {
+        on self.cursor >= self.source.count || self.source[self.cursor] != '"' => return "Expected JSON string"!
+        self.cursor += 1
+        start := self.cursor
+        end := start
+        for end < self.source.count &&
+            self.source[end] != '"' {
+            on self.source[end] < 32 => return "Control byte in JSON string"!
+            on self.source[end] == '\\' => end += 1
+            end += 1
+        }
+        on end >= self.source.count => return "Unterminated JSON string"!
+        bytes := self.pool.alloc_bytes(end - start)
+        used : usize = 0
+        for self.cursor < end {
+            byte := self.source[self.cursor]
+            self.cursor += 1
+            on byte != '\\' => {
+                bytes[used] = byte used += 1 again
+            }
+            escape := self.source[self.cursor]
+            self.cursor += 1
+            on escape {
+                '"', '\\', '/' => {
+                    bytes[used] = escape used += 1
+                }
+                'b' => {
+                    bytes[used] = 8 used += 1
+                }
+                'f' => {
+                    bytes[used] = 12 used += 1
+                }
+                'n' => {
+                    bytes[used] = 10 used += 1
+                }
+                'r' => {
+                    bytes[used] = 13 used += 1
+                }
+                't' => {
+                    bytes[used] = 9 used += 1
+                }
+                'u' => {
+                    rune := self.unicode_unit(self.cursor)?
+                    self.cursor += 4
+                    on rune >= 0xd800 && rune <= 0xdbff => {
+                        on self.cursor + 6 > end || self.source[self.cursor .. self.cursor + 2] != "\\u" => return "Missing JSON low surrogate"!
+                        low := self.unicode_unit(self.cursor + 2)?
+                        on low < 0xdc00 || low > 0xdfff => return "Invalid "
+                            +"JSON low surrogate"!
+                        rune = 0x10000 + (rune - 0xd800) * 1024 + low - 0xdc00
+                        self.cursor += 6
+                    }
+                    on rune >= 0xd800 && rune <= 0xdfff => return "Unpaired "
+                        +"JSON surrogate"!
+                    used += rune.utf8_encode(bytes[used ..])
+                }
+                else => return "Invalid JSON escape"!
+            }
+        }
+        on self.cursor != end => return "Invalid JSON string boundary"!
+        self.cursor += 1
+        return bytes[.. used].as(string)
+    }
+    value :: fn (self: ^Self, key: string, depth: usize) -> usize\string {
+        on depth > 32 || self.nodes.count >= 16384 => return "JSON complexity "
+            +"limit exceeded"!
+        self.whitespace()
+        on self.cursor == self.source.count => return "Missing JSON value"!
+        index := self.nodes.count
+        self.nodes.push(JsonNode {
+            key ...
+        })
+        byte := self.source[self.cursor]
+        on byte == '{' || byte == '[' => {
+            object := byte == '{'
+            self.nodes[index].kind = on object {
+                yes => JsonKind.Object else => JsonKind.Array
+            }
+            close := on object {
+                yes => '}'.as(u8) else => ']'.as(u8)
+            }
+            self.cursor += 1
+            self.whitespace()
+            members : usize = 0
+            on self.cursor < self.source.count && self.source[self.cursor] == close {
+                yes => self.cursor += 1
+                else => {
+                    for {
+                        name := ""
+                        on object => {
+                            on members >= 256 => return "JSON object member "
+                                +"limit exceeded"!
+                            name = self.string_value()?
+                            child := index + 1
+                            for child < self.nodes.count {
+                                on self.nodes[child].key == name => return "Dup"
+                                    +"licate JSON member"!
+                                child = self.nodes[child].after
+                            }
+                            self.whitespace()
+                            on self.cursor == self.source.count || self.source[self.cursor] != ':' => return "Missing JSON colon"!
+                            self.cursor += 1
+                        }
+                        _ := self.value(name, depth + 1)?
+                        members += 1
+                        self.whitespace()
+                        on self.cursor == self.source.count => return "Untermin"
+                            +"ated JSON container"!
+                        separator := self.source[self.cursor]
+                        self.cursor += 1
+                        on separator == close => break
+                        on separator != ',' => return "Missing JSON separator"!
+                        self.whitespace()
+                    }
+                }
+            }
+        } else {
+            on byte == '"' {
+                yes => {
+                    self.nodes[index].kind = JsonKind.String self.nodes[index].text = self.string_value()?
+                }
+                else => {
+                    start := self.cursor
+                    for self.cursor < self.source.count {
+                        next := self.source[self.cursor]
+                        on next == ',' || next == '}' || next == ']' || next == ' ' || next == '\t' || next == '\r' || next == '\n' => break
+                        self.cursor += 1
+                    }
+                    raw := self.source[start .. self.cursor]
+                    self.nodes[index].text = raw
+                    on raw {
+                        "null" => self.nodes[index].kind = JsonKind.Null
+                        "true", "false" => self.nodes[index].kind = JsonKind.Boolean
+                        else => {
+                            offset : usize = 0
+                            on raw.count > 0 && raw[0] == '-' => offset += 1
+                            on offset == raw.count || raw[offset] < '0' || raw[offset] > '9' => return "Invalid JSON value"!
+                            on raw[offset] == '0' {
+                                yes => offset += 1 else => {
+                                    for offset < raw.count &&
+                                        raw[offset] >= '0' &&
+                                        raw[offset] <= '9' {
+                                        offset += 1
+                                    }
+                                }
+                            }
+                            on offset < raw.count && raw[offset] == '.' => {
+                                offset += 1
+                                first := offset
+                                for offset < raw.count &&
+                                    raw[offset] >= '0' &&
+                                    raw[offset] <= '9' {
+                                    offset += 1
+                                }
+                                on first == offset => return "Invalid JSON "
+                                    +"fraction"!
+                            }
+                            on offset < raw.count && (raw[offset] == 'e' || raw[offset] == 'E') => {
+                                offset += 1
+                                on offset < raw.count && (raw[offset] == '+' || raw[offset] == '-') => offset += 1
+                                first := offset
+                                for offset < raw.count &&
+                                    raw[offset] >= '0' &&
+                                    raw[offset] <= '9' {
+                                    offset += 1
+                                }
+                                on first == offset => return "Invalid JSON "
+                                    +"exponent"!
+                            }
+                            on offset != raw.count => return "Invalid JSON "
+                                +"number"!
+                            self.nodes[index].kind = JsonKind.Number
+                        }
+                    }
+                }
+            }
+        }
+        self.nodes[index].after = self.nodes.count
+        return index
+    }
+    pub parse :: fn (self: ^Self, source: string) -> void\string {
+        self.nodes.clear()
+        self.pool.reset()
+        self.source = source
+        self.cursor = 0
+        on source.count > 1048576 => return "JSON message limit exceeded"!
+        on source.utf8_validate() {
+            _valid => {
+            }
+            _error! => return "Invalid UTF-8 JSON"!
+        }
+        _ := self.value("", 0)?
+        self.whitespace()
+        on self.cursor != source.count => return "Trailing JSON data"!
+    }
+    pub field :: fn (self: ^Self, index: usize, key: string) -> usize {
+        on index >= self.nodes.count || self.nodes[index].kind != JsonKind.Object => return self.nodes.count
+        child := index + 1
+        for child < self.nodes[index].after {
+            on self.nodes[child].key == key => return child
+            child = self.nodes[child].after
+        }
+        return self.nodes.count
+    }
+    pub text :: fn (self: ^Self, index: usize) -> string {
+        on index < self.nodes.count && self.nodes[index].kind == JsonKind.String => return self.nodes[index].text
+        return ""
+    }
+    pub integer :: fn (self: ^Self, index: usize) -> ?u64 {
+        on index >= self.nodes.count || self.nodes[index].kind != JsonKind.Number => return nil
+        text := self.nodes[index].text
+        on text.count == 0 || text.count > 18 => return nil
+        value : u64 = 0
+        for byte in text {
+            on byte^ < '0' || byte^ > '9' => return nil value = value * 10 + (byte^ - '0').as(u64)
+        }
+        return value
+    }
+}
+
+pub json_quote :: fn (scratch: ^arena, text: string) -> string {
+    count : usize = 2
+    for byte in text {
+        count += on byte^ < 32 {
+            yes => 6.as(usize)
+
+            else => on byte^ == '"' || byte^ == '\\' {
+                yes   => 2.as(usize)
+                else  => 1.as(usize)
+            }
+        }
+    }
+    result := scratch.alloc_bytes(count)
+    result[0] = '"'
+    used : usize = 1
+    hex          := "0123456789abcdef"
+
+    for byte in text {
+        on {
+            byte^ < 32 => {
+                result[used..used + 4] = "\\u00".as([]u8)
+                result[used + 4] = hex[byte^ / 16]
+                result[used + 5] = hex[byte^ % 16]
+                used += 6
+            }
+            byte^ == '"' || byte^ == '\\' => {
+                result[used] = '\\'
+                result[used + 1] = byte^
+                used += 2
+            }
+            else => {
+                result[used] = byte^
+                used += 1
+            }
+        }
+    }
+    result[used] = '"'
+    return result.as(string)
+}
+
+test "bounded JSON round-trips escapes and validates nested messages" {
+    reader : Json
+    defer reader.release()
+    scratch : arena
+    defer scratch.done()
+    original := "é👩‍💻\n\t\0\"\\"
+    encoded  := json_quote(^scratch, original)
+
+    on reader.parse(encoded) {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+    assert reader.text(0) == original
+    on reader.parse("{\"method\":\"ready\",\"params\":{\"items\":[1,2.5,-3e+2,true,null"
+    +",\"\\ud83d\\ude00\"]\}\}") {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+    assert reader.text(reader.field(0, "method")) == "ready"
+    items := reader.field(reader.field(0, "params"), "items")
+    assert reader.integer(items + 1) == 1
+    assert reader.text(reader.nodes[items].after - 1) == "😀"
+    for invalid in ["", "[1,]", "{\"a\":1,\"a\":2}", "01", "1.", "true false", "\"\\ud800\"", "\"\\udc00\"", "\"\\q\""] {
+        on reader.parse(invalid^) {
+            _success => {
+                assert no
+            }
+
+            _error! => {
+            }
+        }
+    }
+}
+
+test "JSON protocol limits reject excessive nesting, nodes and invalid UTF-8" {
+    reader : Json
+    defer reader.release()
+    scratch : arena
+    defer scratch.done()
+    controls : [32]u8
+    for index in [0.as(usize) .. controls.count] {
+        controls[index] = index.as(u8)
+    }
+    on reader.parse(json_quote(^scratch, controls[..].as(string))) {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+    assert reader.text(0) == controls[..].as(string)
+    nested := scratch.alloc_bytes(67)
+    for index in [0.as(usize) .. 33] {
+        nested[index] = '['
+        nested[66 - index] = ']'
+    }
+    nested[33] = '0'
+    on reader.parse(nested.as(string)) {
+        _success => {
+            assert no
+        }
+
+        _error! => {
+        }
+    }
+    nodes := scratch.alloc_bytes(32771)
+    nodes[0] = '['
+    for index in [0.as(usize) .. 16384] {
+        nodes[1 + index * 2] = '0'
+        nodes[2 + index * 2] = ','
+    }
+    nodes[32769] = '0'
+    nodes[32770] = ']'
+    on reader.parse(nodes.as(string)) {
+        _success => {
+            assert no
+        }
+
+        _error! => {
+        }
+    }
+    invalid : [3]u8 = ['"', 0xff, '"']
+    on reader.parse(invalid[..].as(string)) {
+        _success => {
+            assert no
+        }
+
+        _error! => {
+        }
+    }
+    on reader.parse("{}") {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+    assert reader.nodes.count == 1
+}

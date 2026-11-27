@@ -570,12 +570,28 @@ Ordinary :q should checkpoint unsaved work and quit, as it did before T14.
   confirmation checked afterwards.
 
 
-### T16 — Nerd mode and LSP support — queued after incremental highlighting
+### T16 — Nerd mode and LSP support — first delivery complete; further services queued
 
-- Matt selected LSP support with the future Nerd mode after incremental highlighting.
-- Design the Nerd mode and initial LSP integration, then implement the agreed
-  interactions using Nerd facilities and non-blocking provider lifecycle.
-- Concrete features, configuration and lifecycle policies remain open; this does
-  not select a Markdown provider or arbitrary additional LSP features.
-- Follow the optional/shared buffer-analysis and view-ownership boundaries in
-  design §35. This is agreed next work; macro follow-ups remain queued afterwards.
+- Recognise `.n` as Nerd, use detected indentation or a four-space fallback,
+  and provide incremental stateful lexical highlighting through an optional
+  typed cache shared by panes. Handle comments, strings/triple strings, packed
+  integers and nested interpolation without regex matching or source mutation.
+- Start the installed `nerd lsp` lazily for named Nerd buffers. Keep bounded,
+  non-blocking protocol transport independent of syntax metadata. Synchronise
+  opens, full-content changes and closes using document revisions/versions.
+- Show current diagnostics in the gutter and wide status line; `:diagnostics`
+  displays details and `:lsp-restart` retries failures. Suppress stale results
+  across every open Nerd buffer, including dependency edits. Crash/timeout and
+  malformed-message handling preserve editing; teardown is bounded and reaped.
+- First-delivery defaults and limits are in design §35. Completion, hover,
+  navigation, formatting and provider/recognition configuration remain later
+  scope; this does not select a Markdown provider.
+- Three independently reproduced Nerd bugs took priority: indexed compound
+  assignments, array-field indices mistaken for box type arguments, and packed
+  literals hiding source tests. Dedicated worktrees and complete compiler gates
+  precede direct installation from the existing libc-fix branch. Detailed
+  evidence and final ME verification are recorded in MS1 progress.
+- Verified: 195 native tests, all 62 debug terminal groups and eight focused
+  release groups passed. Type checking, formatting idempotence, Python compilation
+  and diff checks passed. Commit/push and release installation complete this slice;
+  the installed Nerd scenarios and release-binary identity are checked afterwards.

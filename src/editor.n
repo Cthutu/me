@@ -8,6 +8,7 @@ use keyboard
 use leader_menu
 use modes
 use native
+use nerd_lsp
 use os.linux
 use panes
 use picker
@@ -62,6 +63,7 @@ impl SaveConfirmation {
 }
 
 pub Editor :: plex {
+    language           NerdLsp
     workspace          Workspace
     completion         PromptCompletion
     overwrite          SaveConfirmation
@@ -99,6 +101,7 @@ pub Editor :: plex {
 
 impl Editor {
     pub release :: fn (self: ^Self) {
+        self.language.release()
         self.workspace.release()
         self.completion.release()
         self.confirmation.release()
@@ -760,6 +763,15 @@ impl Editor {
         self.prompt.clear()
         self.save_all_pending = no
         on self.recording.active && command != "q" && command != "q!" && command != "wq" => return "Command unavailable while recording; use ] to finish or Ctrl+G to cancel"!
+        on command == "diagnostics" => {
+            self.tell(self.language.report(scratch, ^self.workspace))
+            return
+        }
+        on command == "lsp-restart" => {
+            self.language.restart()
+            self.tell("Nerd LSP restarting")
+            return
+        }
         on command == "keys" => {
             self.diagnostics.start()
             self.workspace.active_view().keyboard.suppress_text = no
@@ -2162,7 +2174,7 @@ test {
         own(^editor.workspace.folder, "/no-such-completion-folder")
         editor.prompt_open(':'.as(u32))
         editor.execute(^scratch, Command.Tab)?
-        assert editor.completion.active && editor.completion.items.count == 13
+        assert editor.completion.active && editor.completion.items.count == 15
         assert bytes_text(editor.prompt) == ""
         editor.prompt_insert("e")
         assert bytes_text(editor.prompt) == "e"

@@ -8,6 +8,13 @@ pub SyntaxStyle :: enum {
     Strong
     Link
     Rule
+    Keyword
+    Type
+    Literal
+    Number
+    String
+    Comment
+    Operator
 }
 
 -- Byte offsets relative to the owning source line; end is exclusive.

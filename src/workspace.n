@@ -6,6 +6,7 @@ use line_metadata
 use markdown
 use modes
 use native
+use nerd_syntax
 use os.linux
 use panes
 use positions
@@ -20,20 +21,23 @@ pub SaveTarget :: plex {
 }
 
 pub DocumentEntry :: plex {
-    text        Document
-    path        [..]u8
-    disk        [..]u8
-    disk_exists bool
-    missing     bool
-    conflict    bool
-    stamp       ?Stat
-    candidate   ?Stat
-    syntax      ?MarkdownSyntax
+    text              Document
+    path              [..]u8
+    disk              [..]u8
+    disk_exists       bool
+    missing           bool
+    conflict          bool
+    stamp             ?Stat
+    candidate         ?Stat
+    syntax            ?MarkdownSyntax
+    nerd_syntax       ?NerdSyntax
+    language_identity u64  -- Runtime-only provider identity; never persisted.
 }
 
 impl DocumentEntry {
 
     pub release :: fn (self: ^Self) {
+        self.language_identity = 0
         self.text.release()
         self.release_syntax()
         self.path.free()
@@ -47,17 +51,48 @@ impl DocumentEntry {
             else => {
             }
         }
+        on self.nerd_syntax {
+            cache => cache.release()
+
+            else => {
+            }
+        }
         self.syntax = nil
+        self.nerd_syntax = nil
         self.text.line_changes = nil
     }
 
     -- This optional typed store is attached on demand. Plain Text never needs
-    -- line rows; leaving Markdown releases both metadata and edit observation.
+    -- line rows; leaving a highlighted mode releases its metadata and observer.
     pub update_syntax :: fn (self: ^Self) -> usize {
+        on self.file_mode() == FileMode.Nerd => {
+            on self.syntax != nil => self.release_syntax()
+            cache            := on self.nerd_syntax { current => current else => NerdSyntax { ... } }
+            observed         := on self.text.line_changes { current => current else => LineChanges { ... } }
+            prefix   : usize = 0
+            suffix   : usize = 0
+
+            on self.nerd_syntax != nil &&
+                observed.base_revision == cache.revision &&
+                observed.observed_revision == self.text.storage.revision() => {
+                prefix = observed.prefix
+                suffix = observed.suffix
+            }
+            analysed := cache.update(self.text.text(),
+                                     self.text.lines[..],
+                                     self.text.storage.revision(),
+                                     prefix,
+                                     suffix)
+            observed.reset(self.text.storage.revision(), self.text.lines.count)
+            self.text.line_changes = observed
+            self.nerd_syntax = cache
+            return analysed
+        }
         on self.file_mode() != FileMode.Markdown => {
             self.release_syntax()
             return 0
         }
+        on self.nerd_syntax != nil => self.release_syntax()
         cache            := on self.syntax { current => current else => MarkdownSyntax { ... } }
         observed         := on self.text.line_changes { current => current else => LineChanges { ... } }
         prefix   : usize = 0
@@ -83,6 +118,12 @@ impl DocumentEntry {
     pub syntax_style :: fn (self   : ^Self,
                             line   : usize,
                             offset : usize) -> SyntaxStyle {
+        on self.nerd_syntax {
+            cache => return cache.line_style(line, offset)
+
+            else => {
+            }
+        }
         return on self.syntax {
             cache  => cache.line_style(line, offset)
             else   => SyntaxStyle.Text
@@ -734,7 +775,7 @@ impl Workspace {
         -- Path and baseline only advance after a successful durable write.
         on reassociate => {
             own(^entry.path, path)
-            on entry.file_mode() != FileMode.Markdown => entry.release_syntax()
+            on entry.file_mode() == FileMode.PlainText => entry.release_syntax()
         }
         own(^entry.disk, entry.text.text())
         entry.disk_exists = yes
@@ -1412,6 +1453,111 @@ test {
 
 test "optional Markdown metadata reuses stable lines and agrees with full analysis after batched edits and history" {
     on exercise_incremental_analysis() {
+        _success => {
+        }
+
+        error! => {
+            assert no, error.show()
+        }
+    }
+}
+
+test {
+
+    assert_nerd_analysis :: fn (entry: ^DocumentEntry) -> usize {
+        analysed               := entry.update_syntax()
+        reference : NerdSyntax
+
+        defer reference.release()
+        _ := reference.update(entry.text.text(),
+                              entry.text.lines[..],
+                              entry.text.storage.revision(),
+                              0,
+                              0)
+        on entry.nerd_syntax {
+            cache => {
+                assert cache.lines.count == reference.lines.count
+                for index, actual in cache.lines {
+                    expected := ^reference.lines[index]
+                    assert actual.input == expected.input && actual.output == expected.output
+                    assert actual.length == expected.length
+                    assert actual.spans.count == expected.spans.count
+                    for span_index, span in actual.spans {
+                        assert span^ == expected.spans[span_index]
+                    }
+                    for offset in [0.as(usize) .. actual.length + 1] {
+                        assert cache.line_style(index, offset) == reference.line_style(index, offset)
+                    }
+                }
+            }
+
+            else => {
+                assert no
+            }
+        }
+        return analysed
+    }
+
+    exercise_nerd_analysis :: fn () -> void\EditError {
+        entry : DocumentEntry
+        defer entry.release()
+        own(^entry.path, "/main.n")
+        source : [..]u8
+        defer source.free()
+        for _line in [0 .. 200] {
+            for byte in """
+    value := 12 -- comment
+    """ {
+                source.push(byte^)
+            }
+        }
+        entry.text.load(bytes_text(source))?
+        assert assert_nerd_analysis(^entry) == 201
+        assert entry.syntax == nil && entry.nerd_syntax != nil && entry.text.line_changes != nil
+        gap := entry.text.storage.gap_start
+        assert entry.update_syntax() == 0 && entry.text.storage.gap_start == gap
+        middle := entry.text.line_start(100)
+        _      := entry.text.edit({ start: middle end: middle + 1 }, "V")?
+
+        assert assert_nerd_analysis(^entry) == 1
+        _ := entry.text.edit({ start: middle end: middle }, "\"\"\"")?
+        assert assert_nerd_analysis(^entry) > 50
+        _            := entry.text.undo_edit()
+        _            := assert_nerd_analysis(^entry)
+        seed : usize = 19
+
+        for step in [0 .. 200] {
+            seed = (seed * 251 + 17) % 65521
+            start := seed % (entry.text.text().count + 1)
+            end   := start + seed % 4
+
+            on end > entry.text.text().count => end = entry.text.text().count
+            replacements := ["x", "", "\n", "\r\n", "\"\"\"", "$\"{", "}", "--", "\\", "\""]
+            _            := entry.text.edit({ start end }, replacements[seed % 10])?
+
+            on step % 5 == 4 => {
+                _ := assert_nerd_analysis(^entry)
+            }
+            on step % 11 == 10 => {
+                _ := entry.text.undo_edit()
+            }
+            on step % 17 == 16 => {
+                _ := entry.text.redo_edit()
+            }
+        }
+        _ := assert_nerd_analysis(^entry)
+        own(^entry.path, "/notes.md")
+        _ := entry.update_syntax()
+        assert entry.nerd_syntax == nil && entry.syntax != nil
+        own(^entry.path, "/notes.txt")
+        _ := entry.update_syntax()
+        assert entry.nerd_syntax == nil && entry.syntax == nil && entry.text.line_changes == nil
+    }
+
+}
+
+test "optional Nerd metadata converges and matches full lexing through edits and history" {
+    on exercise_nerd_analysis() {
         _success => {
         }
 

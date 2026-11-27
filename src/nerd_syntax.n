@@ -1,0 +1,373 @@
+use syntax
+
+-- Contexts: code, string, triple string, packed integer, interpolated text,
+-- interpolation expression, and source after Nerd's end-of-source marker. A
+-- bounded stack keeps checkpoints small and deterministic on incomplete input.
+pub NerdState :: plex {
+    contexts [16]u8
+    braces   [16]usize
+    depth    usize
+}
+
+impl NerdState {
+
+    push :: fn (self: ^Self, kind: u8) -> bool {
+        on self.depth + 1 == self.contexts.count => return no
+        self.depth += 1
+        self.contexts[self.depth] = kind
+        self.braces[self.depth] = on kind == 5 {
+            yes   => 1.as(usize)
+            else  => 0.as(usize)
+        }
+        return yes
+    }
+
+    pop :: fn (self: ^Self) {
+        on self.depth == 0 => return
+        self.contexts[self.depth] = 0
+        self.braces[self.depth] = 0
+        self.depth -= 1
+    }
+
+}
+
+pub NerdLine :: plex {
+    input  NerdState
+    output NerdState
+    length usize
+    spans  [..]SyntaxSpan
+}
+
+impl NerdLine {
+
+    pub release :: fn (self: ^Self) {
+        self.spans.free()
+    }
+
+    add :: fn (self: ^Self, start: usize, end: usize, style: SyntaxStyle) {
+        on end > start => self.spans.push(SyntaxSpan { start end style })
+    }
+
+}
+
+identifier_start :: fn (byte: u8) => (byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z') || byte == '_'
+
+identifier_byte :: fn (byte: u8) => identifier_start(byte) || (byte >= '0' && byte <= '9')
+
+digit :: fn (byte: u8) => byte >= '0' && byte <= '9'
+
+word_style :: fn (word: string) -> SyntaxStyle {
+    on word {
+        "fn", "for", "on", "else", "defer", "undo", "assert", "break", "again", "return", "plex", "union", "enum", "ffi", "intrinsic", "use", "pub", "impl", "trait", "where", "pragma", "with", "in", "as", "test"  => return SyntaxStyle.Keyword
+        "yes", "no", "nil", "undefined"                                                                                                                                                                              => return SyntaxStyle.Literal
+
+        "bool", "string", "usize", "isize", "u8", "u16", "u32", "u64", "i8", "i16", "i3"
+    +"2", "i64", "f32", "f64", "void", "arena", "VaList", "box", "atomic" => return SyntaxStyle.Type
+
+        else => return SyntaxStyle.Text
+    }
+}
+
+lex_line :: fn (text: string, input: NerdState) -> NerdLine {
+    line : NerdLine
+    line.input = input
+    line.output = input
+    line.length = text.count
+    on line.length > 0 && text[line.length - 1] == '\r' => line.length -= 1
+    position : usize = 0
+    for position < line.length {
+        start := position
+        kind  := line.output.contexts[line.output.depth]
+
+        on kind == 6 => {
+            line.add(position, line.length, SyntaxStyle.Comment)
+            break
+        }
+        on kind >= 1 &&
+            kind <= 4 => {
+            emitted := no
+            for position < line.length {
+                byte := text[position]
+                on byte == '\\' => {
+                    position += 1
+                    on position < line.length => {
+                        position += 1
+                        for position < line.length &&
+                            (text[position] & 0xc0) == 0x80 {
+                            position += 1
+                        }
+                    }
+                    again
+                }
+                on kind == 4 &&
+                    byte == '{' => {
+                    line.add(start, position, SyntaxStyle.String)
+                    emitted = yes
+                    line.add(position, position + 1, SyntaxStyle.Operator)
+                    position += 1
+                    on !line.output.push(5) => {
+                        line.add(position, line.length, SyntaxStyle.String)
+                        position = line.length
+                    }
+                    break
+                }
+                closes         := (kind == 1 || kind == 4) && byte == '"' || kind == 3 && byte == '\''
+                size   : usize = 1
+
+                on kind == 2 &&
+                    position + 2 < line.length &&
+                    text[position..position + 3] == "\"\"\"" => {
+                    closes = yes
+                    size   = 3
+                }
+                position += size
+                on closes => {
+                    line.output.pop()
+                    break
+                }
+            }
+            -- An interpolation opener has already emitted the text range.
+            on !emitted => line.add(start, position, SyntaxStyle.String)
+            again
+        }
+        on position + 1 < line.length &&
+            text[position..position + 2] == "--" => {
+            line.add(position, line.length, SyntaxStyle.Comment)
+            break
+        }
+        on position + 1 < line.length &&
+            text[position] == 0xc2 &&
+            text[position + 1] == 0xac => {
+            line.output.contexts[line.output.depth] = 6
+            line.add(position, line.length, SyntaxStyle.Comment)
+            break
+        }
+        byte   := text[position]
+        prefix := position + 1 < line.length && (byte == '$' || byte == '+' || byte == 'c') && text[position + 1] == '"'
+
+        on byte == '"' ||
+            byte == '\'' ||
+            prefix => {
+            quote         := position + (on prefix { yes => 1.as(usize) else => 0.as(usize) })
+            kind          := on byte == '\'' { yes => 3.as(u8) else => 1.as(u8) }
+            size  : usize = 1
+
+            on prefix && (byte == '$' || byte == '+') => kind = 4
+            on !prefix &&
+                byte == '"' &&
+                quote + 2 < line.length &&
+                text[quote..quote + 3] == "\"\"\"" => {
+                kind = 2
+                size = 3
+            }
+            line.add(position, quote + size, SyntaxStyle.String)
+            position = quote + size
+            on !line.output.push(kind) => {
+                line.add(position, line.length, SyntaxStyle.String)
+                break
+            }
+            again
+        }
+        on kind == 5 => {
+            on byte == '{' => line.output.braces[line.output.depth] += 1
+            on byte == '}' => {
+                line.output.braces[line.output.depth] -= 1
+                on line.output.braces[line.output.depth] == 0 => line.output.pop()
+            }
+        }
+        on identifier_start(byte) => {
+            position += 1
+            for position < line.length &&
+                identifier_byte(text[position]) {
+                position += 1
+            }
+            style := word_style(text[start..position])
+            on style != SyntaxStyle.Text => line.add(start, position, style)
+            again
+        }
+        on digit(byte) => {
+            position += 1
+            base := position < line.length && byte == '0' && (text[position] == 'x' || text[position] == 'b' || text[position] == 'o')
+            for position < line.length {
+                next := text[position]
+                on digit(next) || next == '_' || base && identifier_byte(next) {
+                    yes   => position += 1
+                    else  => break
+                }
+            }
+            on !base &&
+                position + 1 < line.length &&
+                text[position] == '.' &&
+                digit(text[position + 1]) => {
+                position += 1
+                for position < line.length &&
+                    (digit(text[position]) ||
+                        text[position] == '_') {
+                    position += 1
+                }
+            }
+            on !base &&
+                position < line.length &&
+                (text[position] == 'e' || text[position] == 'E') => {
+                position += 1
+                on position < line.length &&
+                    (text[position] == '+' || text[position] == '-') => position += 1
+                for position < line.length &&
+                    (digit(text[position]) ||
+                        text[position] == '_') {
+                    position += 1
+                }
+            }
+            line.add(start, position, SyntaxStyle.Number)
+            again
+        }
+        on byte < 128 &&
+            byte != ' ' &&
+            byte != '\t' => line.add(position, position + 1, SyntaxStyle.Operator)
+        position += 1
+    }
+    return line
+}
+
+pub NerdSyntax :: plex {
+    ready    bool
+    revision u64
+    lines    [..]NerdLine
+}
+
+impl NerdSyntax {
+
+    pub release :: fn (self: ^Self) {
+        for line in self.lines {
+            line.release()
+        }
+        self.lines.free()
+    }
+
+    -- Prefix/suffix are known unchanged by edit notifications, never hashes.
+    -- Reuse suffix rows as soon as their entering lexer state matches again.
+    -- Return the number of lines actually analysed (zero on a cached repaint).
+    pub update :: fn (self     : ^Self,
+                      text     : string,
+                      starts   : []usize,
+                      revision : u64,
+                      prefix   : usize,
+                      suffix   : usize) -> usize {
+        on self.ready && self.revision == revision => return 0
+        first := on self.ready {
+            yes   => prefix
+            else  => 0.as(usize)
+        }
+        on first > self.lines.count => first = self.lines.count
+        on first > starts.count => first = starts.count
+        retained := on self.ready {
+            yes   => suffix
+            else  => 0.as(usize)
+        }
+        on retained > self.lines.count - first => retained = self.lines.count - first
+        on retained > starts.count - first => retained = starts.count - first
+        on starts.count == self.lines.count {
+            yes => {
+                -- Ordinary character edits retain the line table allocation.
+                for index in [first .. self.lines.count - retained] {
+                    self.lines[index].release()
+                    self.lines[index] = NerdLine { ... }
+                }
+            }
+
+            else => {
+                next : [..]NerdLine
+                next.resize_to(starts.count)
+                for index in [0.as(usize) .. first] {
+                    next[index] = self.lines[index]
+                }
+                for index in [0.as(usize) .. retained] {
+                    next[starts.count - retained + index] = self.lines[self.lines.count - retained + index]
+                }
+                for index in [first .. self.lines.count - retained] {
+                    self.lines[index].release()
+                }
+                self.lines.free()
+                self.lines = next
+            }
+        }
+        state : NerdState
+        on first > 0 => state = self.lines[first - 1].output
+        analysed : usize = 0
+        for index in [first .. starts.count] {
+            on index >= starts.count - retained &&
+                self.lines[index].input == state => break
+            self.lines[index].release()
+            end := on index + 1 < starts.count {
+                yes   => starts[index + 1] - 1
+                else  => text.count
+            }
+            self.lines[index] = lex_line(text[starts[index]..end], state)
+            state    = self.lines[index].output
+            analysed += 1
+        }
+        self.ready = yes
+        self.revision = revision
+        return analysed
+    }
+
+    pub line_style :: fn (self     : ^Self,
+                          line     : usize,
+                          position : usize) -> SyntaxStyle {
+        on line >= self.lines.count ||
+            position >= self.lines[line].length => return SyntaxStyle.Text
+        spans         := self.lines[line].spans[..]
+        lower : usize = 0
+        upper         := spans.count
+
+        for lower < upper {
+            middle := lower + (upper - lower) / 2
+            on spans[middle].end <= position {
+                yes   => lower = middle + 1
+                else  => upper = middle
+            }
+        }
+        on lower < spans.count &&
+            spans[lower].start <= position => return spans[lower].style
+        return SyntaxStyle.Text
+    }
+
+}
+
+test "Nerd lexer separates comments, literals and nested interpolation state" {
+    cache : NerdSyntax
+    defer cache.release()
+    starts := [0.as(usize)]
+    source := "fn yes u32 12.5e+2 -- string \"ignored\""
+
+    assert cache.update(source, starts[..], 1, 0, 0) == 1
+    assert cache.line_style(0, 0) == SyntaxStyle.Keyword
+    assert cache.line_style(0, 3) == SyntaxStyle.Literal
+    assert cache.line_style(0, 7) == SyntaxStyle.Type
+    assert cache.line_style(0, 11) == SyntaxStyle.Number
+    assert cache.line_style(0, 19) == SyntaxStyle.Comment
+    first := lex_line("$\"text {on yes {", NerdState { ... })
+    defer first.release()
+    assert first.output.depth == 2 && first.output.braces[2] == 2
+    second := lex_line("else => \"--literal\"} } tail\" -- comment",
+                       first.output)
+    defer second.release()
+    assert second.output == NerdState { ... }
+    previous : usize = 0
+    for span in second.spans {
+        assert span.start >= previous && span.end <= second.length && span.end > span.start
+        previous = span.end
+    }
+    triple := lex_line("\"\"\"line -- literal", NerdState { ... })
+    defer triple.release()
+    assert triple.output.depth == 1 && triple.output.contexts[1] == 2
+    closing := lex_line("line\"\"\" fn", triple.output)
+    defer closing.release()
+    assert closing.output == NerdState { ... }
+    assert closing.spans[closing.spans.count - 1].style == SyntaxStyle.Keyword
+    ended := lex_line("¬ fn ignored", NerdState { ... })
+    defer ended.release()
+    remaining := lex_line("fn ignored", ended.output)
+    defer remaining.release()
+    assert remaining.spans.count == 1 && remaining.spans[0].style == SyntaxStyle.Comment
+}

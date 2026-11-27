@@ -16,7 +16,7 @@ import time
 
 
 class Session:
-    def __init__(self, binary, folder, *arguments):
+    def __init__(self, binary, folder, *arguments, environment=None):
         self.master, slave = pty.openpty()
         self.original_attributes = termios.tcgetattr(self.master)
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
@@ -26,7 +26,7 @@ class Session:
         self.process = subprocess.Popen(
             [str(binary), *arguments], cwd=folder, stdin=slave, stdout=slave,
             stderr=slave, start_new_session=True,
-            env={**os.environ, "HOME": str(home), "TERM": "xterm-256color"},
+            env={**os.environ, "HOME": str(home), "TERM": "xterm-256color", **(environment or {})},
         )
         os.close(slave)
         self.drain(0.25)
@@ -2477,6 +2477,193 @@ def markdown_indentation(binary, folder):
             session.quit()
 
 
+def fake_nerd(folder, mode="normal"):
+    """Exercise the actual child transport without relying on diagnostic wording."""
+    import json
+    tools = folder / "tools"
+    tools.mkdir(exist_ok=True)
+    script = tools / "nerd"
+    script.write_text("#!/usr/bin/env python3\n" + r'''
+import json, os, sys, time
+from pathlib import Path
+root = Path(__file__).parent.parent
+mode = MODE
+(root / "lsp.pid").write_text(str(os.getpid()))
+documents = {}
+def send(message):
+    body = json.dumps(message).encode()
+    framed = f"Content-Length: {len(body)}\r\n\r\n".encode() + body
+    if mode == "fragment":
+        for offset in range(0, len(framed), 7):
+            sys.stdout.buffer.write(framed[offset:offset + 7])
+            sys.stdout.buffer.flush()
+            time.sleep(0.001)
+    else:
+        sys.stdout.buffer.write(framed)
+        sys.stdout.buffer.flush()
+while True:
+    headers = {}
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            sys.exit(0)
+        if line == b"\r\n":
+            break
+        key, value = line.decode().split(":", 1)
+        headers[key.lower()] = value.strip()
+    message = json.loads(sys.stdin.buffer.read(int(headers["content-length"])))
+    with (root / "lsp.log").open("a") as log:
+        log.write(json.dumps(message) + "\n")
+    method = message["method"]
+    params = message.get("params")
+    if method == "initialize":
+        send({"jsonrpc": "2.0", "id": message["id"], "result": {"capabilities": {"positionEncoding": "utf-16", "textDocumentSync": 2}}})
+    elif method == "initialized" and mode == "malformed":
+        sys.stdout.buffer.write(b"Content-Length: 1048577\r\n\r\n")
+        sys.stdout.buffer.flush()
+    elif method == "textDocument/didOpen":
+        document = params["textDocument"]
+        documents[document["uri"]] = document["text"]
+        if mode == "death":
+            sys.exit(3)
+    elif method == "textDocument/didChange":
+        documents[params["textDocument"]["uri"]] = params["contentChanges"][0]["text"]
+    elif method == "textDocument/didClose":
+        documents.pop(params["textDocument"]["uri"], None)
+    elif method == "textDocument/documentSymbol":
+        if mode == "slow":
+            time.sleep(0.6)
+        for uri, text in documents.items():
+            diagnostics = []
+            if "BROKEN" in text:
+                diagnostics = [{"range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 6}}, "severity": 1, "message": "Unknown BROKEN"}]
+            send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {"uri": uri, "diagnostics": diagnostics}})
+        send({"jsonrpc": "2.0", "id": message["id"], "result": []})
+    elif method == "shutdown":
+        send({"jsonrpc": "2.0", "id": message["id"], "result": None})
+    elif method == "exit":
+        sys.exit(0)
+'''.replace("MODE", repr(mode)))
+    script.chmod(0o755)
+    return {"PATH": str(tools) + os.pathsep + os.environ["PATH"]}
+
+
+def await_screen(session, expected, seconds=5):
+    finish = time.monotonic() + seconds
+    while time.monotonic() < finish:
+        if expected in screen(session):
+            return
+        session.drain(0.05)
+    raise AssertionError((expected, screen(session), bytes(session.output[-2000:])))
+
+
+def assert_lsp_gone(folder):
+    pid_file = folder / "lsp.pid"
+    assert pid_file.exists(), "language server never started"
+    pid = int(pid_file.read_text())
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return
+    raise AssertionError(f"language server {pid} was not reaped")
+
+
+def nerd_highlighting(binary, folder):
+    source = b'main :: fn() {\n value := "-- literal"\n -- comment\n}\n'
+    path = folder / "main.n"
+    path.write_bytes(source)
+    environment = fake_nerd(folder, "fragment")
+    with Session(binary, folder, "-r", path.name, environment=environment) as session:
+        await_screen(session, b"Nerd LF E:0 W:0")
+        assert b"38;2;199;146;234" in session.output, "keyword colour missing"
+        assert b"38;2;169;205;145" in session.output, "string colour missing"
+        assert b"38;2;115;130;153" in session.output, "comment colour missing"
+        session.send(" wv")
+        assert screen(session).count(b"Nerd LF") == 2
+        session.send('i"""')
+        session.send(b"\x13")
+        assert path.read_bytes() == b'"""' + source
+        session.send(b"\x1a" * 3 + b"\x13")
+        assert path.read_bytes() == source
+        session.command("w copy.md")
+        assert b"Markdown LF" in screen(session)
+        session.quit()
+    assert_lsp_gone(folder)
+    with Session(binary, folder) as session:
+        assert b"Markdown LF" in screen(session)
+        session.quit()
+
+
+def nerd_diagnostics(binary, folder):
+    import json
+    path = folder / "space #é.n"
+    path.write_bytes(b"BROKEN\n")
+    environment = fake_nerd(folder, "slow")
+    with Session(binary, folder, "-r", path.name, environment=environment) as session:
+        # Edit during the first delayed analysis. Its error must never become current.
+        session.send("dd")
+        session.drain(0.8)
+        assert b"E:1" not in screen(session)
+        await_screen(session, b"E:0 W:0")
+        session.send("iBROKEN")
+        await_screen(session, b"E:1 W:0")
+        session.command("diagnostics")
+        assert b"Unknown BROKEN" in screen(session)
+        assert b"UTF-16" in screen(session)
+        session.normal()
+        session.send(b"\x1a" * 6)
+        await_screen(session, b"E:0 W:0")
+        session.quit()
+    assert_lsp_gone(folder)
+    events = [json.loads(line) for line in (folder / "lsp.log").read_text().splitlines()]
+    methods = [event["method"] for event in events]
+    assert "textDocument/didOpen" in methods and "textDocument/didChange" in methods
+    assert "shutdown" in methods and "exit" in methods, methods
+    opened = next(event for event in events if event["method"] == "textDocument/didOpen")
+    assert "%20%23%C3%A9.n" in opened["params"]["textDocument"]["uri"]
+    assert path.read_bytes() == b"BROKEN\n", "diagnostics wrote the source file"
+
+
+def nerd_lsp_failures(binary, folder):
+    for mode in ("death", "malformed"):
+        case = folder / mode
+        case.mkdir()
+        path = case / "main.n"
+        path.write_bytes(b"main :: fn() {}\n")
+        environment = fake_nerd(case, mode)
+        with Session(binary, case, "-r", path.name, environment=environment) as session:
+            await_screen(session, b"LSP!")
+            session.command("diagnostics")
+            assert b"lsp-restart" in screen(session)
+            session.normal()
+            session.send("iX")
+            session.send(b"\x13")
+            assert path.read_bytes().startswith(b"X"), "server failure blocked editing"
+            assert_lsp_gone(case)
+            fake_nerd(case)
+            session.command("lsp-restart")
+            await_screen(session, b"E:0 W:0")
+            pid = int((case / "lsp.pid").read_text())
+            os.kill(pid, signal.SIGSTOP)
+            started = time.monotonic()
+            session.quit()
+            assert time.monotonic() - started < 2, "stopped server blocked quitting"
+        assert_lsp_gone(case)
+
+
+def nerd_lsp_real(binary, folder):
+    path = folder / "real.n"
+    path.write_bytes(b"main :: fn() {}\n")
+    with Session(binary, folder, "-r", path.name) as session:
+        await_screen(session, b"Nerd LF E:0 W:0", seconds=10)
+        session.send("ddimain :: fn() { no_such_symbol() }")
+        await_screen(session, b"E:1", seconds=10)
+        session.command("diagnostics")
+        assert b"no_such_symbol" in screen(session)
+        session.quit()
+    assert path.read_bytes() == b"main :: fn() {}\n"
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", required=True, type=Path)
@@ -2491,7 +2678,7 @@ def main():
     allowed = {"libc.so.6", "libm.so.6", "libgcc_s.so.1", "linux-vdso.so.1"}
     unexpected = {name for name in names if name not in allowed and not Path(name).name.startswith("ld-linux-")}
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
-    checks = [markdown_incremental, markdown_source, markdown_save_as, markdown_indentation, save_as_confirmation, save_as_changed_target, save_as_changed_source, save_as_quit, backspace_modes, backspace_insert, recording_cancel, delete_lines, normal_delete, repeat_recording, repeat_failure, new_buffer, exit_input_cleanup, pane_controls, pane_ctrl_w, pane_file_picker, file_picker, file_picker_stale_and_cancel, cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
+    checks = [nerd_highlighting, nerd_diagnostics, nerd_lsp_failures, nerd_lsp_real, markdown_incremental, markdown_source, markdown_save_as, markdown_indentation, save_as_confirmation, save_as_changed_target, save_as_changed_source, save_as_quit, backspace_modes, backspace_insert, recording_cancel, delete_lines, normal_delete, repeat_recording, repeat_failure, new_buffer, exit_input_cleanup, pane_controls, pane_ctrl_w, pane_file_picker, file_picker, file_picker_stale_and_cancel, cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
               search_replace_and_buffers, search_origins, slash_replacement, confirmation_recovery, byte_paths_and_checkpoint_failures,
               second_instance, crash_and_signals, undo_caret, word_delete, buffer_picker, buffer_picker_close_selected, buffer_picker_preview, buffer_picker_recovery, buffer_picker_unicode_bytes, enhanced_key_actions, keyboard_diagnostics, hjkl_and_line_selection, leader_overlay, control_hjkl, duplicate_selection, command_completion, live_completion_filter, file_completion, home_paths, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
     selected = [check for check in checks if args.filter in check.__name__]
