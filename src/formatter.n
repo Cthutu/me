@@ -1,0 +1,229 @@
+use characters
+use native
+use os.linux
+use std.text
+use std.time
+
+-- Only the temporary copy belongs to the child. Polling never waits for it; the
+-- editor revalidates its document revision before committing the result.
+pub NerdFormatter :: plex {
+    process   i32
+    started   Instant
+    directory [..]u8
+    path      [..]u8
+}
+
+impl NerdFormatter {
+
+    pub cancel :: fn (self: ^Self) {
+        on self.process > 0 => {
+            _            := syscall(SYS_KILL, (-self.process).as(u64), 9, 0, 0, 0, 0)
+            _            := syscall(SYS_KILL, self.process.as(u64), 9, 0, 0, 0, 0)
+            status : i32 = 0
+            waited       := sys_waitpid(self.process, ^status, 0)
+
+            for waited < 0 && last_error() == EINTR {
+                waited = sys_waitpid(self.process, ^status, 0)
+            }
+        }
+        self.process = 0
+        on self.path.count > 0 => {
+            _ := syscall(SYS_UNLINK,
+                         bytes_text(self.path).c_string().as(usize).as(u64),
+                         0,
+                         0,
+                         0,
+                         0,
+                         0)
+            self.path.clear()
+        }
+        on self.directory.count > 0 => {
+            _ := syscall(SYS_RMDIR,
+                         bytes_text(self.directory).c_string().as(usize).as(u64),
+                         0,
+                         0,
+                         0,
+                         0,
+                         0)
+            self.directory.clear()
+        }
+    }
+
+    pub release :: fn (self: ^Self) {
+        self.cancel()
+        self.path.free()
+        self.directory.free()
+    }
+
+    pub start :: fn (self: ^Self, scratch: ^arena, text: string) -> void\string {
+        self.cancel()
+        executable := installed_nerd(scratch)?
+        pid        := syscall(SYS_GETPID, 0, 0, 0, 0, 0, 0)
+        directory  := ""
+        created    := no
+
+        for attempt in [0 .. 32] {
+            directory = scratch.pr($"/tmp/me-format-{pid}-{attempt}")
+            on syscall(SYS_MKDIR, directory.c_string().as(usize).as(u64), 0x1c0, 0, 0, 0, 0).as(i64) == 0 => {
+                created = yes
+                break
+            }
+            on last_error() != EEXIST => return "Cannot create Nerd formatting "
+                +"temporary"!
+        }
+        on !created => return "Cannot create a unique Nerd formatting temporary"!
+        own(^self.directory, directory)
+        defer on self.process == 0 => self.cancel()
+        path := scratch.pr($"{directory}/source.n")
+        own(^self.path, path)
+        atomic_write(scratch, path, text, no)?
+        environment           := read_file(scratch, "/proc/self/environ")?
+        env         : [..]^i8
+
+        defer env.free()
+        offset : usize = 0
+        for offset < environment.count {
+            env.push(environment.data.as(^i8) + offset)
+            for offset < environment.count && environment[offset] != 0 {
+                offset += 1
+            }
+            offset += 1
+        }
+        env.push(nil)
+        arguments : [4]^i8 =
+                             [executable.c_string(), "format".c_string(), path.c_string(), nil]
+        quiet              := sys_open("/dev/null".c_string(), O_RDWR | O_CLOEXEC, 0)
+
+        on quiet < 0 => return "Cannot isolate Nerd formatter from terminal"!
+        defer _ := sys_close(quiet)
+        process := sys_fork()
+        on process < 0 => return "Cannot start Nerd formatter"!
+        on process == 0 => {
+            _ := syscall(SYS_SETPGID, 0, 0, 0, 0, 0, 0)
+            _ := syscall(SYS_PRCTL, 1, 9, 0, 0, 0, 0)
+
+            on syscall(SYS_GETPPID, 0, 0, 0, 0, 0, 0) != pid => {
+                sys_exit(127)
+                return "Formatter parent exited"!
+            }
+            empty : u64 = 0
+            _           := syscall(SYS_RT_SIGPROCMASK, 2, (^empty).as(usize).as(u64), 0, 8, 0, 0)
+
+            for descriptor in [0 .. 3] {
+                on sys_dup2(quiet, descriptor) < 0 => {
+                    sys_exit(127)
+                    return "Cannot isolate Nerd formatter"!
+                }
+            }
+            _ := sys_execve(arguments[0], arguments.data, env.data)
+            sys_exit(127)
+            return "Cannot execute Nerd formatter"!
+        }
+        self.process = process
+        self.started = now()
+    }
+
+    pub poll :: fn (self: ^Self, scratch: ^arena) -> ?string\string {
+        on self.process <= 0 => return nil
+        status : i32 = 0
+        waited       := sys_waitpid(self.process, ^status, 1)
+
+        on waited != self.process => {
+            on waited < 0 &&
+                last_error() != EINTR => {
+                self.cancel()
+                return "Cannot wait for Nerd formatter"!
+            }
+            on elapsed(self.started, now()) >= from_ms(30000) => {
+                self.cancel()
+                return "Nerd format timed out; file not saved"!
+            }
+            return nil
+        }
+        self.process = 0
+        defer self.cancel()
+        on status != 0 => return "Nerd format failed; file not saved"!
+        info := on metadata(scratch, bytes_text(self.path)) {
+            value  => value
+            else   => return "Nerd formatter removed its output; file not saved"!
+        }
+        on (info.mode & 0xf000) != 0x8000 => return "Nerd formatter output is "
+            +"not "
+            +"a regular file; file not saved"!
+        on info.size > 67108864 => return "Nerd formatter output exceeds 64 "
+            +"MiB; "
+            +"file not saved"!
+        formatted := read_file(scratch, bytes_text(self.path))?
+        on formatted.utf8_validate() {
+            _valid => return formatted
+
+            _invalid! => return "Nerd formatter produced invalid UTF-8; file "
+                +"not "
+                +"saved"!
+        }
+    }
+
+}
+
+-- Headless workspace saves share the same implementation; the interactive
+-- editor uses start/poll and keeps processing input and terminal events.
+pub format_nerd :: fn (scratch: ^arena, text: string) -> string\string {
+    formatter : NerdFormatter
+    defer formatter.release()
+    formatter.start(scratch, text)?
+    for formatter.process > 0 {
+        on formatter.poll(scratch)? => [formatted] return formatted
+        sleep_ms(2)
+    }
+    return "Nerd formatter ended without output"!
+}
+
+-- Formatting changes whitespace throughout a document. Keep selections near the
+-- same source character rather than collapsing every pane to byte zero.
+pub formatted_position :: fn (before   : string,
+                              after    : string,
+                              position : usize) -> usize {
+    on position >= before.count => return after.count
+    remaining : usize = 0
+    for byte in before[..position] {
+        on byte^ != ' ' &&
+            byte^ != '\t' &&
+            byte^ != '\r' &&
+            byte^ != '\n' => remaining += 1
+    }
+    offset : usize = 0
+    for offset < after.count {
+        byte       := after[offset]
+        whitespace := byte == ' ' || byte == '\t' || byte == '\r' || byte == '\n'
+
+        on remaining == 0 &&
+            !whitespace => {
+            -- Comment reflow or token normalisation can alter the byte ordinal.
+            -- Always leave the view on a complete grapheme boundary.
+            boundary : usize = 0
+            for boundary < offset {
+                following := next_character(after, boundary)
+                on following > offset => return boundary
+                boundary = following
+            }
+            return offset
+        }
+        on !whitespace => remaining -= 1
+        offset += 1
+    }
+    return after.count
+}
+
+test "formatting positions follow source characters across whitespace changes" {
+    assert formatted_position("a;😀x", "a😀x", 2) == 1
+    assert formatted_position("a;éx", "aéx", 2) == 1
+    assert formatted_position("x:=1", """
+        x := 1
+        """, 3) == 5
+    assert formatted_position("x:=1", """
+        x := 1
+        """, 4) == 7
+    assert formatted_position("α := 1", """
+        α := 1
+        """, 2) == 3
+}

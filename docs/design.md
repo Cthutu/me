@@ -1762,7 +1762,7 @@ analysis; it must not force every kind of analysis into lines.
 
 Matt requested starting Nerd support after incremental highlighting. The initial
 implementation scope is source highlighting and live diagnostics; completion,
-hover, navigation, formatting actions and provider configuration remain later
+hover, navigation and provider configuration remain later
 work. These are concrete first-delivery defaults, not a settled general-purpose
 mode configuration schema:
 
@@ -1805,7 +1805,8 @@ mode configuration schema:
   unresponsive providers. No new external libraries or direct libc FFI.
 
 Configuration, manual recognition overrides, completion/navigation/hover,
-formatting and generic asynchronous/versioned-provider policies remain open.
+generic formatter configuration and asynchronous/versioned-provider policies remain
+open. T18 below selects the installed Nerd CLI for formatting on save.
 This does not choose a Markdown LSP or formatter. Syntax trees and range-based
 services remain independent of optional line caches.
 
@@ -1835,8 +1836,56 @@ Initial intelligent-indentation defaults (not a general formatting engine):
   Fenced/indented code gets whitespace continuation without list generation.
 - Each generated edit is one history operation, including caret hints and shared
   view adjustment. Replacement selections still work. Prompts and internal clipboard
-  paste remain separate from newline commands; file loading/saving never reformats.
+  paste remain separate from newline commands; loading never reformats. T18 below
+  introduces formatting on Nerd saves.
   Terminal paste still lacks std.term boundary events, so its newlines trigger
   indentation like ordinary key input.
 
 Mode configuration and broader Markdown nesting/renumbering remain future work.
+
+
+## 37. Nerd formatting on save (T18)
+
+Matt requested running `nerd format` when saving in Nerd mode. This chooses the
+installed Nerd CLI on PATH, independently of LSP availability; it does not choose
+a Markdown formatter or a generic configuration system.
+
+- Use the resolved destination's mode, including save-as into/out of `.n`.
+  Ctrl+S, `:w`, `:ww`, `:w!` and `:wq` use the shared save path. Explicit saves
+  format even clean Nerd buffers; save-all formats every named Nerd buffer.
+- Resolve conflicts and obtain any overwrite approval before formatting. Run
+  `nerd format <private-copy.n>` with an argument vector, without shell parsing.
+  The copy lives in an exclusively created mode-0700 temporary directory; it
+  never shares the target filename or modifies the target directly.
+- Initial execution policy: poll the child without blocking the terminal loop,
+  with a 30-second monotonic deadline. A measured format of ME's large editor
+  module takes about 15 seconds, so a short synchronous timeout is insufficient.
+  Redirect all three standard descriptors to `/dev/null`, reset inherited signal
+  masks, arrange parent-death termination, and kill/reap a timed-out process group.
+  Validate regular-file output, UTF-8 and a 64 MiB output limit. Remove the
+  temporary copy/directory on success, cancellation or failure. Headless workspace
+  saves wait using the same worker; interactive saves use start/poll.
+- Keep one pending formatter save. Further saves report that formatting is in
+  progress. Retain document ID/revision, resolved target metadata and any approved
+  target bytes. Editing its buffer cancels the job before committing a stale
+  result. For `:wq`, changing any buffer or the document set cancels the pending
+  save-and-quit, so edits to an earlier saved buffer cannot be missed. Quitting or
+  killing any buffer cancels pending work, preventing document index reuse.
+  Merely navigating, resizing or changing panes remains responsive. `:wq`
+  serialises Nerd saves and resumes at the next document; it waits to quit until
+  all saves succeed, including filename prompts for unnamed work.
+- A missing/failing/timed-out formatter reports a save error. Before successful
+  atomic replacement, neither the source buffer nor its baseline/path changes.
+  Revalidate target metadata/content after formatting, including explicit force
+  saves. Existing durability/metadata/symlink and overwrite-confirmation rules
+  remain in effect; post-rename durability errors retain their existing wording.
+- Only after the durable write succeeds, apply changed output as one buffer edit
+  and advance the disk baseline/path. Adjust every shared view near the same
+  non-whitespace source character, repairing its caret and preferred column.
+  Positions remain grapheme boundaries. The mapping is approximate when the
+  formatter changes comments or source tokens.
+  The invoking view retains undo/redo caret hints. Undo restores pre-format text
+  as unsaved work without rewriting disk; a no-change format adds no history.
+- Nerd owns the resulting layout and endings, including its trailing newline.
+  Plain Text and Markdown saves preserve source bytes. This supersedes earlier
+  blanket statements that saving never reformats; loading still preserves bytes.

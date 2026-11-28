@@ -585,8 +585,8 @@ Ordinary :q should checkpoint unsaved work and quit, as it did before T14.
   across every open Nerd buffer, including dependency edits. Crash/timeout and
   malformed-message handling preserve editing; teardown is bounded and reaped.
 - First-delivery defaults and limits are in design §35. Completion, hover,
-  navigation, formatting and provider/recognition configuration remain later
-  scope; this does not select a Markdown provider.
+  navigation and provider/recognition configuration remain later
+  scope; T18 adds Nerd formatting on save. This does not select a Markdown provider.
 - Three independently reproduced Nerd bugs took priority: indexed compound
   assignments, array-field indices mistaken for box type arguments, and packed
   literals hiding source tests. Dedicated worktrees and complete compiler gates
@@ -612,3 +612,20 @@ Ordinary :q should checkpoint unsaved work and quit, as it did before T14.
   groups and five focused release groups passed. Type checking, idempotent
   formatting, Python compilation, UTF-8 and diff checks passed. Commit/push and
   release installation complete this slice; installed editing smoke follows.
+
+
+### T18 — Format Nerd files on save — done
+
+- Run the installed `nerd format` on a private copy before committing all Nerd
+  saves, including clean buffers and save-as into `.n`.
+- Retain overwrite approval and revalidation, atomic replacement and source edits
+  on formatter failure. Keep successful formatting undoable and repair all views.
+- Formatting runs outside the terminal loop with a 30-second child deadline,
+  isolated standard descriptors and cancellation/timeout termination/reaping.
+  Guard revisions/target identity and serialise save-and-quit; see design §37.
+- Verified: 201 native tests (89 ME + 112 imported), all 68 debug terminal
+  groups and eight focused release groups passed. Nerd picker fixtures now
+  expect the formatter's trailing newline; affected/remaining groups passed on
+  rerun. Type checking, idempotent formatting, Python compilation, UTF-8 and
+  diff checks passed. Required commit/push and installation follow; the panel
+  records the final revision and installed smoke results.

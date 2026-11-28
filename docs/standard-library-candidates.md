@@ -119,3 +119,16 @@ serve the terminal loop. This remains a local evaluation, alongside cancellable
 file discovery; general child-process/framing facilities could later avoid their
 duplicated lifecycle primitives. LSP synchronisation and Nerd's diagnostics barrier
 are editor/provider policies, not proposed standard-library APIs.
+
+
+## Isolated bounded formatter execution — local candidate
+
+`src/formatter.n` uses a private directory and syscall-only child to invoke an
+installed executable with explicit arguments, isolated standard descriptors,
+parent-death termination, a monotonic deadline and timeout kill/reap. It validates
+output before saving. Start/poll keep the terminal loop responsive; cancellation
+kills/reaps the worker. The current `std.process` runner waits without a deadline
+or descriptor policy; this local worker is not a generic provider API. Shared PATH discovery lives in `native.installed_nerd`
+and is also used by the LSP transport. Native/PTY checks exercise real formatting,
+failure isolation, overwrite timing, target races, missing executables and reaping.
+These are candidates for evaluation, not automatic standard-library changes.

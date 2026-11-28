@@ -497,8 +497,8 @@ Markdown highlighting is implemented. Afterwards begin LSP support with the Nerd
 mode (T16). Syntax trees and range-based services remain valid consumers without
 being forced into the line cache. T16 now starts Nerd lexical highlighting and
 live diagnostics using the installed `nerd lsp`; first-delivery defaults are
-recorded in design §35. Configuration, completion, hover, navigation and formatting
-remain open. Other later modes
+recorded in design §35. T18 adds formatting on Nerd saves using the installed CLI.
+Configuration, completion, hover and navigation remain open. Other later modes
 milestones remain unscoped.
 
 
@@ -542,3 +542,11 @@ selection cuts one grapheme; EOF is harmless and preserves the clipboard.
 Intelligent indentation is requested; first-delivery Nerd/Markdown defaults are
 recorded in design §36. These supersede the former empty-file Insert and MS1
 no-automatic-indentation policies. General configuration remains future work.
+
+
+## Nerd formatting on save — settled
+
+Run the installed `nerd format` on Nerd-mode saves. Save-as uses the destination
+mode. Initial safe execution, undo, shared-view and error behaviour are recorded
+in design §37. Generic mode/provider configuration and Markdown formatting remain
+open; Nerd formatting is now delivered by T18 rather than an unchosen provider.

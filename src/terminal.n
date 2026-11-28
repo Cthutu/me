@@ -193,6 +193,7 @@ impl Terminal {
                 error! => self.editor.tell(error)
             }
         }
+        self.editor.poll_format(^self.scratch)
         self.editor.language.poll(^self.scratch, ^self.editor.workspace)
         self.editor.poll_file_picker()
         current := now()

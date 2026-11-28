@@ -3,6 +3,7 @@ use characters
 use completion
 use document
 use file_picker
+use formatter
 use indentation
 use key_diagnostics
 use keyboard
@@ -65,7 +66,44 @@ impl SaveConfirmation {
 
 }
 
+pub PendingSave :: plex {
+    worker         NerdFormatter
+    active         bool
+    document_id    usize
+    revision       u64
+    path           [..]u8
+    disk           [..]u8
+    approved_text  bool
+    stamp          ?Stat
+    force_write    bool
+    force_conflict bool
+    finish_all     bool
+    next_document  usize
+    revisions      [..]u64
+}
+
+impl PendingSave {
+
+    cancel :: fn (self: ^Self) {
+        self.worker.cancel()
+        self.active = no
+        self.path.clear()
+        self.disk.clear()
+        self.revisions.clear()
+    }
+
+    release :: fn (self: ^Self) {
+        self.worker.release()
+        self.revisions.free()
+        self.path.free()
+        self.disk.free()
+    }
+
+}
+
 pub Editor :: plex {
+    formatting         PendingSave
+    save_all_next      usize
     language           NerdLsp
     workspace          Workspace
     completion         PromptCompletion
@@ -104,6 +142,7 @@ pub Editor :: plex {
 
 impl Editor {
     pub release :: fn (self: ^Self) {
+        self.formatting.release()
         self.language.release()
         self.workspace.release()
         self.completion.release()
@@ -641,6 +680,7 @@ impl Editor {
             id => id else => self.workspace.active_view().document_id
         }
         self.workspace.kill_document(target, force)?
+        self.formatting.cancel()
         on normalise => self.workspace.active_view().interaction.state = Interaction.Normal
         self.highlights = no
         self.active_match = nil
@@ -725,17 +765,132 @@ impl Editor {
         }
         on handled && key.character != nil => self.suppress_character = yes
     }
-    pub save_all :: fn (self: ^Self, scratch: ^arena) -> void\string {
+    pub save_document :: fn (self: ^Self, scratch: ^arena, document_id: usize,
+    filename: string, force_write: bool, force_conflict: bool,
+    approved_state: ?Stat = nil, approved_text: ?string = nil,
+    finish_all: bool = no, next_document: usize = 0) -> void\string {
+        on self.formatting.active => return "A Nerd save is already being "
+            +"formatted"!
+        target := self.workspace.checked_save_target(scratch, document_id, filename, force_conflict)?
+        on recognise_mode(target.path) != FileMode.Nerd => {
+            self.workspace.save(scratch, document_id, filename, force_write, force_conflict,
+            approved_state = approved_state, approved_text = approved_text)?
+            self.changed()
+            self.tell("Saved")
+            return
+        }
+        job := ^self.formatting
+        own(^job.path, target.path)
+        job.disk.clear()
+        job.approved_text = no
+        on approved_text => [text] {
+            own(^job.disk, text)
+            job.approved_text = yes
+        }
+        job.stamp = target.existing
+        on approved_state => [state] {
+            job.stamp = state
+        }
+        job.document_id = document_id
+        job.revision = self.workspace.documents[document_id].text.storage.revision()
+        job.force_write = force_write
+        job.force_conflict = force_conflict
+        job.finish_all = finish_all
+        job.next_document = next_document
+        job.revisions.clear()
+        on finish_all => {
+            for entry in self.workspace.documents {
+                job.revisions.push(entry.text.storage.revision())
+            }
+        }
+        job.worker.start(scratch, self.workspace.documents[document_id].text.text())?
+        job.active = yes
+        self.tell("Formatting Nerd file…")
+    }
+    pub poll_format :: fn (self: ^Self, scratch: ^arena) {
+        job := ^self.formatting
+        on !job.active => return
+        id := job.document_id
+        stale := id >= self.workspace.documents.count || self.workspace.documents[id].text.storage.revision() != job.revision
+        on job.finish_all => {
+            on job.revisions.count != self.workspace.documents.count {
+                yes => stale = yes
+                else => for index, entry in self.workspace.documents {
+                    on entry.text.storage.revision() != job.revisions[index] => stale = yes
+                }
+            }
+        }
+        on stale => {
+            job.cancel()
+            self.tell("Nerd save cancelled: buffer changed during formatting")
+            return
+        }
+        on job.worker.poll(scratch) {
+            result => on result => [formatted] {
+                on self.finish_format(scratch, formatted) {
+                    _success => {
+                    }
+                    error! => {
+                        job.cancel()
+                        self.tell(error)
+                    }
+                }
+            }
+            error! => {
+                job.cancel()
+                self.tell(error)
+            }
+        }
+    }
+    finish_format :: fn (self: ^Self, scratch: ^arena, formatted: string) -> void\string {
+        job := ^self.formatting
+        id := job.document_id
+        current := metadata(scratch, bytes_text(job.path))
+        on job.stamp {
+            expected => {
+                on current {
+                    state => {
+                        on !same_file_state(expected, state) => return "Save "
+                            +"target changed during formatting; retry after "
+                            +"reviewing"!
+                    }
+                    else => return "Save target disappeared during formatting; "
+                        +"retry after reviewing"!
+                }
+            }
+            else => {
+                on current != nil => return "Save target appeared during "
+                    +"formatting; retry after reviewing"!
+            }
+        }
+        approved : ?string = nil
+        on job.approved_text => approved = bytes_text(job.disk)
+        self.workspace.save(scratch, id, bytes_text(job.path), job.force_write, job.force_conflict,
+        approved_state = job.stamp, approved_text = approved, formatted_text = formatted)?
+        finish_all := job.finish_all
+        next_document := job.next_document
+        job.active = no
+        self.changed()
+        self.tell("Saved")
+        -- Release the completed job before a save-all continuation starts another.
+        job.cancel()
+        on finish_all => self.save_all(scratch, start = next_document)?
+    }
+    pub save_all :: fn (self: ^Self, scratch: ^arena, start: usize = 0) -> void\string {
+        on self.formatting.active => return "A Nerd save is already being "
+            +"formatted"!
         for id, entry in self.workspace.documents {
-            on !entry.modified() => again
+            on id < start => again
+            on !entry.modified() && entry.file_mode() != FileMode.Nerd => again
             on entry.path.count == 0 => {
                 _ := self.workspace.focus_document(id)
                 self.prompt_open(':'.as(u32), initial = "w ")
                 self.save_all_pending = yes
+                self.save_all_next = id + 1
                 return
             }
-            on self.workspace.save(scratch, id, "", no, no) {
-                _success => self.dirty = yes
+            on self.save_document(scratch, id, "", no, no, approved_state = nil, approved_text = nil, finish_all = yes, next_document = id + 1) {
+                _success => on self.formatting.active => return
                 error! => {
                     _ := self.workspace.focus_document(id)
                     return scratch.pr($"Cannot save {bytes_text(entry.path)}: {error}")!
@@ -746,6 +901,7 @@ impl Editor {
     }
     pub quit_safely :: fn (self: ^Self, scratch: ^arena) -> void\string {
         self.cancel_recording()
+        self.formatting.cancel()
         on self.workspace.persistent {
             yes => self.workspace.checkpoint(scratch)?
             else => {
@@ -786,6 +942,7 @@ impl Editor {
             return
         }
         on command == "q!" => {
+            self.formatting.cancel()
             self.cancel_recording()
             self.workspace.abandon()?
             self.changed()
@@ -922,10 +1079,9 @@ impl Editor {
                 }
             }
         }
-        self.workspace.save(scratch, id, filename, verb != "w", verb == "w!")?
-        self.dirty = yes
-        self.tell("Saved")
-        on pending => self.save_all(scratch)?
+        self.save_document(scratch, id, filename, verb != "w", verb == "w!",
+        approved_state = nil, approved_text = nil, finish_all = pending, next_document = self.save_all_next)?
+        on pending && !self.formatting.active => self.save_all(scratch, start = self.save_all_next)?
     }
     show_save_confirmation :: fn (self: ^Self, scratch: ^arena) {
         label := display_text(scratch, bytes_text(self.overwrite.path), single_line = yes)
@@ -943,11 +1099,10 @@ impl Editor {
         defer self.overwrite.reset()
         id := self.overwrite.document_id
         on id >= self.workspace.documents.count || self.workspace.documents[id].text.storage.revision() != self.overwrite.revision => return "Buffer changed since confirmation; retry after reviewing"!
-        self.workspace.save(scratch, id, bytes_text(self.overwrite.path), self.overwrite.force_write, yes,
-        approved_state = self.overwrite.stamp, approved_text = bytes_text(self.overwrite.disk))?
-        self.dirty = yes
-        self.tell("Saved")
-        on self.overwrite.pending => self.save_all(scratch)?
+        self.save_document(scratch, id, bytes_text(self.overwrite.path), self.overwrite.force_write, yes,
+        approved_state = self.overwrite.stamp, approved_text = bytes_text(self.overwrite.disk),
+        finish_all = self.overwrite.pending, next_document = self.save_all_next)?
+        on self.overwrite.pending && !self.formatting.active => self.save_all(scratch, start = self.save_all_next)?
     }
     pub indent_width :: fn (self: ^Self) -> usize {
         doc := ^self.workspace.active_document().text
@@ -1690,9 +1845,9 @@ impl Editor {
             Save => {
                 on entry.path.count == 0 {
                     yes => self.prompt_open(':'.as(u32), initial = "w ") else => {
-                        self.workspace.save(scratch, text_view.document_id, "", no, no)?
-                        self.dirty = yes
-                        self.tell("Saved")
+                        self.save_document(scratch, text_view.document_id, "", no, no)?
+                        -- Workspace saves repair every shared view themselves.
+                        return
                     }
                 }
             }

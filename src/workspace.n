@@ -1,6 +1,7 @@
 use buffer
 use codec
 use document
+use formatter
 use keyboard
 use line_metadata
 use markdown
@@ -723,20 +724,16 @@ impl Workspace {
         return SaveTarget { path existing same_path }
     }
 
-    pub save :: fn (self           : ^Self,
-                    scratch        : ^arena,
-                    document_id    : usize,
-                    filename       : string,
-                    force_write    : bool,
-                    force_conflict : bool,
-                    approved_state : ?Stat = nil,
-                    approved_text  : ?string = nil) -> void\string {
-        entry       := ^self.documents[document_id]
-        target      := self.save_target(scratch, document_id, filename)?
-        path        := target.path
-        existing    := target.existing
-        same_path   := target.same_path
-        reassociate := filename.count > 0
+    pub checked_save_target :: fn (self           : ^Self,
+                                   scratch        : ^arena,
+                                   document_id    : usize,
+                                   filename       : string,
+                                   force_conflict : bool) -> SaveTarget\string {
+        entry     := ^self.documents[document_id]
+        target    := self.save_target(scratch, document_id, filename)?
+        path      := target.path
+        existing  := target.existing
+        same_path := target.same_path
 
         on existing != nil => {
             on !same_path &&
@@ -753,9 +750,29 @@ impl Workspace {
                 }
             }
         }
+        return target
+    }
+
+    pub save :: fn (self           : ^Self,
+                    scratch        : ^arena,
+                    document_id    : usize,
+                    filename       : string,
+                    force_write    : bool,
+                    force_conflict : bool,
+                    approved_state : ?Stat = nil,
+                    approved_text  : ?string = nil,
+                    formatted_text : ?string = nil) -> void\string {
+        entry       := ^self.documents[document_id]
+        target      := self.checked_save_target(scratch, document_id, filename, force_conflict)?
+        path        := target.path
+        existing    := target.existing
+        same_path   := target.same_path
+        reassociate := filename.count > 0
+
         on !reassociate &&
             !force_write &&
             !entry.modified() &&
+            recognise_mode(path) != FileMode.Nerd &&
             existing != nil => return
         expected : ?string = nil
         on same_path &&
@@ -764,7 +781,52 @@ impl Workspace {
         on approved_text => [text] {
             expected = text
         }
-        atomic_write(scratch, path, entry.text.text(), existing != nil && (same_path || force_conflict), expected_text = expected, expected_state = approved_state)?
+        before    := entry.text.text()
+        formatted := before
+
+        on formatted_text {
+            value => formatted = value
+
+            else => on recognise_mode(path) == FileMode.Nerd => formatted = format_nerd(scratch, before)?
+        }
+        state := existing
+        on approved_state => [value] {
+            state = value
+        }
+        atomic_write(scratch, path, formatted, existing != nil && (same_path || force_conflict), expected_text = expected, expected_state = state)?
+        on formatted != before => {
+            selections : [..]Selection
+            defer selections.free()
+            for text_view in self.views {
+                selection := text_view.interaction.selection
+                on text_view.document_id == document_id => {
+                    selection.anchor = formatted_position(before,
+                                                          formatted,
+                                                          selection.anchor)
+                    selection.active = formatted_position(before,
+                                                          formatted,
+                                                          selection.active)
+                }
+                selections.push(selection)
+            }
+            caret_before := self.active_view().interaction.selection.active
+            on entry.text.edit({ start: 0 end: before.count }, formatted) {
+                _change => {
+                }
+
+                _error! => abort("Internal error: validated formatter output")
+            }
+            for index, text_view in self.views {
+                on text_view.document_id != document_id => again
+                text_view.interaction.selection = selections[index]
+                text_view.interaction.repair(^entry.text)
+            }
+            record := ^entry.text.history[entry.text.applied - 1]
+            on self.active_view().document_id == document_id => {
+                record.caret_before = caret_before
+                record.caret_after = self.active_view().interaction.selection.active
+            }
+        }
         -- Path and baseline only advance after a successful durable write.
         on reassociate => {
             own(^entry.path, path)
@@ -1556,6 +1618,59 @@ test "optional Nerd metadata converges and matches full lexing through edits and
 
         error! => {
             assert no, error.show()
+        }
+    }
+}
+
+test {
+
+    exercise_nerd_save :: fn () -> void\string {
+        scratch : arena
+        defer scratch.done()
+        pid  := syscall(SYS_GETPID, 0, 0, 0, 0, 0, 0)
+        path := scratch.pr($"/tmp/me-format-save-{pid}.n")
+
+        defer _ := syscall(SYS_UNLINK, path.c_string().as(usize).as(u64), 0, 0, 0, 0, 0)
+        original := "value:=42"
+        atomic_write(^scratch, path, original, no)?
+        workspace : Workspace
+        workspace.lock_fd = -1
+        defer workspace.release()
+        own(^workspace.folder, "/tmp")
+        workspace.open_file(^scratch, path)?
+        workspace.views[0].interaction.selection.collapse(7)
+        copy := workspace.views[0]
+        copy.interaction.selection.collapse(8)
+        workspace.views.push(copy)
+        workspace.save(^scratch, 0, "", no, no)?
+        expected :=
+            """
+            value := 42
+            """
+        entry := ^workspace.documents[0]
+        assert read_file(^scratch, path)? == expected
+        assert entry.text.text() == expected && !entry.modified()
+        assert entry.text.history.count == 1
+        assert workspace.views[0].interaction.selection.active == 9
+        assert workspace.views[1].interaction.selection.active == 10
+        workspace.save(^scratch, 0, "", no, no)?
+        assert entry.text.history.count == 1
+        _ := entry.text.undo_edit()
+        assert entry.text.text() == original && entry.modified()
+        assert read_file(^scratch, path)? == expected
+        _ := entry.text.redo_edit()
+        assert !entry.modified()
+    }
+
+}
+
+test "Nerd saves format clean buffers, preserve shared positions and keep one undo unit" {
+    on exercise_nerd_save() {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
         }
     }
 }

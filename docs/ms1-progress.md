@@ -1040,3 +1040,52 @@ load; waiting for process termination fixed the test and the rerun passed. Type
 checking, idempotent formatting, Python compilation, source UTF-8 and diff checks
 passed. Required commit/push and release installation follow, with the two new
 installed scenarios and binary identity checked afterwards.
+
+
+## T18 — Nerd formatting on save
+
+Nerd-mode saves use the installed `nerd format` on a private temporary copy,
+independently of LSP availability. All save commands, clean Nerd buffers and
+save-as into `.n` share the same path. Conflict/overwrite checks precede execution;
+source revision and target metadata/content checks precede atomic commit. Only a
+successful durable save updates buffer text, path and baseline. Formatting adds
+one undo unit and maps shared-view selections to safe grapheme boundaries near
+their original non-whitespace source characters.
+
+Formatting ME's large editor module takes about 15 seconds, so the implementation
+uses an asynchronously polled child, not a short blocking wait. The child has
+isolated standard descriptors, parent-death handling and a 30-second deadline;
+cancellation/timeout kills and reaps it and removes private temporary files.
+Editing the source cancels a pending save; save-and-quit tracks every buffer's
+revision and the document set, serialises saves, and waits to exit. Quitting or
+killing buffers cancels outstanding work. Missing, failing, invalid-output and
+stale saves leave edits and the destination intact. Plain Text/Markdown saves
+continue preserving bytes; Nerd owns its resulting layout and endings.
+
+A confirmed Nerd bug took priority: a raw string returned from `?string\string`
+passed semantic checking but LLVM generation skipped the inner optional wrapper,
+producing invalid IR. `nil` also failed to construct a result's optional payload.
+Nerd fix `e8f194a5` recursively lowers each selected wrapper payload. The reduced
+regression covers presence, absence, errors, forwarding, scalar/string returns
+and local initialisers on LLVM and C. Full Nerd gate: 77 passed, zero failures,
+two platform skips. Formatting passed. The fix is backed up on Nerd's
+`agent/fix/optional-result-return` and `remove-linux-libc` remote branches,
+integrated into local Nerd main (remote main unchanged), and installed directly
+with `just install` in `~/nerd` on `remove-linux-libc` at `e8f194a5`. The installed
+compiler matches that release binary and runs the reduced reproduction. Its clean,
+merged temporary worktree/local branch were removed after process/ancestry checks.
+
+ME verification: all 201 native tests (89 ME + 112 imported), all 68 debug
+terminal scenario groups, and eight focused release groups passed with the
+installed compiler. The debug run and its corrected picker/tail rerun cover all
+68 groups; older Nerd picker expectations were updated for the formatter's
+trailing newline. Release checks cover all four new formatter groups, file and
+buffer pickers, intelligent indentation and standard-harness save-as confirmation.
+A custom confirmation runner's longer temporary prefix wrapped the expected
+question; the standard harness passed. Formatting is idempotent; type checking,
+Python compilation, UTF-8 and diff checks passed. Tests exercise actual installed
+formatting, clean saves, save-as mode changes, undo, shared positions, isolated
+failure/timeout, missing Nerd, overwrite cancellation/approval, target changes,
+stale-save cancellation, responsive typing and save-and-quit continuation.
+Required commit/push and release installation follow. Installed formatter smoke,
+large-module responsiveness and binary identity are recorded on the sole panel.

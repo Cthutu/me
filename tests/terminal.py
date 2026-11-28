@@ -1023,7 +1023,7 @@ def buffer_picker(binary, folder):
         session.send("\r")  # second row is the most recently used other buffer
         session.send("iB")
         session.send(b"\x13")
-        assert beta.read_bytes() == b"Bbeta", (beta.read_bytes(), gamma.read_bytes(), screen(session))
+        assert beta.read_bytes() == b"Bbeta\n", (beta.read_bytes(), gamma.read_bytes(), screen(session))
         session.send(",\r")
         session.send("iC")
         session.send(b"\x13")
@@ -1039,7 +1039,7 @@ def buffer_picker(binary, folder):
         session.send(",btt\r")
         session.send("iF")
         session.send(b"\x13")
-        assert beta.read_bytes() == b"BFbeta", "case-insensitive subsequence did not select BetaTest"
+        assert beta.read_bytes() == b"BFbeta\n", "case-insensitive subsequence did not select BetaTest"
         session.send(",zzzzhjklq,")
         assert b"No matches" in screen(session)
         session.send("\r")
@@ -1158,7 +1158,7 @@ def file_picker(binary, folder):
             assert b"Files" not in screen(session)
             session.send("iY")
             session.send(b"\x13")
-            assert (folder / "src" / "Straße.n").read_bytes() == b"YUNICODE_FILE"
+            assert (folder / "src" / "Straße.n").read_bytes() == b"YUNICODE_FILE\n"
             session.send(b"\x1b[32u\x1b[32;1:3u\x1b[32u\x1b[32;1:3u")
             await_file_picker(session)
             session.send("alias.n")
@@ -1166,7 +1166,7 @@ def file_picker(binary, folder):
             session.send("\r")
             session.send("iZ")
             session.send(b"\x13")
-            assert (folder / "src" / "AlphaBeta.n").read_bytes() == b"ZALPHA_FILE"
+            assert (folder / "src" / "AlphaBeta.n").read_bytes() == b"ZALPHA_FILE\n"
             session.command("files")
             await_file_picker(session)
             session.send("src/alphabeta")
@@ -1186,7 +1186,7 @@ def file_picker(binary, folder):
             session.send("\r")
             session.send("iE")
             session.send(b"\x13")
-            assert (linked / "external.n").read_bytes() == b"EEXTERNAL_FILE"
+            assert (linked / "external.n").read_bytes() == b"EEXTERNAL_FILE\n"
             session.command("files")
             await_file_picker(session)
             session.send("raw-")
@@ -1195,7 +1195,7 @@ def file_picker(binary, folder):
             session.send("iB")
             session.send(b"\x13")
             with open(raw, "rb") as stream:
-                assert stream.read() == b"BRAW_FILE"
+                assert stream.read() == b"BRAW_FILE\n"
             session.quit()
 
 
@@ -2488,6 +2488,8 @@ import json, os, sys, time
 from pathlib import Path
 root = Path(__file__).parent.parent
 mode = MODE
+if sys.argv[1:2] == ["format"]:
+    sys.exit(0)  # LSP/indentation scenarios deliberately leave source bytes alone.
 (root / "lsp.pid").write_text(str(os.getpid()))
 documents = {}
 def send(message):
@@ -2728,6 +2730,153 @@ def intelligent_indentation(binary, folder):
         session.quit()
 
 
+def nerd_format_save(binary, folder):
+    path = folder / "source with spaces.n"
+    original = b"value:=42"
+    expected_file = folder / "expected.n"
+    expected_file.write_bytes(original)
+    subprocess.run(["nerd", "format", str(expected_file)], check=True, capture_output=True)
+    expected = expected_file.read_bytes()
+    assert expected != original
+    path.write_bytes(original)
+    with Session(binary, folder, "-r", path.name) as session:
+        session.send(b"\x13", 0.3)  # Even a clean Nerd buffer is formatted.
+        assert path.read_bytes() == expected, path.read_bytes()
+        session.send(b"\x1a")
+        session.command("w unformatted.txt")
+        assert (folder / "unformatted.txt").read_bytes() == original, "formatting was not undoable"
+        session.command("w renamed.n")  # Save-as selects the target's mode.
+        assert (folder / "renamed.n").read_bytes() == expected
+        session.quit("wq")
+        assert not list(Path("/tmp").glob(f"me-format-{session.process.pid}-*"))
+
+
+def nerd_format_failures(binary, folder):
+    path = folder / "main.n"
+    original = b"value:=42"
+    path.write_bytes(original)
+    environment = fake_nerd(folder)
+    script = folder / "tools/nerd"
+    source = script.read_text()
+    source = source.replace('sys.exit(0)  # LSP/indentation scenarios deliberately leave source bytes alone.',
+                            'Path(sys.argv[2]).write_bytes(b"damaged temporary")\n    print("FORMATTER OUTPUT MUST STAY OFF TERMINAL")\n    sys.exit(3)')
+    script.write_text(source)
+    with Session(binary, folder, "-r", path.name, environment=environment) as session:
+        session.send("A ")
+        session.send(b"\x13")
+        await_screen(session, b"Nerd format failed")
+        assert path.read_bytes() == original
+        assert b"FORMATTER OUTPUT MUST STAY OFF TERMINAL" not in session.output
+        session.command("w retained.txt")
+        assert (folder / "retained.txt").read_bytes() == original + b" "
+        session.quit()
+        assert not list(Path("/tmp").glob(f"me-format-{session.process.pid}-*"))
+    # A stopped formatter is killed/reaped within the save deadline.
+    script.write_text(source.replace('Path(sys.argv[2]).write_bytes(b"damaged temporary")',
+                                    '(root / "formatter.pid").write_text(str(os.getpid()))\n    time.sleep(60)'))
+    with Session(binary, folder, "-r", path.name, environment=environment) as session:
+        session.send(b"\x13")
+        await_screen(session, b"Nerd format timed out", seconds=35)
+        assert path.read_bytes() == original
+        formatter_pid = int((folder / "formatter.pid").read_text())
+        assert not Path(f"/proc/{formatter_pid}").exists(), "formatter was not reaped"
+        session.quit()
+        assert not list(Path("/tmp").glob(f"me-format-{session.process.pid}-*"))
+
+
+def nerd_format_confirmation(binary, folder):
+    environment = fake_nerd(folder)
+    script = folder / "tools/nerd"
+    source = script.read_text().replace(
+        'sys.exit(0)  # LSP/indentation scenarios deliberately leave source bytes alone.',
+        '(root / "format.called").write_text(sys.argv[2])\n    Path(sys.argv[2]).write_bytes(b"value := 42\\n")\n    sys.exit(0)')
+    script.write_text(source)
+    target = folder / "exists.n"
+    target.write_bytes(b"previous contents")
+    called = folder / "format.called"
+    with Session(binary, folder, "-r", environment=environment) as session:
+        session.send("ivalue:=42")
+        session.command("w " + str(target))
+        await_screen(session, b"exists - save?")
+        assert not called.exists(), "formatter ran before overwrite approval"
+        session.send("n")
+        assert target.read_bytes() == b"previous contents" and not called.exists()
+        session.command("w " + str(target))
+        session.send("y")
+        assert target.read_bytes() == b"value := 42\n"
+        assert called.exists()
+        session.quit()
+    # Changing the target while the formatter runs invalidates the save.
+    target.write_bytes(b"value:=42")
+    script.write_text(source.replace('(root / "format.called").write_text(sys.argv[2])',
+                                     '(root / "exists.n").write_bytes(b"external change")'))
+    with Session(binary, folder, "-r", target.name, environment=environment) as session:
+        session.send("A ")
+        session.send(b"\x13")
+        await_screen(session, b"Save target changed")
+        assert target.read_bytes() == b"external change"
+        session.command("w retained.txt")
+        assert (folder / "retained.txt").read_bytes() == b"value:=42 "
+        session.quit()
+    # Missing installed Nerd reports a save error without modifying source.
+    empty_tools = folder / "empty-tools"
+    empty_tools.mkdir()
+    target.write_bytes(b"value:=42")
+    with Session(binary, folder, "-r", target.name, environment={"PATH": str(empty_tools)}) as session:
+        session.send(b"\x13")
+        await_screen(session, b"Cannot find installed nerd")
+        assert target.read_bytes() == b"value:=42"
+        session.quit()
+
+
+def nerd_format_async(binary, folder):
+    environment = fake_nerd(folder)
+    script = folder / "tools/nerd"
+    source = script.read_text().replace(
+        'sys.exit(0)  # LSP/indentation scenarios deliberately leave source bytes alone.',
+        '(root / "formatter.pid").write_text(str(os.getpid()))\n    time.sleep(1)\n    Path(sys.argv[2]).write_bytes(b"value := 42\\n")\n    sys.exit(0)')
+    script.write_text(source)
+    path = folder / "main.n"
+    path.write_bytes(b"value:=42")
+    with Session(binary, folder, "-r", path.name, environment=environment) as session:
+        session.send(b"\x13", 0.1)
+        await_screen(session, b"Formatting Nerd file")
+        session.send("iX")
+        await_screen(session, b"buffer changed during formatting", seconds=0.8)
+        assert path.read_bytes() == b"value:=42", "stale formatting overwrote disk"
+        pid = int((folder / "formatter.pid").read_text())
+        assert not Path(f"/proc/{pid}").exists()
+        session.command("w retained.txt")
+        assert (folder / "retained.txt").read_bytes() == b"Xvalue:=42"
+        session.quit()
+    # Quitting cancels the worker promptly and retains original bytes in recovery.
+    with Session(binary, folder, "-r", path.name, environment=environment) as session:
+        session.send(b"\x13", 0.1)
+        await_screen(session, b"Formatting Nerd file")
+        session.quit()
+        assert path.read_bytes() == b"value:=42"
+        pid = int((folder / "formatter.pid").read_text())
+        assert not Path(f"/proc/{pid}").exists()
+        assert not list(Path("/tmp").glob(f"me-format-{session.process.pid}-*"))
+    # Save-and-quit waits for all named Nerd buffers, including clean hidden ones.
+    second = folder / "second.n"
+    second.write_bytes(b"value:=42")
+    with Session(binary, folder, "-r", path.name, second.name, environment=environment) as session:
+        session.quit("wq")
+        assert path.read_bytes() == second.read_bytes() == b"value := 42\n"
+    path.write_bytes(b"value:=42")
+    other = folder / "other.txt"
+    other.write_bytes(b"unchanged")
+    with Session(binary, folder, "-r", path.name, other.name, environment=environment) as session:
+        session.command("wq")
+        session.send(":buffer 2\r", 0.08)
+        session.send("iX")
+        await_screen(session, b"buffer changed during formatting", seconds=0.8)
+        assert session.process.poll() is None, "save-and-quit ignored concurrent edits"
+        assert path.read_bytes() == b"value:=42" and other.read_bytes() == b"unchanged"
+        session.quit()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", required=True, type=Path)
@@ -2742,7 +2891,7 @@ def main():
     allowed = {"libc.so.6", "libm.so.6", "libgcc_s.so.1", "linux-vdso.so.1"}
     unexpected = {name for name in names if name not in allowed and not Path(name).name.startswith("ld-linux-")}
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
-    checks = [normal_start_and_cut, intelligent_indentation, nerd_highlighting, nerd_diagnostics, nerd_lsp_failures, nerd_lsp_real, markdown_incremental, markdown_source, markdown_save_as, markdown_indentation, save_as_confirmation, save_as_changed_target, save_as_changed_source, save_as_quit, backspace_modes, backspace_insert, recording_cancel, delete_lines, normal_delete, repeat_recording, repeat_failure, new_buffer, exit_input_cleanup, pane_controls, pane_ctrl_w, pane_file_picker, file_picker, file_picker_stale_and_cancel, cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
+    checks = [nerd_format_async, nerd_format_save, nerd_format_failures, nerd_format_confirmation, normal_start_and_cut, intelligent_indentation, nerd_highlighting, nerd_diagnostics, nerd_lsp_failures, nerd_lsp_real, markdown_incremental, markdown_source, markdown_save_as, markdown_indentation, save_as_confirmation, save_as_changed_target, save_as_changed_source, save_as_quit, backspace_modes, backspace_insert, recording_cancel, delete_lines, normal_delete, repeat_recording, repeat_failure, new_buffer, exit_input_cleanup, pane_controls, pane_ctrl_w, pane_file_picker, file_picker, file_picker_stale_and_cancel, cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
               search_replace_and_buffers, search_origins, slash_replacement, confirmation_recovery, byte_paths_and_checkpoint_failures,
               second_instance, crash_and_signals, undo_caret, word_delete, buffer_picker, buffer_picker_close_selected, buffer_picker_preview, buffer_picker_recovery, buffer_picker_unicode_bytes, enhanced_key_actions, keyboard_diagnostics, hjkl_and_line_selection, leader_overlay, control_hjkl, duplicate_selection, command_completion, live_completion_filter, file_completion, home_paths, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
     selected = [check for check in checks if args.filter in check.__name__]

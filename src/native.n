@@ -474,3 +474,29 @@ test "atomic saves preserve bytes, permissions and symlinks and refuse unauthori
         }
     }
 }
+
+pub installed_nerd :: fn (scratch: ^arena) -> string\string {
+    path          := environment(scratch, "PATH")
+    start : usize = 0
+
+    for start <= path.count {
+        end := start
+        for end < path.count && path[end] != ':' {
+            end += 1
+        }
+        directory := on end == start { yes => "." else => path[start..end] }
+        candidate := scratch.pr($"{directory}/nerd")
+
+        on metadata(scratch, candidate) {
+            info => {
+                on (info.mode & 0xf000) == 0x8000 &&
+                    (info.mode & 0x49) != 0 => return candidate
+            }
+
+            else => {
+            }
+        }
+        start = end + 1
+    }
+    return "Cannot find installed nerd on PATH"!
+}

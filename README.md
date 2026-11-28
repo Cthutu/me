@@ -454,8 +454,9 @@ UTF-8 is required for editable **content**. Invalid/unsupported encodings are
 refused without rewriting the file. A UTF-8 BOM is retained but hidden/protected
 from ordinary editing. Existing tabs, mixed LF/CRLF endings and absent final
 newlines are preserved. New endings use a local/majority inference, with LF as
-the fallback. Loading/saving never reindents or converts source text; intelligent
-indentation applies only when editing.
+the fallback. Loading preserves source bytes. Saving preserves them too, except
+that Nerd-mode saves run the installed `nerd format` as described below.
+Intelligent indentation applies when editing.
 Linux byte filenames are retained exactly and sanitised only for display.
 Dot segments are resolved by Linux, not lexically collapsed across symlinks.
 
@@ -574,7 +575,18 @@ four-space indentation fallback. Named Nerd buffers start the installed
 `nerd lsp` from PATH. Live diagnostics show gutter markers and E/W status counts;
 `:diagnostics` shows details, and `:lsp-restart` retries a failed provider. Editing
 invalidates stale results immediately. The terminal stays responsive while the
-provider runs or fails. Completion, hover, navigation and formatting are subsequent
-work. See
+provider runs or fails. Completion, hover and navigation are subsequent work.
+
+Nerd-mode saves run the installed `nerd format` from PATH on a private temporary
+copy before atomic replacement. This includes Ctrl+S, `:w`, `:ww`, `:w!` and
+`:wq`; save-as uses the destination extension. Successful formatting updates every
+view of the buffer and adds one undo step if the text changed. Overwrite approval
+comes first. Missing/failing/timed-out formatters refuse the save and preserve
+buffer edits and the destination. Formatting runs in the background with a
+30-second child-process deadline; formatter output never reaches the terminal.
+Editing its buffer cancels the pending save. Quitting or killing a buffer also
+cancels pending formatting. `:wq` waits for each Nerd buffer before exiting;
+changing any buffer during its pending save cancels save-and-quit. Plain Text
+and Markdown saving remain byte-preserving. See
 [design §35](docs/design.md#35-file-type-modes-m1-t9--in-progress) and
 [agreed tasks](docs/tasks.md).
