@@ -348,7 +348,7 @@ impl Workspace {
         self.documents.push(entry)
         text_view : TextView
         text_view.document_id = self.documents.count - 1
-        text_view.interaction.state = Interaction.Insert
+        text_view.interaction.state = Interaction.Normal
         text_view.interaction.reveal = yes
         self.views.push(text_view)
         self.focus_view(self.views.count - 1)
@@ -407,10 +407,7 @@ impl Workspace {
         text_view : TextView
         text_view.document_id = self.documents.count - 1
         text_view.interaction.selection.collapse(entry.text.line_start(0))
-        text_view.interaction.state = on text.count == entry.text.line_start(0) {
-            yes   => Interaction.Insert
-            else  => Interaction.Normal
-        }
+        text_view.interaction.state = Interaction.Normal
         text_view.interaction.reveal = yes
         self.views.push(text_view)
         self.focus_view(self.views.count - 1)
@@ -655,12 +652,8 @@ impl Workspace {
                 (view.selection.active < doc.text().count && (doc.content[view.selection.active] & 0xc0) == 0x80) => return "Invalid continuation character boundary"!
             on view.selection.anchor < doc.line_start(0) ||
                 view.selection.active < doc.line_start(0) => view.repair(doc)
-            -- Retain positions/scroll, not a stale typing state: the startup
-            -- rule is Insert only for empty content, Normal otherwise.
-            view.state = on doc.text().count == doc.line_start(0) {
-                yes   => Interaction.Insert
-                else  => Interaction.Normal
-            }
+            -- Retain positions/scroll, but always resume in Normal.
+            view.state = Interaction.Normal
             -- Restored horizontal scrolling must not look like a fresh line
             -- change on the first paint of each independently mounted view.
             text_view.previous_caret_line = doc.line_at(view.selection.active)

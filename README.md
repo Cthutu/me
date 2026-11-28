@@ -83,8 +83,8 @@ filename, or `++name` to add it to continuation. Prefix leading `-` paths with
 
 ## Editing
 
-Empty buffers start in **Insert**, non-empty files in **Normal**, including
-recovered documents. Text input
+All buffers start in **Normal**, including empty, new and recovered buffers.
+Use `i` to enter Insert. Text input
 in Insert replaces a selection, if present. Escape returns to Normal without
 throwing the selection away. Normal movement cancels selection; Shift movement
 extends it in either state. Normal `h`/`j`/`k`/`l` also move left/down/up/right;
@@ -103,9 +103,9 @@ these letters remain literal text in Insert and prompts.
 | `i` | Insert, preserving selection |
 | `a` / `A` | Insert after character / at line end |
 | `I` | Insert at first non-whitespace |
-| `o` / `O` | New line below / above; no automatic indentation |
+| `o` / `O` | New line below / above with intelligent indentation |
 | `w` / `q` | Select whole word / line; repeats extend |
-| `y` / `x` / `v` | Copy / cut / paste using the internal typed clipboard |
+| `y` / `x` / `v` | Copy / cut / paste using the internal typed clipboard; `x` without selection cuts one grapheme |
 | `c` | Delete selection and enter Insert; no selection just enters Insert |
 | `d` | Delete an existing selection immediately; otherwise begin pending `dd` |
 | `dd` / `3dd` | Delete the current line / three lines; retain Normal and clipboard |
@@ -114,7 +114,7 @@ these letters remain literal text in Insert and prompts.
 | Ctrl+D | Duplicate selected lines below (keeping the copy selected), or the current line at the same display column; clear character selections; one undo |
 | Ctrl+Z / Ctrl+R | Undo / redo |
 | Ctrl+S | Save active document; unnamed opens `:w ` |
-| Ctrl+N | New unnamed buffer in the current pane; enter Insert |
+| Ctrl+N | New unnamed buffer in the current pane; start in Normal |
 | Normal `[` / `]` / `.` | Start recording / finish recording / replay |
 | Ctrl+G | Cancel unfinished recording; preserve edits and previous macro |
 | `,` | Normal-only buffer picker; Enter switches, Escape cancels |
@@ -127,7 +127,7 @@ these letters remain literal text in Insert and prompts.
 
 Only `i` preserves selection on Insert entry; other entry commands clear it.
 Ctrl-bound editing commands enter Normal even on failure/no-op; Ctrl+N starts
-a fresh unnamed buffer in Insert, retaining all existing work. Ctrl navigation
+a fresh unnamed buffer in Normal, retaining all existing work. Ctrl navigation
 preserves state. Each terminal character event, deletion, paste and duplicate is its own
 undo operation. Undo/redo clears selection and restores the operation's before/after
 caret, rather than replaying subsequent navigation. Older history without caret
@@ -184,6 +184,14 @@ Unsupported combinations report an error and consume the count. `:120` jumps to
 line 120's first non-whitespace; out-of-range lines are clamped. Vertical motion
 retains a preferred display-cell column through shorter lines. Intentional
 scroll-away is preserved until caret motion or editing reveals it.
+
+Enter and `o`/`O` preserve leading whitespace. Nerd adds one indent step after
+opening delimiters, separates matching delimiter pairs on Enter, and outdents
+closing delimiters typed after leading whitespace. Strings and comments are
+recognised by the Nerd lexer. Existing tab indentation is retained. Markdown
+continues bullet/numbered lists, quotes and task items (new tasks are unchecked);
+Enter on an empty item ends it. Fenced/indented code uses ordinary indentation.
+Each generated newline and its indentation form one undo operation.
 
 In document text, Tab inserts four spaces by default, with a small existing-indentation heuristic.
 At leading/trailing whitespace, Backspace removes a matching Tab-sized run of
@@ -446,7 +454,8 @@ UTF-8 is required for editable **content**. Invalid/unsupported encodings are
 refused without rewriting the file. A UTF-8 BOM is retained but hidden/protected
 from ordinary editing. Existing tabs, mixed LF/CRLF endings and absent final
 newlines are preserved. New endings use a local/majority inference, with LF as
-the fallback. There is no formatting, automatic indentation or conversion.
+the fallback. Loading/saving never reindents or converts source text; intelligent
+indentation applies only when editing.
 Linux byte filenames are retained exactly and sanitised only for display.
 Dot segments are resolved by Linux, not lexically collapsed across symlinks.
 
@@ -515,10 +524,11 @@ messages without changing caret/selection. `!C` marks checkpoint failure, `~` a
 non-persisting session, `!conflict` and `?missing` backing-file conditions.
 
 MS1 originally omitted the file picker and pane controls delivered above. Mouse
-support, desktop clipboard integration, repeat recording, configuration and
-language intelligence remain unimplemented.
+support, desktop clipboard integration and general configuration remain
+unimplemented; language services beyond the initial Nerd diagnostics are future work.
 Enter Insert before pasting from a terminal/desktop: Nerd does not yet expose
-bracketed-paste boundaries. In legacy keyboard mode, the current Linux `std.term`
+bracketed-paste boundaries, so terminal newlines also trigger intelligent
+indentation. Internal clipboard paste retains its literal bytes. In legacy keyboard mode, the current Linux `std.term`
 backend rounds its Escape ambiguity timeout to a 100 ms termios tick; enhanced
 keyboard terminals can disambiguate Escape. Unicode width follows Unicode 16
 with narrow ambiguous characters; terminal/font conventions can still differ.

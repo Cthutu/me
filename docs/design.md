@@ -381,7 +381,7 @@ the active buffer.
 Unsaved/new/missing work errors without writing/discarding it; explicit `:kill!`
 remains the force path. Closing the active buffer focuses MRU surviving work or
 creates a fresh empty buffer. Picker Ctrl+W enters Normal on both
-success/failure; legacy `:kill` retains its existing empty-buffer Insert behaviour.
+success/failure; newly created replacement buffers also start in Normal.
 Key/text suppression follows the input stream across view changes/destruction,
 so an associated Enter/Ctrl+W text event cannot affect the destination buffer.
 
@@ -551,8 +551,8 @@ No decision has been made to abandon modal interaction or selection-first
 experiments; they should be introduced incrementally on a solid editing base.
 ### Startup interaction state — agreed
 
-Start in Insert state only when the initial buffer is empty; start in Normal
-state for a non-empty file. Empty means no content, not merely whitespace.
+Always start in Normal, including empty/BOM-only, newly created and restored
+buffers. This supersedes the former empty-buffer Insert rule (T17).
 No-argument, fresh-file and explicit-continuation CLI policies are now specified
 in “Multiple-file CLI” above; nonexistent paths stay unwritten until saved.
 
@@ -660,10 +660,9 @@ external API names, protocol identifiers, and literal compatibility requirements
 
 ### Indentation — agreed
 
-Start with **no automatic indentation**. Enter and `o`/`O` do not copy leading
-whitespace or apply language-aware indentation. Automatic indentation is a facet
-policy, not built-in default editing behaviour. Preserve the ability for facets
-to contribute it later without implementing it for MS1.
+The original MS1 no-automatic-indentation decision is superseded by T17 below.
+Enter and `o`/`O` now preserve indentation, with initial Nerd and Markdown rules.
+Keep mode-specific behaviour customisable through the future modes system.
 
 ### Tabs, configuration, and line joins — agreed
 
@@ -937,7 +936,7 @@ navigation assigns `l` to right movement and moves line selection to `q`.
 - **Save, undo, redo and line duplication leave Insert and execute in Normal**,
   including on failure or a no-op. This supersedes Ctrl+D's earlier state-preservation
   rule. Backspace/word deletion preserve state, superseding their earlier Normal
-  transition. Ctrl+N enters Insert; Ctrl+G cancellation preserves the current state.
+  transition. Ctrl+N creates a Normal buffer; Ctrl+G cancellation preserves the current state.
 - Ctrl-modified navigation, such as word movement, preserves the interaction
   state. Classify this explicitly in binding/action metadata rather than
   treating every Ctrl key as an instruction to leave Insert.
@@ -1268,7 +1267,7 @@ and command reference, and [MS1 progress](ms1-progress.md) for verified gates.
 - **Indentation:** Tab-width inference uses a small GCD of leading-space samples,
   only choosing 2–8 spaces with sufficient evidence; otherwise four. Backspace
   groups an exact Tab-sized space suffix at leading/trailing whitespace, without
-  historical provenance tracking. No automatic indentation is performed.
+  historical provenance tracking. Intelligent newline indentation is specified in T17.
 - **Search/replace:** literal, case-sensitive search and match selections follow
   the agreed contract, as refined by the later second-slash decision: `/old/new`
   replaces all non-overlapping matches in the whole buffer; `/old/new/c` confirms
@@ -1286,7 +1285,7 @@ and command reference, and [MS1 progress](ms1-progress.md) for verified gates.
   a non-blocking flock, checksummed versioned snapshot, byte/history replay
   validation, 400 ms debounce and attempted two-second continuous-edit maximum.
   Positions/selection/scroll/preferred columns survive; startup normalises every
-  view to Insert only for empty content, Normal otherwise. Prompts/messages,
+  view to Normal, regardless of content. Prompts/messages,
   clipboard/search, counts and incomplete commands do not survive.
 - **Failure/discard:** plain CLI filenames and `-r` now erase the old snapshot
   before opens, including failures (superseding the original retention policy).
@@ -1502,8 +1501,8 @@ The buffer popup retains its selected-buffer deletion and dirty-buffer refusal;
 
 ## 31. New unnamed buffer shortcut (T5c)
 
-Ctrl+N creates and focuses a fresh unnamed buffer in the current pane, entering
-Insert. It works from Normal and Insert, retains existing buffers and unsaved
+Ctrl+N creates and focuses a fresh unnamed buffer in the current pane, starting
+in Normal. It works from Normal and Insert, retains existing buffers and unsaved
 work, and preserves other panes. Cancel an active command/search prompt before
 creation. Popups, leader menus and confirmation retain their existing input scope.
 Legacy byte 0x0e and enhanced Ctrl+N reports have the same action; ignore releases
@@ -1704,7 +1703,7 @@ already delivered above describe current built-in behaviour.
   previews, folding and embedded-language services are separate future choices.
 - Mode-specific indentation policy and configurable width, retaining plain-text
   defaults. Whether Enter continues a list or copies indentation needs an explicit
-  choice; the existing editor default is no automatic indentation.
+  choice; T17 supplies initial built-in intelligent indentation.
 - Propose status labels LF, CRLF, MIXED and NONE from actual buffer contents, and
   Plain Text for unrecognised files. Mixed line endings remain byte-for-byte
   preserved; labels do not silently select a conversion or alter Enter's existing
@@ -1809,3 +1808,35 @@ Configuration, manual recognition overrides, completion/navigation/hover,
 formatting and generic asynchronous/versioned-provider policies remain open.
 This does not choose a Markdown LSP or formatter. Syntax trees and range-based
 services remain independent of optional line caches.
+
+## 36. Normal initial state, intelligent indentation and character cuts (T17)
+
+Matt explicitly requested these three changes. Every new/opened/restored buffer
+starts in Normal, including BOM-only files, Ctrl+N and replacement buffers after
+`:kill`. Existing buffers retain their state when merely focused.
+
+`x` keeps selection cutting and, without selection, cuts one complete grapheme
+under the caret into the characterwise clipboard. CRLF is indivisible. EOF is a
+no-op preserving clipboard/history; caret stays at the cut position. Copy still
+requires a selection. Existing count policy is unchanged.
+
+Initial intelligent-indentation defaults (not a general formatting engine):
+- Enter and `o`/`O` retain leading whitespace. Split indentation preserves the
+  remaining original whitespace. Use the existing local ending inference and
+  indentation-width heuristic; preserve tabs, adding a tab step when present.
+- Nerd uses lexer categories to ignore string/comment delimiters. Increase one
+  step after `{`, `[` or `(`; Enter between a matching pair inserts an indented
+  body line and a closing line. `O` before a closing delimiter indents the new
+  body line. Typing a closing delimiter as the first non-whitespace code on a line removes
+  one indentation step. This is a lexical heuristic, not AST reformatting.
+- Markdown continues quotes, bullets, ordered lists and task prefixes. `o`/Enter
+  increment numbered items; `O` retains their number. New tasks are unchecked.
+  Enter at the end of an empty item removes its marker without adding a line.
+  Fenced/indented code gets whitespace continuation without list generation.
+- Each generated edit is one history operation, including caret hints and shared
+  view adjustment. Replacement selections still work. Prompts and internal clipboard
+  paste remain separate from newline commands; file loading/saving never reformats.
+  Terminal paste still lacks std.term boundary events, so its newlines trigger
+  indentation like ordinary key input.
+
+Mode configuration and broader Markdown nesting/renumbering remain future work.

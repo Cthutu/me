@@ -389,7 +389,8 @@ ELF shared-library dependencies or interpreter. Release installation uses
 
 ### T5c — Ctrl+N creates an unnamed buffer — done
 
-- Create/focus a new unnamed buffer in the current pane and enter Insert.
+- Create/focus a new unnamed buffer in the current pane. Originally entered
+  Insert; T17 supersedes that policy with Normal.
 - Preserve existing buffers, unsaved work and other panes.
 - Support legacy and enhanced reports; ignore releases and suppress paired text.
 - Retain normal continuation and popup input scope; reject counts.
@@ -595,3 +596,19 @@ Ordinary :q should checkpoint unsaved work and quit, as it did before T14.
   release groups passed. Type checking, formatting idempotence, Python compilation
   and diff checks passed. Commit/push and release installation complete this slice;
   the installed Nerd scenarios and release-binary identity are checked afterwards.
+
+### T17 — Normal initial state, intelligent indentation and character cuts — done
+
+- Always begin new/opened/restored buffers in Normal, including Ctrl+N and
+  empty/BOM-only files; merely focusing existing work retains its state.
+- Intelligent Enter/o/O indentation: retain whitespace and local line endings,
+  add lexical Nerd delimiter rules and Markdown list/quote/task continuation.
+  Keep generated edits as single undo units and update shared views.
+- `x` without selection cuts one complete grapheme, including indivisible CRLF,
+  into the characterwise clipboard. EOF preserves clipboard/history.
+- Initial implementation details are in design §36; general mode configuration
+  remains open. This supersedes empty-buffer Insert and no-auto-indent policies.
+- Verified: 199 native tests (87 ME + 112 imported), all 64 debug terminal
+  groups and five focused release groups passed. Type checking, idempotent
+  formatting, Python compilation, UTF-8 and diff checks passed. Commit/push and
+  release installation complete this slice; installed editing smoke follows.

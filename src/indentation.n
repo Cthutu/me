@@ -1,0 +1,105 @@
+use std.text
+
+pub whitespace :: fn (byte: u8) => byte == ' ' || byte == '\t'
+
+pub leading :: fn (line: string, limit: usize) -> string {
+    end : usize = 0
+    for end < line.count && end < limit && whitespace(line[end]) {
+        end += 1
+    }
+    return line[..end]
+}
+
+pub deeper :: fn (scratch: ^arena, base: string, width: usize) -> string {
+    for byte in base {
+        on byte^ == '\t' => return scratch.pr($"{base}\t")
+    }
+    return scratch.pr($"{base}{"        "[..width]}")
+}
+
+pub shallower :: fn (base: string, width: usize) -> string {
+    on base.count == 0              => return base
+    on base[base.count - 1] == '\t' => return base[..base.count - 1]
+    removed : usize = 0
+    for removed < width &&
+        removed < base.count &&
+        base[base.count - removed - 1] == ' ' {
+        removed += 1
+    }
+    return base[..base.count - removed]
+}
+
+pub ListIndent :: plex {
+    prefix       string
+    marker_start usize
+    marker_end   usize
+}
+
+-- Prefix parsing changes only the newly created item, never existing numbering.
+pub markdown_indent :: fn (scratch : ^arena,
+                           line    : string,
+                           limit   : usize,
+                           above   : bool) -> ListIndent {
+    base   := leading(line, limit)
+    cursor := base.count
+
+    for cursor < limit && line[cursor] == '>' {
+        cursor += 1
+        on cursor < limit && whitespace(line[cursor]) => cursor += 1
+    }
+    quoted         := cursor > base.count
+    quote          := line[..cursor]
+    marker         := cursor
+    number : usize = 0
+    digits : usize = 0
+
+    for cursor < limit &&
+        line[cursor] >= '0' &&
+        line[cursor] <= '9' &&
+        digits < 9 {
+        number = number * 10 + (line[cursor] - '0').as(usize)
+        digits += 1
+        cursor += 1
+    }
+    ordered := digits > 0 && cursor < limit && (line[cursor] == '.' || line[cursor] == ')')
+    bullet  := digits == 0 && cursor < limit && (line[cursor] == '-' || line[cursor] == '+' || line[cursor] == '*')
+
+    on (ordered || bullet) &&
+        cursor + 1 < limit &&
+        whitespace(line[cursor + 1]) => {
+        delimiter := line[cursor..cursor + 1]
+
+        cursor += 2
+        for cursor < limit && whitespace(line[cursor]) {
+            cursor += 1
+        }
+        prefix := line[..cursor]
+        on ordered &&
+            !above => prefix = scratch.pr($"{quote}{number + 1}{delimiter} ")
+        on cursor + 3 < limit &&
+            line[cursor] == '[' &&
+            line[cursor + 2] == ']' &&
+            (line[cursor + 1] == ' ' || line[cursor + 1] == 'x' || line[cursor + 1] == 'X') &&
+            whitespace(line[cursor + 3]) => {
+            prefix = scratch.pr($"{prefix}[ ] ")
+            cursor += 4
+        }
+        return ListIndent { prefix marker_start: base.count marker_end: cursor }
+    }
+    on quoted => return ListIndent { prefix: quote marker_start: base.count marker_end: marker }
+    return ListIndent { prefix: base ... }
+}
+
+test "indentation preserves tabs and continues Markdown lists, tasks and quotes" {
+    scratch : arena
+    defer scratch.done()
+    assert deeper(^scratch, "\t", 4) == "\t\t"
+    assert shallower("\t  ", 4) == "\t"
+    assert markdown_indent(^scratch, "  9. item", 9, no).prefix == "  10. "
+    assert markdown_indent(^scratch, "  9. item", 9, yes).prefix == "  9. "
+    assert markdown_indent(^scratch, "> - [x] done", 12, no).prefix == "> - [ "
+        +"] "
+
+    assert markdown_indent(^scratch, "*emphasis*", 10, no).marker_end == 0
+    assert markdown_indent(^scratch, "  plain", 7, no).prefix == "  "
+}

@@ -96,7 +96,7 @@ def startup_modes(binary, folder):
     for path in [first, second, third]:
         path.write_text(path.name)
     with Session(binary, folder) as session:
-        session.send("old unnamed work")
+        session.send('iold unnamed work')
         session.quit()
     snapshot = next((folder / "home/.config/me").glob("*/snapshot"))
     assert b"old unnamed work" in snapshot.read_bytes()
@@ -140,12 +140,12 @@ def startup_modes(binary, folder):
         session.send(b"\x1b", 0.15)
         session.quit()
     with Session(binary, folder, ".", "home") as session:
-        assert session.process.poll() == 2
+        assert session.process.wait(timeout=3) == 2
     assert not snapshot.exists(), "plain filenames did not erase the old snapshot"
     # Never continue silently when the owned snapshot cannot be erased.
     snapshot.mkdir()
     with Session(binary, folder, first.name, second.name) as session:
-        assert session.process.poll() == 2
+        assert session.process.wait(timeout=3) == 2
         assert b"Cannot erase" in session.output
         assert termios.tcgetattr(session.master) == session.original_attributes
     snapshot.rmdir()
@@ -186,7 +186,7 @@ def cli_files(binary, folder):
         session.quit()
     (folder / "invalid.bin").write_bytes(b"\xff")
     with Session(binary, folder, "-r", "invalid.bin", ".") as session:
-        assert session.process.poll() == 2, bytes(session.output)
+        assert session.process.wait(timeout=3) == 2, bytes(session.output)
         assert b"not valid UTF-8" in session.output and b"non-regular" in session.output
         assert termios.tcgetattr(session.master) == session.original_attributes
     assert not snapshot.exists(), "explicit reset did not erase recovery"
@@ -223,7 +223,7 @@ def cli_files(binary, folder):
 def recovery(binary, folder):
     path = folder / "note.txt"
     with Session(binary, folder, "-r", "note.txt") as session:
-        session.send("one")
+        session.send('ione')
         session.quit()
     assert not path.exists(), "quit must not write an unsaved backing file"
     with Session(binary, folder) as session:
@@ -243,19 +243,19 @@ def recovery(binary, folder):
 
 def unnamed_discard(binary, folder):
     with Session(binary, folder, "-r") as session:
-        session.send("recovered")
+        session.send('irecovered')
         session.quit()
     with Session(binary, folder) as session:
         session.quit("q!")
     snapshot = next((folder / "home/.config/me").glob("*/snapshot"))
     assert b"recovered" not in snapshot.read_bytes(), "q! retained recovered unsaved work"
     with Session(binary, folder, "-r") as session:
-        session.send("discard-me")
+        session.send('idiscard-me')
         session.quit("q!")
     snapshot = next((folder / "home/.config/me").glob("*/snapshot"))
     assert b"discard-me" not in snapshot.read_bytes()
     with Session(binary, folder) as session:
-        session.send("fresh")
+        session.send('ifresh')
         session.send(b"\x13")
         session.send("fresh.txt\r")
         assert (folder / "fresh.txt").read_bytes() == b"fresh"
@@ -268,7 +268,7 @@ def buffer_kill(binary, folder):
     with Session(binary, folder, "-r", "saved.txt") as session:
         session.command("kill")
         assert path.read_bytes() == b"saved"
-        session.send("recovered")
+        session.send('irecovered')
         session.quit()
     with Session(binary, folder) as session:
         session.command("kill")
@@ -287,8 +287,8 @@ def buffer_kill(binary, folder):
         session.command("kill")
         session.quit()
     with Session(binary, folder) as session:
-        assert b"INSERT" in session.output
-        session.send("new")
+        assert b"NORMAL" in session.output
+        session.send('inew')
         session.send(b"\x13")
         session.send("new.txt\r")
         assert (folder / "new.txt").read_bytes() == b"new", "killed buffer reappeared from continuation"
@@ -409,7 +409,7 @@ def save_as_confirmation(binary, folder):
     target = home / "existing.txt"
     target.write_bytes(b"OLD")
     with Session(binary, folder, "-r") as session:
-        session.send("UNNAMED")
+        session.send('iUNNAMED')
         session.command("w ~/exis\t")
         assert b"exists - save?" in screen(session), screen(session)
         session.send(b"\x1b", 0.15)
@@ -491,7 +491,7 @@ def save_as_quit(binary, folder):
     target = folder / "existing.txt"
     target.write_bytes(b"OLD")
     with Session(binary, folder, "-r") as session:
-        session.send("NEW")
+        session.send('iNEW')
         session.command("wq")
         session.send("existing.txt\r")
         assert b"exists - save?" in screen(session)
@@ -709,10 +709,10 @@ def search_replace_and_buffers(binary, folder):
         assert path.read_bytes() == b"X two ONE\r\nthree "
         session.quit()
     with Session(binary, folder, "-r") as session:
-        session.send("alpha")
+        session.send('ialpha')
         session.quit()
     with Session(binary, folder, "+missing/beta.txt") as session:
-        session.send("beta")
+        session.send('ibeta')
         session.command("wq")
         assert session.process.poll() is None
         session.send("alpha.txt\r")
@@ -745,7 +745,7 @@ def byte_paths_and_checkpoint_failures(binary, folder):
             assert source.read() == b"Xraw", "byte filenames must not hang presentation or change backing paths"
         session.quit()
     with Session(binary, folder, "-r") as session:
-        session.send("precious")
+        session.send('iprecious')
         storage = next((folder / "home/.config/me").glob("*/lock")).parent
         held = storage.with_name(storage.name + ".held")
         storage.rename(held)
@@ -768,7 +768,7 @@ def byte_paths_and_checkpoint_failures(binary, folder):
     damaged[len(damaged) // 2] ^= 1
     snapshot.write_bytes(damaged)
     with Session(binary, folder) as session:
-        session.send("new")
+        session.send('inew')
         session.command("q")
         assert session.process.poll() is None
         session.quit("q!")
@@ -777,11 +777,11 @@ def byte_paths_and_checkpoint_failures(binary, folder):
 
 def second_instance(binary, folder):
     with Session(binary, folder, "-r") as owner:
-        owner.send("owner")
+        owner.send('iowner')
         owner.drain(1.25)
         with Session(binary, folder) as second:
             assert b"Another ME owns" in second.output
-            second.send("other")
+            second.send('iother')
             second.command("q")
             assert second.process.poll() is None, "non-persisting instance discarded unsaved work"
             assert b"Cannot quit safely" in second.output
@@ -799,7 +799,7 @@ def second_instance(binary, folder):
 
 def crash_and_signals(binary, folder):
     with Session(binary, folder, "-r") as session:
-        session.send("crash")
+        session.send('icrash')
         session.drain(1.4)
         session.process.kill()
         session.process.wait()
@@ -811,7 +811,7 @@ def crash_and_signals(binary, folder):
         assert (folder / "crash.txt").read_bytes() == b"cras"
         session.quit()
     with Session(binary, folder, "-r") as session:
-        session.send("signal")
+        session.send('isignal')
         session.process.send_signal(signal.SIGTERM)
         session.wait()
     with Session(binary, folder) as session:
@@ -957,7 +957,7 @@ def backspace_insert(binary, folder):
             with Session(binary, folder, "-r", path.name) as session:
                 if initial:
                     session.send(b"\x1b[F")
-                    session.send("i")
+                session.send("i")
                 session.send(report)
                 assert b"INSERT" in screen(session), (report, screen(session))
                 session.send("X")
@@ -1770,7 +1770,7 @@ def file_completion(binary, folder):
         assert all(word in changed for word in [b"No", b"filename", b"match"])
         assert not (files / "nope").exists()
         session.command("e created.txt")
-        session.send("new")  # new empty buffers start in Insert
+        session.send('inew')  # explicitly enter Insert for the new buffer
         session.send(b"\x13")
         assert (folder / "created.txt").read_bytes() == b"new"
         changed = session.command("e files/")
@@ -1959,7 +1959,7 @@ def gutter_highlight(binary, folder):
 
 def graphemes_and_resize(binary, folder):
     with Session(binary, folder, "-r") as session:
-        session.send("ae\u0301👩\u200d💻b")
+        session.send("iaé👩‍💻b")
         session.drain(0.15)
         assert "e\u0301".encode() in session.output, "combining grapheme was not presented"
         assert "👩\u200d💻".encode() in session.output, "emoji cluster was not presented"
@@ -2273,11 +2273,11 @@ def new_buffer(binary, folder):
         session.send(b"\x0e")
         shown = screen(session)
         assert shown.count(b"UNSAVEDORIGINAL") == 1, shown
-        assert b"[unnamed]" in shown and b"INSERT" in shown, shown
-        session.send("FIRST")
+        assert b"[unnamed]" in shown and b"NORMAL" in shown, shown
+        session.send('iFIRST')
         # Enhanced key + associated text + release must create exactly one buffer.
         session.send(b"\x1b[110;5;14u\x1b[110;5:3u")
-        session.send("SECOND")
+        session.send('iSECOND')
         session.normal()
         session.send(",")
         assert b"3/3" in screen(session), screen(session)
@@ -2664,6 +2664,70 @@ def nerd_lsp_real(binary, folder):
     assert path.read_bytes() == b"main :: fn() {}\n"
 
 
+def normal_start_and_cut(binary, folder):
+    for name, content in (("empty.txt", b""), ("bom.txt", b"\xef\xbb\xbf"), ("missing.txt", None)):
+        path = folder / name
+        if content is not None:
+            path.write_bytes(content)
+        with Session(binary, folder, "-r", name) as session:
+            assert b"NORMAL" in screen(session) and b"INSERT" not in screen(session)
+            session.send("x")  # Empty/EOF cut is harmless.
+            session.send(b"\x0e")
+            assert b"NORMAL" in screen(session)
+            session.quit()
+        with Session(binary, folder) as session:
+            assert b"NORMAL" in screen(session)
+            session.quit()
+    path = folder / "cut.txt"
+    path.write_bytes("👩‍💻Z\r\n".encode())
+    with Session(binary, folder, "-r", path.name) as session:
+        session.send("xv")
+        session.send(b"\x13")
+        assert path.read_bytes() == "👩‍💻Z\r\n".encode()
+        session.send("x")  # Cut Z, keeping the emoji and CRLF intact.
+        session.send(b"\x13")
+        assert path.read_bytes() == "👩‍💻\r\n".encode()
+        session.send(b"\x1a\x13")
+        assert path.read_bytes() == "👩‍💻Z\r\n".encode()
+        session.quit()
+
+
+def intelligent_indentation(binary, folder):
+    nerd = folder / "main.n"
+    nerd.write_bytes(b"")
+    environment = fake_nerd(folder)
+    with Session(binary, folder, "-r", nerd.name, environment=environment) as session:
+        session.send("imain :: fn() {\ranswer := 42\r}")
+        session.send(b"\x13")
+        expected = b"main :: fn() {\n    answer := 42\n}"
+        assert nerd.read_bytes() == expected, nerd.read_bytes()
+        session.send(b"\x1a\x13")
+        assert nerd.read_bytes() == b"main :: fn() {\n    answer := 42\n    "
+        session.send(b"\x12\x13")
+        assert nerd.read_bytes() == expected
+        session.quit()
+    nerd.write_bytes(b"{}")
+    with Session(binary, folder, "-r", nerd.name, environment=environment) as session:
+        session.send("li\rX")
+        session.send(b"\x13")
+        assert nerd.read_bytes() == b"{\n    X\n}", nerd.read_bytes()
+        session.quit()
+    markdown = folder / "notes.md"
+    markdown.write_bytes(b"- [x] done")
+    with Session(binary, folder, "-r", markdown.name) as session:
+        session.send("A\rnext\r\r")
+        session.send(b"\x13")
+        assert markdown.read_bytes() == b"- [x] done\n- [ ] next\n", markdown.read_bytes()
+        session.quit()
+    plain = folder / "plain.txt"
+    plain.write_bytes(b"\ttext\r\n")
+    with Session(binary, folder, "-r", plain.name) as session:
+        session.send("A\rX")
+        session.send(b"\x13")
+        assert plain.read_bytes() == b"\ttext\r\n\tX\r\n", plain.read_bytes()
+        session.quit()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", required=True, type=Path)
@@ -2678,7 +2742,7 @@ def main():
     allowed = {"libc.so.6", "libm.so.6", "libgcc_s.so.1", "linux-vdso.so.1"}
     unexpected = {name for name in names if name not in allowed and not Path(name).name.startswith("ld-linux-")}
     assert not unexpected, f"Unexpected runtime libraries: {unexpected}\\n{dependencies}"
-    checks = [nerd_highlighting, nerd_diagnostics, nerd_lsp_failures, nerd_lsp_real, markdown_incremental, markdown_source, markdown_save_as, markdown_indentation, save_as_confirmation, save_as_changed_target, save_as_changed_source, save_as_quit, backspace_modes, backspace_insert, recording_cancel, delete_lines, normal_delete, repeat_recording, repeat_failure, new_buffer, exit_input_cleanup, pane_controls, pane_ctrl_w, pane_file_picker, file_picker, file_picker_stale_and_cancel, cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
+    checks = [normal_start_and_cut, intelligent_indentation, nerd_highlighting, nerd_diagnostics, nerd_lsp_failures, nerd_lsp_real, markdown_incremental, markdown_source, markdown_save_as, markdown_indentation, save_as_confirmation, save_as_changed_target, save_as_changed_source, save_as_quit, backspace_modes, backspace_insert, recording_cancel, delete_lines, normal_delete, repeat_recording, repeat_failure, new_buffer, exit_input_cleanup, pane_controls, pane_ctrl_w, pane_file_picker, file_picker, file_picker_stale_and_cancel, cli_files, startup_modes, recovery, unnamed_discard, buffer_kill, fidelity, external_files, symlinks_and_save_as,
               search_replace_and_buffers, search_origins, slash_replacement, confirmation_recovery, byte_paths_and_checkpoint_failures,
               second_instance, crash_and_signals, undo_caret, word_delete, buffer_picker, buffer_picker_close_selected, buffer_picker_preview, buffer_picker_recovery, buffer_picker_unicode_bytes, enhanced_key_actions, keyboard_diagnostics, hjkl_and_line_selection, leader_overlay, control_hjkl, duplicate_selection, command_completion, live_completion_filter, file_completion, home_paths, completion_byte_paths, mode_presentation, gutter_highlight, graphemes_and_resize]
     selected = [check for check in checks if args.filter in check.__name__]

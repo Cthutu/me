@@ -3,12 +3,14 @@ use characters
 use completion
 use document
 use file_picker
+use indentation
 use key_diagnostics
 use keyboard
 use leader_menu
 use modes
 use native
 use nerd_lsp
+use nerd_syntax
 use os.linux
 use panes
 use picker
@@ -19,6 +21,7 @@ use search
 use std.term
 use std.text
 use std.time
+use syntax
 use view
 use workspace
 
@@ -972,6 +975,101 @@ impl Editor {
             yes => width else => default_indent(self.workspace.active_document().file_mode())
         }
     }
+    -- Enter and line-opening commands create one edit, including indentation.
+    newline :: fn (self: ^Self, scratch: ^arena, key: u32) -> void\string {
+        entry := self.workspace.active_document()
+        doc := ^entry.text
+        view := ^self.workspace.active_view().interaction
+        opening := key != 0
+        above := key == 'O'.as(u32)
+        start := on opening {
+            yes => view.selection.active else => view.selection.start()
+        }
+        line := doc.line_at(start)
+        line_start := doc.line_start(line)
+        line_end := doc.line_end(line)
+        on opening => start = on above {
+            yes => line_start else => line_end
+        }
+        end := on opening {
+            yes => start else => view.selection.end()
+        }
+        limit := on above {
+            yes => line_end else => start
+        }
+        base := leading(doc.text()[line_start .. line_end], limit - line_start)
+        prefix := base
+        paired := no
+        mode := entry.file_mode()
+        on mode != FileMode.PlainText => {
+            _ := entry.update_syntax()
+        }
+        on mode == FileMode.Markdown && entry.syntax_style(line, base.count) != SyntaxStyle.Code => {
+            plan := markdown_indent(scratch, doc.text()[line_start .. line_end], limit - line_start, above)
+            prefix = plan.prefix
+            on !opening && view.selection.empty() && start == line_end && plan.marker_end > 0 && plan.marker_end == limit - line_start => {
+                start = line_start + plan.marker_start
+                on doc.edit({
+                    start end
+                }
+                , "") {
+                    _change => {
+                    }
+                    _error! => return "Cannot end list item"!
+                }
+                view.place(doc, start, no)
+                view.linewise = no
+                return
+            }
+        }
+        on mode == FileMode.Nerd => {
+            last := limit
+            for last > line_start {
+                position := last - 1
+                on whitespace(doc.content[position]) || entry.syntax_style(line, position - line_start) == SyntaxStyle.Comment {
+                    yes => last -= 1 else => break
+                }
+            }
+            opener : u8 = 0
+            on !above && last > line_start && entry.syntax_style(line, last - 1 - line_start) == SyntaxStyle.Operator => {
+                byte := doc.content[last - 1]
+                on byte == '{' || byte == '[' || byte == '(' => opener = byte
+            }
+            closer : u8 = 0
+            right := end
+            for right < line_end &&
+                whitespace(doc.content[right]) {
+                right += 1
+            }
+            on right < line_end && entry.syntax_style(line, right - line_start) == SyntaxStyle.Operator => closer = doc.content[right]
+            on opener != 0 || above && (closer == '}' || closer == ']' || closer == ')') => prefix = deeper(scratch, base, self.indent_width())
+            paired = !opening && ((opener == '{' && closer == '}') || (opener == '[' && closer == ']') || (opener == '(' && closer == ')'))
+        }
+        on !opening && start >= doc.first_text(line) => {
+            for end < line_end && whitespace(doc.content[end]) {
+                end += 1
+            }
+        }
+        ending := entry.line_ending(line)
+        payload := on above {
+            yes => scratch.pr($"{prefix}{ending}") else => scratch.pr($"{ending}{prefix}")
+        }
+        caret := start + (on above {
+            yes => prefix.count else => payload.count
+        })
+        on paired => payload = scratch.pr($"{payload}{ending}{base}")
+        on doc.edit({
+            start end
+        }
+        , payload) {
+            _change => {
+            }
+            _error! => return "Cannot insert indented line"!
+        }
+        view.place(doc, caret, no)
+        view.linewise = no
+    }
+
     pub duplicate :: fn (self: ^Self, scratch: ^arena) -> void\EditError {
         entry := self.workspace.active_document()
         doc := ^entry.text
@@ -1389,25 +1487,9 @@ impl Editor {
                         }
                         'A'.as(u32) => position = doc.line_end(line)
                         'I'.as(u32) => position = doc.first_text(line)
-                        'o'.as(u32) => {
-                            position = doc.line_end(line)
-                            on doc.edit({
-                                start: position end: position
-                            }
-                            , entry.line_ending(line)) {
-                                change => position += change.inserted_bytes _error! => return "Cannot open line"!
-                            }
-                        }
-                        'O'.as(u32) => {
-                            position = doc.line_start(line)
-                            on doc.edit({
-                                start: position end: position
-                            }
-                            , entry.line_ending(line)) {
-                                _change => {
-                                }
-                                _error! => return "Cannot open line"!
-                            }
+                        'o'.as(u32), 'O'.as(u32) => {
+                            self.newline(scratch, key)?
+                            position = view.selection.active
                         }
                         else => {
                         }
@@ -1419,15 +1501,33 @@ impl Editor {
             InsertText(text) => {
                 on view.state != Interaction.Insert => return "Enter Insert "
                     +"before typing text"!
-                payload := on text == "\n" {
-                    yes => entry.line_ending(doc.line_at(view.selection.active)) else => text
-                }
-                on view.replace_selection(doc, payload) {
-                    _success => {
+                on text == "\n" {
+                    yes => self.newline(scratch, 0)?
+                    else => {
+                        payload := text
+                        on entry.file_mode() == FileMode.Nerd && text.count == 1 && (text[0] == '}' || text[0] == ']' || text[0] == ')') && view.selection.empty() => {
+                            line := doc.line_at(view.selection.active)
+                            start := doc.line_start(line)
+                            prefix := doc.text()[start .. view.selection.active]
+                            on leading(prefix, prefix.count).count == prefix.count => {
+                                _ := entry.update_syntax()
+                                on entry.nerd_syntax => [cache] {
+                                    on cache.code_at(line, prefix) => {
+                                        payload = scratch.pr($"{shallower(prefix, self.indent_width())}{text}")
+                                        view.selection.anchor = start
+                                    }
+                                }
+                            }
+                        }
+                        on view.replace_selection(doc, payload) {
+                            _success => {
+                            }
+                            _error! => return "Cannot insert text"!
+                        }
                     }
-                    _error! => return "Cannot insert text"!
                 }
             }
+
             Tab => {
                 on view.state != Interaction.Insert => return "Tab is only "
                     +"available in Insert"!
@@ -1532,7 +1632,18 @@ impl Editor {
             SelectWord(count) => view.select_word(doc, count)
             SelectLine(count) => view.select_line(doc, count)
             Copy, Cut => {
-                on view.selection.empty() => return "No selection"!
+                on view.selection.empty() => {
+                    on command {
+                        Cut => {
+                            position := view.selection.active
+                            on position >= doc.text().count => return
+                            view.selection.anchor = position
+                            view.selection.active = next_character(doc.text(), position)
+                            view.linewise = no
+                        }
+                        else => return "No selection"!
+                    }
+                }
                 own(^self.clipboard.bytes, doc.text()[view.selection.start() .. view.selection.end()])
                 self.clipboard.linewise = view.linewise
                 on command {
@@ -2171,6 +2282,7 @@ test {
         scratch : arena
         defer scratch.done()
         editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Insert
         own(^editor.workspace.folder, "/no-such-completion-folder")
         editor.prompt_open(':'.as(u32))
         editor.execute(^scratch, Command.Tab)?
@@ -2240,6 +2352,7 @@ test {
         scratch : arena
         defer scratch.done()
         editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Insert
         doc := ^editor.workspace.active_document().text
         on doc.load(text) {
             _success => {
@@ -2299,6 +2412,7 @@ test {
         scratch : arena
         defer scratch.done()
         editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Insert
         doc := ^editor.workspace.active_document().text
         on doc.load("﻿alpha\r\nbeta") {
             _success => {
@@ -2337,6 +2451,7 @@ test {
         scratch : arena
         defer scratch.done()
         editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Insert
         doc := ^editor.workspace.active_document().text
         on doc.load("abc") {
             _success => {
@@ -2380,6 +2495,7 @@ test {
         scratch : arena
         defer scratch.done()
         editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Insert
         editor.character(^scratch, 'a'.as(u32))
         editor.character(^scratch, 'b'.as(u32))
         assert editor.workspace.active_document().text.text() == "ab"
@@ -2442,6 +2558,7 @@ test {
         editor.workspace.lock_fd = - 1
         defer editor.release()
         editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Insert
         doc := ^editor.workspace.active_document().text
         on doc.load("term term") {
             _success => {
@@ -2516,6 +2633,7 @@ test {
         editor.workspace.lock_fd = - 1
         defer editor.release()
         editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Insert
         original := "one one one one"
         doc := ^editor.workspace.active_document().text
 
@@ -2609,6 +2727,7 @@ test {
         editor.workspace.lock_fd = - 1
         defer editor.release()
         editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Insert
         doc := ^editor.workspace.active_document().text
         on doc.load("a a a") {
             _success => {
@@ -2717,6 +2836,7 @@ test {
         scratch : arena
         defer scratch.done()
         editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Insert
         doc := ^editor.workspace.active_document().text
         on doc.load(text) {
             _success => {
@@ -2776,6 +2896,7 @@ test {
         scratch : arena
         defer scratch.done()
         editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Insert
         doc := ^editor.workspace.active_document().text
         on doc.load(text) {
             _success => {
@@ -2846,6 +2967,7 @@ test {
         scratch : arena
         defer scratch.done()
         editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Insert
         editor.prompt_open(':'.as(u32), initial = "buffer 123")
         editor.execute(^scratch, Command.DeleteWordBack)?
         assert editor.prompt[..].as(string) == "buffer "
@@ -2989,6 +3111,7 @@ test "hjkl preserve graphemes and preferred columns while q keeps linewise selec
     editor.workspace.lock_fd = -1
     defer editor.release()
     editor.workspace.add_empty()
+    editor.workspace.active_view().interaction.state = Interaction.Insert
     doc := ^editor.workspace.active_document().text
     on doc.load("a👩‍💻bc\nx\na👩‍💻bc") {
         _success => {
@@ -3035,6 +3158,7 @@ test "buffer picker starts at previous access and Ctrl W closes only saved buffe
     defer editor.release()
     for name in ["/alpha.n", "/Beta.n", "/gamma.n"] {
         editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Insert
         own(^editor.workspace.active_document().path, name^)
         editor.workspace.active_document().disk_exists = yes
     }
@@ -3107,6 +3231,7 @@ test "picker Ctrl W closes the chosen buffer and protects unsaved and unmatched 
     defer editor.release()
     for name in ["/alpha.n", "/beta.n", "/gamma.n"] {
         editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Insert
         own(^editor.workspace.active_document().path, name^)
         editor.workspace.active_document().disk_exists = yes
     }
@@ -3153,6 +3278,7 @@ test "key releases leave navigation counts and message scrolling unchanged" {
     editor.workspace.lock_fd = -1
     defer editor.release()
     editor.workspace.add_empty()
+    editor.workspace.active_view().interaction.state = Interaction.Insert
     on editor.workspace.active_document().text.load("abcd") {
         _success => {
         }
@@ -3205,6 +3331,7 @@ test "keyboard diagnostics capture commands without edits and Escape leaves no s
     editor.workspace.lock_fd = -1
     defer editor.release()
     editor.workspace.add_empty()
+    editor.workspace.active_view().interaction.state = Interaction.Insert
     editor.prompt_open(':'.as(u32), initial = "keys")
     on editor.command_line(^scratch) {
         _success => {
@@ -3245,6 +3372,7 @@ test "Space leader waits for help, cancels and leaves Insert and prompts literal
     editor.workspace.lock_fd = -1
     defer editor.release()
     editor.workspace.add_empty()
+    editor.workspace.active_view().interaction.state = Interaction.Insert
     editor.workspace.active_view().interaction.state = Interaction.Normal
     editor.character(^scratch, 32)
     assert editor.leader && !editor.leader_shown
@@ -3294,6 +3422,7 @@ test "Ctrl W closes only the focused pane and retains shared and unsaved buffers
     editor.workspace.lock_fd = -1
     defer editor.release()
     editor.workspace.add_empty()
+    editor.workspace.active_view().interaction.state = Interaction.Insert
     editor.character(^scratch, 'A'.as(u32))
     editor.workspace.active_view().interaction.state = Interaction.Normal
     on editor.pane_operation(LeaderOperation.SplitHorizontal) {
@@ -3305,6 +3434,7 @@ test "Ctrl W closes only the focused pane and retains shared and unsaved buffers
         }
     }
     editor.workspace.add_empty()
+    editor.workspace.active_view().interaction.state = Interaction.Insert
     editor.character(^scratch, 'B'.as(u32))
     editor.workspace.active_view().interaction.state = Interaction.Normal
     right := editor.workspace.surface.view_id
@@ -3317,6 +3447,7 @@ test "Ctrl W closes only the focused pane and retains shared and unsaved buffers
         }
     }
     editor.workspace.add_empty()
+    editor.workspace.active_view().interaction.state = Interaction.Insert
     editor.character(^scratch, 'C'.as(u32))
     editor.workspace.active_view().interaction.state = Interaction.Normal
     editor.key(^scratch,
@@ -3361,13 +3492,14 @@ test "Ctrl W closes only the focused pane and retains shared and unsaved buffers
     assert editor.workspace.active_document().text.text() == "A"
 }
 
-test "Ctrl N creates distinct unnamed Insert buffers in the focused pane without losing work" {
+test "Ctrl N creates distinct unnamed Normal buffers in the focused pane without losing work" {
     scratch : arena
     defer scratch.done()
     editor : Editor
     editor.workspace.lock_fd = -1
     defer editor.release()
     editor.workspace.add_empty()
+    editor.workspace.active_view().interaction.state = Interaction.Insert
     editor.character(^scratch, 'A'.as(u32))
     editor.workspace.active_view().interaction.state = Interaction.Normal
     on editor.pane_operation(LeaderOperation.SplitHorizontal) {
@@ -3397,10 +3529,11 @@ test "Ctrl N creates distinct unnamed Insert buffers in the focused pane without
     assert editor.workspace.documents.count == 2
     assert editor.workspace.active_document().path.count == 0
     assert editor.workspace.active_document().text.text() == ""
-    assert editor.workspace.active_view().interaction.state == Interaction.Insert
+    assert editor.workspace.active_view().interaction.state == Interaction.Normal
     assert editor.workspace.panes.mounted(0)
     assert editor.workspace.documents[0].text.text() == "A"
     assert editor.dirty
+    editor.character(^scratch, 'i'.as(u32))
     editor.character(^scratch, 'B'.as(u32))
     editor.character(^scratch, 14)
     assert editor.workspace.documents.count == 3
@@ -3449,6 +3582,7 @@ test {
         editor.workspace.lock_fd = -1
         defer editor.release()
         editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Insert
         editor.workspace.active_view().interaction.state = Interaction.Normal
         -- Correct an edit, branch, then undo/redo the replacement while recording.
         repeat_keys(^editor, ^scratch, "[iAB")
@@ -3462,6 +3596,7 @@ test {
         editor.execute(^scratch, Command.Undo)?
         assert editor.workspace.active_document().text.text() == "A"
         editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Insert
         editor.workspace.active_view().interaction.state = Interaction.Normal
         editor.execute(^scratch, Command.Replay)?
         doc := ^editor.workspace.active_document().text
@@ -3500,6 +3635,7 @@ test {
         editor.workspace.lock_fd = -1
         defer editor.release()
         editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Insert
         editor.workspace.active_view().interaction.state = Interaction.Normal
         repeat_keys(^editor, ^scratch, "[iA")
         editor.execute(^scratch, Command.Move {
@@ -3520,6 +3656,7 @@ test {
         editor.execute(^scratch, Command.RecordStop)?
         assert editor.workspace.active_document().text.text() == "BA"
         editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Insert
         editor.workspace.active_view().interaction.state = Interaction.Normal
         editor.execute(^scratch, Command.Replay)?
         assert editor.workspace.active_document().text.text() == "BA"
@@ -3555,6 +3692,7 @@ test {
         editor.workspace.lock_fd = -1
         defer editor.release()
         editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Insert
         editor.workspace.active_view().interaction.state = Interaction.Normal
         own(^editor.clipboard.bytes, "Z")
         repeat_keys(^editor, ^scratch, "[iA")
@@ -3563,6 +3701,7 @@ test {
         editor.execute(^scratch, Command.RecordStop)?
         editor.clipboard.bytes.clear()
         editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Insert
         editor.workspace.active_view().interaction.state = Interaction.Normal
         on editor.execute(^scratch, Command.Replay) {
             _success => {
@@ -3602,6 +3741,7 @@ test {
         -- A zero-net replay remains one history unit; undo/redo still mark its
         -- applied state dirty even though the stored text does not change.
         editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Insert
         editor.workspace.active_view().interaction.state = Interaction.Normal
         editor.execute(^scratch, Command.RecordStart)?
         editor.execute(^scratch, Command.EnterInsert('i'.as(u32)))?
@@ -3627,6 +3767,7 @@ test {
         editor.workspace.lock_fd = -1
         defer editor.release()
         editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Insert
         editor.workspace.active_view().interaction.state = Interaction.Normal
         editor.execute(^scratch, Command.RecordStart)?
         editor.execute(^scratch, Command.EnterInsert('i'.as(u32)))?
@@ -3636,6 +3777,7 @@ test {
         editor.execute(^scratch, Command.Escape)?
         editor.execute(^scratch, Command.RecordStop)?
         editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Insert
         editor.workspace.active_view().interaction.state = Interaction.Normal
         on editor.workspace.active_document().text.load("Z") {
             _success => {
@@ -3719,6 +3861,7 @@ test {
         editor.workspace.lock_fd = -1
         defer editor.release()
         editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Insert
         editor.workspace.active_view().interaction.state = Interaction.Normal
         editor.execute(^scratch, Command.RecordStart)?
         editor.execute(^scratch, Command.EnterInsert('i'.as(u32)))?
@@ -3775,6 +3918,7 @@ test {
             editor.workspace.lock_fd = -1
             defer editor.release()
             editor.workspace.add_empty()
+            editor.workspace.active_view().interaction.state = Interaction.Insert
             editor.workspace.active_view().interaction.state = Interaction.Normal
             repeat_keys(^editor, ^scratch, keys^)
             assert !editor.recording.active && editor.recording.saved.count > 0
@@ -3782,6 +3926,8 @@ test {
             position := editor.workspace.active_view().interaction.selection.active
 
             editor.workspace.add_empty()
+
+            editor.workspace.active_view().interaction.state = Interaction.Insert
             editor.workspace.active_view().interaction.state = Interaction.Normal
             editor.execute(^scratch, Command.Replay)?
             assert editor.workspace.active_document().text.text() == expected
@@ -3820,6 +3966,7 @@ test "Normal d immediately deletes selections with ordinary history and repeat" 
     editor.workspace.lock_fd = -1
     defer editor.release()
     editor.workspace.add_empty()
+    editor.workspace.active_view().interaction.state = Interaction.Insert
     doc := ^editor.workspace.active_document().text
     on doc.load("a👩‍💻bc\r\nz") {
         _success => {
@@ -3922,6 +4069,7 @@ test {
         editor.workspace.lock_fd = -1
         defer editor.release()
         editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Insert
         doc := ^editor.workspace.active_document().text
         on doc.load(text) {
             _success => {
@@ -4031,6 +4179,7 @@ test {
         editor.workspace.lock_fd = -1
         defer editor.release()
         editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Insert
         doc := ^editor.workspace.active_document().text
         on doc.load("one\ntwo\nthree\nfour\nfive") {
             _success => {
@@ -4096,6 +4245,7 @@ test {
         editor.workspace.lock_fd = -1
         defer editor.release()
         editor.workspace.add_empty()
+        editor.workspace.active_view().interaction.state = Interaction.Insert
         editor.workspace.active_view().interaction.state = Interaction.Normal
         repeat_keys(^editor, ^scratch, "[iA")
         editor.execute(^scratch, Command.Escape)?
@@ -4174,4 +4324,170 @@ test "Ctrl G cancels drafts in either mode and quitting preserves the previous r
             assert no
         }
     }
+}
+
+test {
+
+    check_indent :: fn (path     : string,
+                        before   : string,
+                        position : usize,
+                        key      : u32,
+                        after    : string,
+                        caret    : usize) -> void\string {
+        editor : Editor
+        editor.workspace.lock_fd = -1
+        defer editor.release()
+        scratch : arena
+        defer scratch.done()
+        editor.workspace.add_empty()
+        assert editor.workspace.active_view().interaction.state == Interaction.Normal
+        entry := editor.workspace.active_document()
+        own(^entry.path, path)
+        on entry.text.load(before) {
+            _success => {
+            }
+
+            _error! => return "Indent fixture failed"!
+        }
+        current := ^editor.workspace.active_view().interaction
+        current.place(^entry.text, position, no)
+        on key == 0 {
+            yes => {
+                current.state = Interaction.Insert
+                editor.execute(^scratch, Command.InsertText("\n"))?
+            }
+
+            else => editor.execute(^scratch, Command.EnterInsert(key))?
+        }
+        assert entry.text.text() == after, entry.text.text()
+        assert current.selection.active == caret && current.state == Interaction.Insert
+        assert entry.text.history.count == 1 && editor.dirty
+        editor.execute(^scratch, Command.Undo)?
+        assert entry.text.text() == before && current.selection.active == position
+        editor.execute(^scratch, Command.Redo)?
+        assert entry.text.text() == after && current.selection.active == caret
+    }
+
+    exercise_indent :: fn () -> void\string {
+        check_indent("plain.txt", "    text", 0, 0, "\n    text", 1)?
+        check_indent("plain.txt", "\t  text", 7, 0, "\t  text\n\t  ", 11)?
+        check_indent("main.n", "main :: fn() {}", 14, 0, "main :: fn() {\n    \n}", 19)?
+        check_indent("main.n", "    { -- note", 13, 0, "    { -- note\n        ", 22)?
+        check_indent("main.n", "    \"{\"", 7, 0, "    \"{\"\n    ", 12)?
+        check_indent("main.n", "    -- {", 8, 0, "    -- {\n    ", 13)?
+        check_indent("main.n", "\t{", 1, 'o'.as(u32), "\t{\n\t\t", 5)?
+        check_indent("main.n", "}", 0, 'O'.as(u32), "    \n}", 4)?
+        check_indent("notes.md", "- [x] done", 10, 0, "- [x] done\n- [ ] ", 17)?
+        check_indent("notes.md", "9. item", 7, 0, "9. item\n10. ", 12)?
+        check_indent("notes.md", "- ", 2, 0, "", 0)?
+        check_indent("notes.md", "```\n- literal", 13, 0, """
+            ```
+            - literal
+            """, 14)?
+        check_indent("plain.txt", "    a\r\n", 5, 0, "    a\r\n    \r\n", 11)?
+    }
+
+}
+
+test "intelligent newlines preserve source endings and form single undo units" {
+    on exercise_indent() {
+        _success => {
+        }
+
+        error! => {
+            assert no, error
+        }
+    }
+}
+
+test "x cuts one grapheme or CRLF without selection and preserves the clipboard at EOF" {
+    editor : Editor
+    editor.workspace.lock_fd = -1
+    defer editor.release()
+    scratch : arena
+    defer scratch.done()
+    editor.workspace.add_empty()
+    entry := editor.workspace.active_document()
+    on entry.text.load("👩‍💻\r\nx") {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    on editor.execute(^scratch, Command.Cut) {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    assert entry.text.text() == "\r\nx" && bytes_text(editor.clipboard.bytes) == "👩‍💻"
+    assert !editor.clipboard.linewise && editor.workspace.active_view().interaction.state == Interaction.Normal
+    on editor.execute(^scratch, Command.Cut) {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    assert entry.text.text() == "x" && bytes_text(editor.clipboard.bytes) == "\r\n"
+    editor.workspace.active_view().interaction.place(^entry.text, 1, no)
+    revision := entry.text.storage.revision()
+    on editor.execute(^scratch, Command.Cut) {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    assert entry.text.storage.revision() == revision && bytes_text(editor.clipboard.bytes) == "\r\n"
+}
+
+test "automatic indentation adjusts other views and undo restores their positions" {
+    editor : Editor
+    editor.workspace.lock_fd = -1
+    defer editor.release()
+    scratch : arena
+    defer scratch.done()
+    editor.workspace.add_empty()
+    entry := editor.workspace.active_document()
+    on entry.text.load("    abc") {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    current := ^editor.workspace.active_view().interaction
+    current.place(^entry.text, 4, no)
+    current.state = Interaction.Insert
+    other : TextView
+    other.document_id = 0
+    other.interaction.selection.collapse(7)
+    editor.workspace.views.push(other)
+    on editor.execute(^scratch, Command.InsertText("\n")) {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    assert entry.text.text() == "    \n    abc"
+    assert editor.workspace.views[1].interaction.selection.active == 12
+    on editor.execute(^scratch, Command.Undo) {
+        _success => {
+        }
+
+        _error! => {
+            assert no
+        }
+    }
+    assert editor.workspace.views[1].interaction.selection.active == 7
 }

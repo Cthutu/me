@@ -35,8 +35,8 @@ new user agreements and remain open to hands-on feedback.
 - Ctrl+S returns to Normal consistently, including save failure. Preserve edits
   and show the error on failure. For an unnamed buffer, open the `:` prompt
   prefilled with `w `; cancelling leaves the editing view in Normal.
-- No automatic indentation for MS1, including Enter and `o`/`O`. Indentation is
-  a facet policy.
+- The original MS1 indentation deferral is superseded by T17: intelligent
+  newline/open-line indentation is now requested, with initial mode rules.
 - Add a `:` prompt with `:q`, `:w`, `:wq`, and `:q!` for saving/quitting.
 - Support coloured CLI errors and status-line errors; clear status errors on
   buffer content changes.
@@ -178,7 +178,7 @@ Remaining:
    Navigation is independent of buffer history; invoking caret moves to the edit
    and selection clears (settled). Ctrl+Z/Ctrl+R enter Normal, even on a no-op.
    Save, undo, redo and duplicate enter Normal; Ctrl navigation and Backspace/
-   word deletion preserve state. Ctrl+N enters Insert; Ctrl+G cancellation keeps
+   word deletion preserve state. Ctrl+N creates a Normal buffer; Ctrl+G cancellation keeps
    the current state. Encode these distinctions explicitly. Avoid redundant keybindings.
 
 ## Navigation baseline updates
@@ -534,3 +534,11 @@ Matt withdrew T14's request to refuse :q with unsaved work after recalling
 snapshots. Restore ordinary :q checkpointing and quitting, including dirty buffers.
 Checkpoint failures and unsafe non-persisting sessions still refuse exit. :wq
 saves and quits; :q! explicitly discards. The overwrite confirmation remains.
+
+## T17 interaction changes — settled
+
+Always begin in Normal, including empty/new/restored buffers. `x` without a
+selection cuts one grapheme; EOF is harmless and preserves the clipboard.
+Intelligent indentation is requested; first-delivery Nerd/Markdown defaults are
+recorded in design §36. These supersede the former empty-file Insert and MS1
+no-automatic-indentation policies. General configuration remains future work.

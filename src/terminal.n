@@ -1216,6 +1216,7 @@ test "buffer preview follows selection without touching views or history" {
     terminal.editor.workspace.lock_fd = -1
     defer terminal.release()
     terminal.editor.workspace.add_empty()
+    terminal.editor.workspace.active_view().interaction.state = Interaction.Insert
     on terminal.editor.workspace.active_document().text.load("Alpha") {
         _success => {
         }
@@ -1226,6 +1227,7 @@ test "buffer preview follows selection without touching views or history" {
     }
     terminal.editor.workspace.active_view().interaction.selection.collapse(2)
     terminal.editor.workspace.add_empty()
+    terminal.editor.workspace.active_view().interaction.state = Interaction.Insert
     on terminal.editor.workspace.active_document().text.load("Bravo\n\t界👩‍💻\x1b") {
         _success => {
         }
@@ -1269,6 +1271,7 @@ test "buffer popup is opaque, selected and safe across Unicode and tiny resizes"
     terminal.editor.workspace.lock_fd = -1
     defer terminal.release()
     terminal.editor.workspace.add_empty()
+    terminal.editor.workspace.active_view().interaction.state = Interaction.Insert
     own(^terminal.editor.workspace.active_document().path, "/first")
     on terminal.editor.workspace.active_document().text.load("0\n1\n2\na界abcdefghij👩‍💻rest") {
         _success => {
@@ -1279,6 +1282,7 @@ test "buffer popup is opaque, selected and safe across Unicode and tiny resizes"
         }
     }
     terminal.editor.workspace.add_empty()
+    terminal.editor.workspace.active_view().interaction.state = Interaction.Insert
     own(^terminal.editor.workspace.active_document().path, "/second")
     assert terminal.editor.workspace.focus_document(0)
     terminal.paint(80, 24)
@@ -1310,6 +1314,7 @@ test "mode presentation uses contrasting green/red cursors and UTF-8 status badg
     terminal.editor.workspace.lock_fd = -1
     defer terminal.release()
     terminal.editor.workspace.add_empty()
+    terminal.editor.workspace.active_view().interaction.state = Interaction.Insert
     doc := ^terminal.editor.workspace.active_document().text
     on doc.load("abc") {
         _success => {
@@ -1386,6 +1391,7 @@ test "leader overlay is opaque and clipped without changing view geometry or mes
     terminal.editor.workspace.lock_fd = -1
     defer terminal.release()
     terminal.editor.workspace.add_empty()
+    terminal.editor.workspace.active_view().interaction.state = Interaction.Insert
     storage : arena
     defer storage.done()
     text := ""
@@ -1439,6 +1445,7 @@ test "pane rendering offsets Unicode glyphs, shows only the active caret and sur
     terminal.editor.workspace.lock_fd = -1
     defer terminal.release()
     terminal.editor.workspace.add_empty()
+    terminal.editor.workspace.active_view().interaction.state = Interaction.Insert
     own(^terminal.editor.workspace.folder, "/pane")
     own(^terminal.editor.workspace.active_document().path, "/pane/demo.n")
     on terminal.editor.workspace.active_document().text.load("a界👩‍💻\nsecond") {
@@ -1520,6 +1527,7 @@ test "Markdown panes share revision analysis while retaining caret and narrow st
     terminal.editor.workspace.lock_fd = -1
     defer terminal.release()
     terminal.editor.workspace.add_empty()
+    terminal.editor.workspace.active_view().interaction.state = Interaction.Insert
     entry := terminal.editor.workspace.active_document()
     own(^entry.path, "/notes.md")
     on entry.text.load("""

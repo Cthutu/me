@@ -1001,3 +1001,42 @@ provider teardown, shared panes, source fidelity, save-as and recovery. Type
 checking, idempotent formatting, Python compilation, UTF-8 and diff checks passed.
 The completed change is committed/pushed and installed at task completion;
 installed ME Nerd scenarios and release-binary identity are checked afterwards.
+
+## T17 — Normal initial state, intelligent indentation and character cuts
+
+Matt requested always-Normal startup, intelligent indentation and `x` cutting a
+character when no selection exists. `Workspace.add_empty`, opening and snapshot
+restoration now normalise interaction state consistently, including empty/BOM-only
+files, Ctrl+N and replacement buffers after killing the last buffer. Existing
+views keep their state when merely focused. Snapshot compatibility is unchanged.
+
+`src/indentation.n` provides whitespace and Markdown prefix policies. Enter and
+`o`/`O` copy leading whitespace, retaining tabs and local LF/CRLF inference. Nerd
+uses cached lexer styles/state for delimiters, matching-pair line splits and
+outdenting closing delimiters typed after leading whitespace; literal strings
+and comments do not act as code. Markdown continues lists/quotes/tasks, increments
+new ordered items, clears new task checkboxes, and ends empty items. Code blocks
+receive whitespace continuation only. Initial defaults are documented in design
+§36; general mode configuration, comprehensive Markdown nesting and AST formatting
+remain outside this slice. Terminal paste still lacks boundary events; its Enter
+events trigger indentation, while internal clipboard paste preserves literal bytes.
+
+Generated indentation is part of one edit/history record, with before/after caret
+hints and normal notifications to other views. Tests cover splitting inside
+leading whitespace, CRLF, tabs, matching pairs, strings/comments, empty items,
+undo/redo and shared-view positions. `x` constructs a single-grapheme selection
+when needed, preserving existing selection/clipboard semantics. Unicode emoji
+clusters and CRLF remain indivisible; EOF preserves clipboard and history.
+
+Existing native/terminal fixtures now enter Insert explicitly where required.
+Fatal-startup terminal checks wait for process termination instead of assuming
+it has completed within the initial 250 ms drain, avoiding a load-sensitive race.
+
+Verification: all 199 native tests (87 ME + 112 imported), all 64 debug terminal
+scenario groups, and five focused release groups passed. Release checks cover
+Normal startup/character cuts, intelligent indentation, Ctrl+N, startup policies
+and Insert Backspace. The original release startup timing assertion failed under
+load; waiting for process termination fixed the test and the rerun passed. Type
+checking, idempotent formatting, Python compilation, source UTF-8 and diff checks
+passed. Required commit/push and release installation follow, with the two new
+installed scenarios and binary identity checked afterwards.

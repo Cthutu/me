@@ -311,6 +311,14 @@ impl NerdSyntax {
         return analysed
     }
 
+    pub code_at :: fn (self: ^Self, line: usize, prefix: string) -> bool {
+        on line >= self.lines.count => return yes
+        partial := lex_line(prefix, self.lines[line].input)
+        defer partial.release()
+        kind := partial.output.contexts[partial.output.depth]
+        return kind == 0 || kind == 5
+    }
+
     pub line_style :: fn (self     : ^Self,
                           line     : usize,
                           position : usize) -> SyntaxStyle {
